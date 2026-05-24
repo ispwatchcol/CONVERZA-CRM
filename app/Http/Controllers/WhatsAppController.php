@@ -5,12 +5,29 @@ namespace App\Http\Controllers;
 use App\Models\Contact;
 use App\Models\Conversation;
 use App\Models\Message;
+use App\Services\WhatsAppService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 class WhatsAppController extends Controller
 {
+    public function __construct(private WhatsAppService $whatsapp)
+    {
+    }
+
+    private function placeholderForType(string $type): string
+    {
+        return match ($type) {
+            'image' => '[Imagen]',
+            'sticker' => '[Sticker]',
+            'audio' => '[Audio]',
+            'video' => '[Video]',
+            'document' => '[Documento]',
+            default => '[' . $type . ']',
+        };
+    }
+
     private function normalizePhone($phone)
     {
         $phone = preg_replace('/[^0-9]/', '', $phone);
@@ -64,8 +81,8 @@ class WhatsAppController extends Controller
             $messageData = $payload['entry'][0]['changes'][0]['value']['messages'][0];
 
             $phone = $this->normalizePhone($messageData['from']);
-            $text = $messageData['text']['body'] ?? '';
             $waMessageId = $messageData['id'] ?? null;
+            $type = $messageData['type'] ?? 'text';
 
             // Find or create contact
             $contact = Contact::firstOrCreate(
@@ -79,14 +96,44 @@ class WhatsAppController extends Controller
                 ['contact_id' => $contact->id]
             );
 
-            // Create message
-            Message::create([
+            $attributes = [
                 'conversation_id' => $conversation->id,
                 'contact_id' => $contact->id,
-                'body' => $text,
                 'status' => 'received',
                 'wa_message_id' => $waMessageId,
-            ]);
+                'type' => $type,
+                'body' => '',
+            ];
+
+            $mediaTypes = ['image', 'sticker', 'audio', 'video', 'document'];
+
+            if ($type === 'text') {
+                $attributes['body'] = $messageData['text']['body'] ?? '';
+            } elseif (in_array($type, $mediaTypes, true)) {
+                $mediaPayload = $messageData[$type] ?? [];
+                $mediaId = $mediaPayload['id'] ?? null;
+                $caption = $mediaPayload['caption'] ?? null;
+                $originalName = $mediaPayload['filename'] ?? null;
+                $mime = $mediaPayload['mime_type'] ?? null;
+
+                $attributes['media_id'] = $mediaId;
+                $attributes['caption'] = $caption;
+                $attributes['media_mime'] = $mime;
+                $attributes['body'] = $caption ?? $this->placeholderForType($type);
+
+                if ($mediaId) {
+                    $downloaded = $this->whatsapp->downloadMedia($mediaId);
+                    if ($downloaded) {
+                        $attributes['media_path'] = $downloaded['path'];
+                        $attributes['media_mime'] = $downloaded['mime'];
+                        $attributes['media_filename'] = $originalName ?? $downloaded['filename'];
+                    }
+                }
+            } else {
+                $attributes['body'] = '[' . $type . ']';
+            }
+
+            Message::create($attributes);
 
             $conversation->touch();
         } else {

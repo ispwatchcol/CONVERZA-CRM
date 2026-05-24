@@ -2,8 +2,11 @@
 
 namespace App\Services;
 
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 
 class WhatsAppService
 {
@@ -14,6 +17,125 @@ class WhatsAppService
     {
         $this->baseUrl = (string) config('services.whatsapp.url', '');
         $this->token = (string) config('services.whatsapp.token', '');
+    }
+
+    /**
+     * Check if the WhatsApp Cloud API is reachable with current credentials.
+     * Cached for 60s to avoid hitting Graph API on every page load.
+     */
+    public function checkConnection(): array
+    {
+        if (empty($this->baseUrl) || empty($this->token)) {
+            return ['connected' => false, 'reason' => 'not_configured'];
+        }
+
+        return Cache::remember('whatsapp.connection_status', 60, function () {
+            try {
+                $response = Http::withToken($this->token)
+                    ->timeout(5)
+                    ->get($this->baseUrl);
+
+                if ($response->successful()) {
+                    return ['connected' => true, 'reason' => 'ok'];
+                }
+
+                Log::warning('WhatsApp connection check failed', [
+                    'status' => $response->status(),
+                    'body' => $response->body(),
+                ]);
+                return ['connected' => false, 'reason' => 'http_' . $response->status()];
+            } catch (\Throwable $e) {
+                Log::warning('WhatsApp connection check exception: ' . $e->getMessage());
+                return ['connected' => false, 'reason' => 'exception'];
+            }
+        });
+    }
+
+    /**
+     * Download a media file from WhatsApp Cloud API and store it on the public disk.
+     *
+     * Returns ['path' => 'whatsapp-media/xxx.ext', 'mime' => '...', 'filename' => '...'] or null on failure.
+     */
+    public function downloadMedia(string $mediaId): ?array
+    {
+        if (empty($this->token) || empty($this->baseUrl)) {
+            return null;
+        }
+
+        // baseUrl looks like https://graph.facebook.com/v18.0/{phone-number-id}
+        // for media we need https://graph.facebook.com/v18.0/{media-id}
+        $graphRoot = preg_replace('#/[^/]+$#', '', rtrim($this->baseUrl, '/'));
+
+        try {
+            $meta = Http::withToken($this->token)
+                ->timeout(10)
+                ->get($graphRoot . '/' . $mediaId);
+
+            if (! $meta->successful()) {
+                Log::warning('WhatsApp media metadata fetch failed', [
+                    'media_id' => $mediaId,
+                    'status' => $meta->status(),
+                    'body' => $meta->body(),
+                ]);
+                return null;
+            }
+
+            $url = $meta->json('url');
+            $mime = $meta->json('mime_type') ?? 'application/octet-stream';
+            if (! $url) {
+                return null;
+            }
+
+            $binary = Http::withToken($this->token)
+                ->timeout(20)
+                ->get($url);
+
+            if (! $binary->successful()) {
+                Log::warning('WhatsApp media binary fetch failed', [
+                    'media_id' => $mediaId,
+                    'status' => $binary->status(),
+                ]);
+                return null;
+            }
+
+            $ext = $this->extensionFromMime($mime);
+            $filename = $mediaId . ($ext ? '.' . $ext : '');
+            $path = 'whatsapp-media/' . $filename;
+
+            Storage::disk('public')->put($path, $binary->body());
+
+            return [
+                'path' => $path,
+                'mime' => $mime,
+                'filename' => $filename,
+            ];
+        } catch (\Throwable $e) {
+            Log::error('WhatsApp downloadMedia exception', [
+                'media_id' => $mediaId,
+                'error' => $e->getMessage(),
+            ]);
+            return null;
+        }
+    }
+
+    private function extensionFromMime(string $mime): ?string
+    {
+        $mime = Str::before($mime, ';');
+        return match ($mime) {
+            'image/jpeg', 'image/jpg' => 'jpg',
+            'image/png' => 'png',
+            'image/webp' => 'webp',
+            'image/gif' => 'gif',
+            'video/mp4' => 'mp4',
+            'video/3gpp' => '3gp',
+            'audio/ogg' => 'ogg',
+            'audio/mpeg', 'audio/mp3' => 'mp3',
+            'audio/amr' => 'amr',
+            'audio/aac' => 'aac',
+            'audio/mp4' => 'm4a',
+            'application/pdf' => 'pdf',
+            default => null,
+        };
     }
 
     /**

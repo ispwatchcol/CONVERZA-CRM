@@ -7,7 +7,19 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class Message extends Model
 {
-    protected $fillable = ['conversation_id', 'contact_id', 'body', 'status', 'wa_message_id'];
+    protected $fillable = [
+        'conversation_id',
+        'contact_id',
+        'body',
+        'status',
+        'wa_message_id',
+        'type',
+        'media_id',
+        'media_path',
+        'media_mime',
+        'media_filename',
+        'caption',
+    ];
 
     public function conversation(): BelongsTo
     {
