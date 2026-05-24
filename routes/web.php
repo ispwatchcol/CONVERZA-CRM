@@ -38,6 +38,7 @@ Route::middleware('auth')->group(function () {
     Route::post('/contacts', [ContactController::class, 'store'])->name('contacts.store');
     Route::put('/contacts/{contact}', [ContactController::class, 'update'])->name('contacts.update');
     Route::delete('/contacts/{contact}', [ContactController::class, 'destroy'])->name('contacts.destroy');
+    Route::get('/contacts/{contact}/chat', [ContactController::class, 'chat'])->name('contacts.chat');
 
     // Labels
     Route::get('/labels', [LabelController::class, 'index'])->name('labels.index');
@@ -77,6 +78,9 @@ Route::middleware('auth')->group(function () {
     Route::get('/quick-replies', [QuickReplyController::class, 'index'])->name('quick-replies.index');
     Route::post('/quick-replies', [QuickReplyController::class, 'store'])->name('quick-replies.store');
     Route::put('/quick-replies/{quickReply}', [QuickReplyController::class, 'update'])->name('quick-replies.update');
+    Route::patch('/quick-replies/{quickReply}/toggle', [QuickReplyController::class, 'toggle'])->name('quick-replies.toggle');
+    Route::post('/quick-replies/{quickReply}/duplicate', [QuickReplyController::class, 'duplicate'])->name('quick-replies.duplicate');
+    Route::post('/quick-replies/load-samples', [QuickReplyController::class, 'loadSamples'])->name('quick-replies.load-samples');
     Route::delete('/quick-replies/{quickReply}', [QuickReplyController::class, 'destroy'])->name('quick-replies.destroy');
 
     // Closing Notes
