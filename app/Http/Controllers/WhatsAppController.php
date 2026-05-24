@@ -6,6 +6,7 @@ use App\Models\Contact;
 use App\Models\Conversation;
 use App\Models\Message;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 class WhatsAppController extends Controller
@@ -32,10 +33,32 @@ class WhatsAppController extends Controller
         return response()->json(['error' => 'Forbidden'], 403);
     }
 
+    private function forwardWebhook(Request $request): void
+    {
+        $forwardUrl = config('services.whatsapp.forward_url');
+
+        if (! $forwardUrl) {
+            return;
+        }
+
+        try {
+            Http::timeout(3)
+                ->withHeaders([
+                    'X-Hub-Signature-256' => $request->header('X-Hub-Signature-256', ''),
+                    'X-Forwarded-Webhook' => '1',
+                ])
+                ->post($forwardUrl, $request->all());
+        } catch (\Throwable $e) {
+            Log::warning('Webhook forward failed', ['error' => $e->getMessage(), 'url' => $forwardUrl]);
+        }
+    }
+
     public function handleWebhook(Request $request)
     {
         $payload = $request->all();
         Log::info('Webhook received:', $payload);
+
+        $this->forwardWebhook($request);
 
         if (isset($payload['entry'][0]['changes'][0]['value']['messages'][0])) {
             $messageData = $payload['entry'][0]['changes'][0]['value']['messages'][0];
