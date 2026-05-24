@@ -56,6 +56,23 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Public URL (URL canónica del SaaS)
+    |--------------------------------------------------------------------------
+    |
+    | URL pública del SaaS que ven los clientes y que Meta usa para webhooks.
+    | Es SIEMPRE la misma en cualquier entorno (no cambia entre local y prod).
+    | En local sirve para que el panel /settings muestre la URL real que verá
+    | el cliente final, no `http://localhost:8000`.
+    |
+    | Si no se setea, cae a APP_URL (útil para entornos donde no hay un dominio
+    | público diferente).
+    |
+    */
+
+    'public_url' => env('APP_PUBLIC_URL', env('APP_URL', 'http://localhost')),
+
+    /*
+    |--------------------------------------------------------------------------
     | Application Timezone
     |--------------------------------------------------------------------------
     |

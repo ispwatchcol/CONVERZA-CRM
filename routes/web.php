@@ -38,12 +38,14 @@ Route::middleware('auth')->group(function () {
     Route::post('/contacts', [ContactController::class, 'store'])->name('contacts.store');
     Route::put('/contacts/{contact}', [ContactController::class, 'update'])->name('contacts.update');
     Route::delete('/contacts/{contact}', [ContactController::class, 'destroy'])->name('contacts.destroy');
+    Route::get('/contacts/{contact}/chat', [ContactController::class, 'chat'])->name('contacts.chat');
 
     // Labels
     Route::get('/labels', [LabelController::class, 'index'])->name('labels.index');
     Route::post('/labels', [LabelController::class, 'store'])->name('labels.store');
     Route::put('/labels/{label}', [LabelController::class, 'update'])->name('labels.update');
     Route::delete('/labels/{label}', [LabelController::class, 'destroy'])->name('labels.destroy');
+    Route::post('/labels/load-samples', [LabelController::class, 'loadSamples'])->name('labels.load-samples');
 
     // Chat
     Route::get('/chat', [ChatController::class, 'index'])->name('chat.index');
@@ -77,16 +79,27 @@ Route::middleware('auth')->group(function () {
     Route::get('/quick-replies', [QuickReplyController::class, 'index'])->name('quick-replies.index');
     Route::post('/quick-replies', [QuickReplyController::class, 'store'])->name('quick-replies.store');
     Route::put('/quick-replies/{quickReply}', [QuickReplyController::class, 'update'])->name('quick-replies.update');
+    Route::patch('/quick-replies/{quickReply}/toggle', [QuickReplyController::class, 'toggle'])->name('quick-replies.toggle');
+    Route::post('/quick-replies/{quickReply}/duplicate', [QuickReplyController::class, 'duplicate'])->name('quick-replies.duplicate');
+    Route::post('/quick-replies/load-samples', [QuickReplyController::class, 'loadSamples'])->name('quick-replies.load-samples');
     Route::delete('/quick-replies/{quickReply}', [QuickReplyController::class, 'destroy'])->name('quick-replies.destroy');
 
     // Closing Notes
     Route::get('/closing-notes', [ClosingNoteController::class, 'index'])->name('closing-notes.index');
     Route::post('/closing-notes', [ClosingNoteController::class, 'store'])->name('closing-notes.store');
+    Route::put('/closing-notes/{closingNote}', [ClosingNoteController::class, 'update'])->name('closing-notes.update');
+    Route::delete('/closing-notes/{closingNote}', [ClosingNoteController::class, 'destroy'])->name('closing-notes.destroy');
+    Route::post('/closing-notes/{closingNote}/reopen', [ClosingNoteController::class, 'reopen'])->name('closing-notes.reopen');
 
     // Metrics
     Route::get('/metrics', [MetricsController::class, 'index'])->name('metrics.index');
 
     // Settings
     Route::get('/settings', [SettingsController::class, 'index'])->name('settings.index');
-    Route::post('/settings', [SettingsController::class, 'update'])->name('settings.update');
+    Route::put('/settings/profile', [SettingsController::class, 'updateProfile'])->name('settings.profile.update');
+    Route::put('/settings/whatsapp', [SettingsController::class, 'updateWhatsApp'])->name('settings.whatsapp.update');
+    Route::post('/settings/whatsapp/test', [SettingsController::class, 'testWhatsAppConnection'])->name('settings.whatsapp.test');
+    Route::get('/settings/ispwatch/status', [SettingsController::class, 'ispwatchStatus'])->name('settings.ispwatch.status');
+    // La vinculación con ispwatch NO es editable desde la UI: se hace con
+    // `php artisan tenant:link` por el admin del SaaS.
 });

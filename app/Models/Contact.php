@@ -32,4 +32,24 @@ class Contact extends Model
     {
         return $this->name ?: $this->phone;
     }
+
+    /**
+     * Normaliza un teléfono al formato interno (12 dígitos con prefijo país).
+     * Mismas reglas que ChatController::normalizePhone para evitar duplicados
+     * entre contactos creados desde la UI vs los autocreados por el webhook.
+     */
+    public static function normalizePhone(?string $phone): ?string
+    {
+        if ($phone === null) return null;
+
+        $digits = preg_replace('/\D/', '', $phone);
+        if (! $digits) return null;
+
+        // Si son 10 dígitos empezando en 3 (móvil CO) → agregar prefijo 57.
+        if (strlen($digits) === 10 && str_starts_with($digits, '3')) {
+            $digits = '57' . $digits;
+        }
+
+        return $digits;
+    }
 }

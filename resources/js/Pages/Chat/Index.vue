@@ -9,7 +9,10 @@ const props = defineProps({
     activeConversationId: { type: Number, default: null },
     activePhone: { type: String, default: null },
     activeName: { type: String, default: null },
+    activeStatus: { type: String, default: null },
     quickReplies: { type: Array, default: () => [] },
+    ispwatchCustomer: { type: Object, default: null },
+    ispwatchInvoices: { type: Array, default: () => [] },
 });
 
 const showNewChatModal = ref(false);
@@ -149,6 +152,93 @@ const imgErrors = ref({});
 function onImgError(id) { imgErrors.value[id] = true; }
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ── Cerrar conversación (closing note) ───────────────────────────────────────
+const showCloseModal = ref(false);
+const closingForm = useForm({
+    conversation_id: null,
+    note: '',
+    close_conversation: true,
+});
+
+const closingTemplates = [
+    'Cliente atendido, solicitud resuelta.',
+    'Sin respuesta del cliente. Cerrado por inactividad.',
+    'Problema técnico escalado al equipo correspondiente.',
+    'Información proporcionada exitosamente.',
+    'Cliente confirmó pago de factura pendiente.',
+];
+
+function openCloseModal() {
+    closingForm.reset();
+    closingForm.conversation_id = props.activeConversationId;
+    closingForm.close_conversation = true;
+    showCloseModal.value = true;
+}
+
+function applyClosingTemplate(text) {
+    closingForm.note = closingForm.note ? (closingForm.note + ' ' + text).trim() : text;
+}
+
+function submitClosing() {
+    closingForm.post(route('closing-notes.store'), {
+        preserveScroll: true,
+        onSuccess: () => {
+            showCloseModal.value = false;
+            closingForm.reset();
+            // Refrescar conversaciones + status para que el badge cambie a "Cerrada"
+            router.reload({ only: ['conversations', 'activeStatus'], preserveScroll: true });
+        },
+    });
+}
+
+// ── ISPWatch sidebar helpers ─────────────────────────────────────────────────
+const showCustomerPanel = ref(true);
+
+function formatMoney(amount, currency = 'COP') {
+    if (amount == null) return '—';
+    const n = Number(amount);
+    if (!Number.isFinite(n)) return amount;
+    try {
+        return new Intl.NumberFormat('es-CO', { style: 'currency', currency, maximumFractionDigits: 0 }).format(n);
+    } catch (e) {
+        return n.toLocaleString('es-CO') + ' ' + currency;
+    }
+}
+
+function formatDueDate(iso) {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    return new Intl.DateTimeFormat('es-CO', { day: '2-digit', month: 'short', year: 'numeric' }).format(d);
+}
+
+function isOverdue(iso) {
+    if (!iso) return false;
+    return new Date(iso).getTime() < Date.now();
+}
+
+function serviceStatusClass(status) {
+    const s = (status || '').toLowerCase();
+    if (['activo', 'active', 'enabled'].includes(s)) return 'bg-green-100 text-green-700';
+    if (['suspendido', 'suspended', 'inactivo'].includes(s)) return 'bg-red-100 text-red-700';
+    if (['pendiente', 'pending'].includes(s)) return 'bg-yellow-100 text-yellow-700';
+    return 'bg-gray-100 text-gray-700';
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── Location helpers ─────────────────────────────────────────────────────────
+const COORDS_REGEX = /(-?\d+\.\d+)\s*,\s*(-?\d+\.\d+)/;
+
+function locationCoords(body) {
+    const m = body?.match(COORDS_REGEX);
+    return m ? `${m[1]}, ${m[2]}` : null;
+}
+
+function googleMapsUrl(body) {
+    const m = body?.match(COORDS_REGEX);
+    return m ? `https://www.google.com/maps?q=${m[1]},${m[2]}` : null;
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 // Polling
 let pollingInterval = null;
 onMounted(() => {
@@ -194,7 +284,12 @@ onUnmounted(() => { if (pollingInterval) clearInterval(pollingInterval); });
                             </div>
                             <div class="ml-3 flex-1 min-w-0">
                                 <div class="flex justify-between items-baseline mb-0.5">
-                                    <h3 class="text-sm font-medium text-gray-900 truncate">{{ conv.name }}</h3>
+                                    <h3 class="text-sm font-medium text-gray-900 truncate flex items-center gap-1.5">
+                                        {{ conv.name }}
+                                        <span v-if="conv.status === 'closed'" class="px-1.5 py-0.5 rounded text-[9px] uppercase font-semibold tracking-wide bg-gray-100 text-gray-500">
+                                            Cerrada
+                                        </span>
+                                    </h3>
                                     <span class="text-[10px] text-gray-400 ml-2 shrink-0">{{ formatDate(conv.last_message_at) }}</span>
                                 </div>
                                 <p class="text-xs text-gray-500 truncate">
@@ -227,10 +322,22 @@ onUnmounted(() => { if (pollingInterval) clearInterval(pollingInterval); });
                         <div class="w-10 h-10 rounded-full bg-gradient-to-br from-accent to-accent-light flex items-center justify-center text-white font-bold shrink-0">
                             {{ (activeName || '?')[0].toUpperCase() }}
                         </div>
-                        <div class="ml-3">
-                            <h2 class="text-sm font-semibold text-gray-900">{{ activeName }}</h2>
-                            <p class="text-[11px] text-accent">En línea</p>
+                        <div class="ml-3 flex-1 min-w-0">
+                            <h2 class="text-sm font-semibold text-gray-900 truncate">{{ activeName }}</h2>
+                            <p v-if="activeStatus === 'closed'" class="text-[11px] text-gray-500 flex items-center gap-1">
+                                <span class="w-1.5 h-1.5 rounded-full bg-gray-400"></span>
+                                Conversación cerrada
+                            </p>
+                            <p v-else class="text-[11px] text-accent flex items-center gap-1">
+                                <span class="w-1.5 h-1.5 rounded-full bg-accent"></span>
+                                En línea
+                            </p>
                         </div>
+                        <button v-if="activeStatus !== 'closed'" @click="openCloseModal"
+                                class="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 rounded-lg text-xs font-medium text-gray-700 hover:bg-gray-50 hover:border-gray-300 transition">
+                            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                            Cerrar
+                        </button>
                     </div>
 
                     <!-- Messages -->
@@ -388,6 +495,25 @@ onUnmounted(() => { if (pollingInterval) clearInterval(pollingInterval); });
                                     </div>
                                 </template>
 
+                                <template v-else-if="msg.type === 'location' && googleMapsUrl(msg.body)">
+                                    <a
+                                        :href="googleMapsUrl(msg.body)"
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        class="flex items-center gap-2.5 px-3 py-2.5 hover:bg-black/5 transition min-w-[220px]"
+                                    >
+                                        <div class="w-10 h-10 rounded-full flex items-center justify-center shrink-0"
+                                             :class="msg.status === 'sent' ? 'bg-green-500' : 'bg-accent'">
+                                            <svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1115 0z"/></svg>
+                                        </div>
+                                        <div class="min-w-0 flex-1">
+                                            <p class="text-sm font-medium text-gray-900">Ubicación compartida</p>
+                                            <p class="text-[10px] text-gray-500 truncate">{{ locationCoords(msg.body) }} · Abrir en Maps</p>
+                                        </div>
+                                        <svg class="w-4 h-4 text-gray-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"/></svg>
+                                    </a>
+                                </template>
+
                                 <template v-else-if="msg.type === 'document'">
                                     <a
                                         v-if="msg.media_url"
@@ -459,7 +585,204 @@ onUnmounted(() => { if (pollingInterval) clearInterval(pollingInterval); });
                     <p class="text-gray-400 max-w-md text-sm">Selecciona una conversación o inicia un nuevo chat</p>
                 </div>
             </div>
+
+            <!-- ─── Customer Sidebar (ISPWatch) ───────────────────────────────── -->
+            <aside
+                v-if="activeConversationId && showCustomerPanel"
+                class="hidden lg:flex w-80 xl:w-96 border-l border-gray-200 bg-white flex-col shrink-0"
+            >
+                <!-- Header -->
+                <div class="p-4 border-b border-gray-100 shrink-0">
+                    <div class="flex items-start gap-3">
+                        <div class="w-12 h-12 rounded-full bg-gradient-to-br from-accent to-accent-light flex items-center justify-center text-white font-bold shrink-0">
+                            {{ (ispwatchCustomer?.name || activeName || '?')[0].toUpperCase() }}
+                        </div>
+                        <div class="flex-1 min-w-0">
+                            <h3 class="text-sm font-semibold text-gray-900 truncate">
+                                {{ ispwatchCustomer?.name || activeName }}
+                            </h3>
+                            <p class="text-xs text-gray-500 truncate">{{ formatPhone(activePhone) }}</p>
+                            <div class="mt-2 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium"
+                                 :class="ispwatchCustomer ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'">
+                                <span class="w-1.5 h-1.5 rounded-full" :class="ispwatchCustomer ? 'bg-emerald-500' : 'bg-amber-500'"></span>
+                                {{ ispwatchCustomer ? 'Cliente ISPWatch' : 'No registrado en ISPWatch' }}
+                            </div>
+                        </div>
+                        <button @click="showCustomerPanel = false" class="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition" title="Ocultar panel">
+                            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Body -->
+                <div class="flex-1 overflow-y-auto p-4 space-y-4">
+                    <!-- Caso: cliente encontrado en ispwatch -->
+                    <template v-if="ispwatchCustomer">
+                        <!-- Servicio -->
+                        <section class="bg-gray-50 rounded-xl p-3">
+                            <h4 class="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-2">Servicio</h4>
+                            <div class="flex items-center justify-between mb-2">
+                                <span class="text-xs text-gray-600">Estado</span>
+                                <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold capitalize" :class="serviceStatusClass(ispwatchCustomer.service_status)">
+                                    {{ ispwatchCustomer.service_status || 'desconocido' }}
+                                </span>
+                            </div>
+                            <div v-if="ispwatchCustomer.pppoe_username" class="flex items-center justify-between mb-1.5">
+                                <span class="text-xs text-gray-600">PPPoE</span>
+                                <span class="text-xs font-mono text-gray-900">{{ ispwatchCustomer.pppoe_username }}</span>
+                            </div>
+                            <div v-if="ispwatchCustomer.ip_user" class="flex items-center justify-between">
+                                <span class="text-xs text-gray-600">IP</span>
+                                <span class="text-xs font-mono text-gray-900">{{ ispwatchCustomer.ip_user }}</span>
+                            </div>
+                        </section>
+
+                        <!-- Cuenta -->
+                        <section class="bg-gray-50 rounded-xl p-3">
+                            <h4 class="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-2">Cuenta</h4>
+                            <div class="flex items-center justify-between">
+                                <span class="text-xs text-gray-600">Saldo a favor</span>
+                                <span class="text-sm font-semibold" :class="Number(ispwatchCustomer.credit_balance) > 0 ? 'text-emerald-600' : 'text-gray-900'">
+                                    {{ formatMoney(ispwatchCustomer.credit_balance) }}
+                                </span>
+                            </div>
+                        </section>
+
+                        <!-- Facturas pendientes -->
+                        <section>
+                            <div class="flex items-center justify-between mb-2 px-1">
+                                <h4 class="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Facturas pendientes</h4>
+                                <span v-if="ispwatchInvoices.length" class="text-[10px] font-semibold text-gray-400">{{ ispwatchInvoices.length }}</span>
+                            </div>
+                            <div v-if="ispwatchInvoices.length" class="space-y-2">
+                                <div v-for="inv in ispwatchInvoices" :key="inv.id"
+                                     class="bg-white border border-gray-100 rounded-xl p-3 shadow-sm">
+                                    <div class="flex items-start justify-between mb-1">
+                                        <div class="min-w-0">
+                                            <p class="text-xs font-semibold text-gray-900">#{{ inv.number }}</p>
+                                            <p class="text-[10px]" :class="isOverdue(inv.due_date) ? 'text-red-600 font-medium' : 'text-gray-500'">
+                                                {{ isOverdue(inv.due_date) ? 'Vencida · ' : 'Vence ' }}{{ formatDueDate(inv.due_date) }}
+                                            </p>
+                                        </div>
+                                        <span class="px-1.5 py-0.5 rounded text-[9px] uppercase font-semibold tracking-wide bg-gray-100 text-gray-600">
+                                            {{ inv.status }}
+                                        </span>
+                                    </div>
+                                    <div class="flex items-end justify-between pt-1.5 border-t border-gray-50">
+                                        <span class="text-[10px] text-gray-400">Saldo</span>
+                                        <span class="text-sm font-bold text-red-600">{{ formatMoney(inv.balance_due, inv.currency) }}</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div v-else class="bg-emerald-50 border border-emerald-100 rounded-xl p-3 flex items-center gap-2">
+                                <svg class="w-4 h-4 text-emerald-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                                <p class="text-xs text-emerald-700">Sin facturas pendientes</p>
+                            </div>
+                        </section>
+
+                        <!-- Contacto -->
+                        <section class="bg-gray-50 rounded-xl p-3">
+                            <h4 class="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-2">Contacto</h4>
+                            <div v-if="ispwatchCustomer.cedula" class="flex items-center justify-between mb-1.5">
+                                <span class="text-xs text-gray-600">Cédula</span>
+                                <span class="text-xs text-gray-900">{{ ispwatchCustomer.cedula }}</span>
+                            </div>
+                            <div v-if="ispwatchCustomer.email" class="flex items-center justify-between mb-1.5">
+                                <span class="text-xs text-gray-600">Email</span>
+                                <span class="text-xs text-gray-900 truncate ml-2">{{ ispwatchCustomer.email }}</span>
+                            </div>
+                            <div v-if="ispwatchCustomer.address" class="flex items-start justify-between">
+                                <span class="text-xs text-gray-600 shrink-0">Dirección</span>
+                                <span class="text-xs text-gray-900 text-right ml-2">{{ ispwatchCustomer.address }}</span>
+                            </div>
+                        </section>
+                    </template>
+
+                    <!-- Caso: prospecto (no en ispwatch) -->
+                    <template v-else>
+                        <div class="bg-amber-50 border border-amber-100 rounded-xl p-4">
+                            <div class="flex items-start gap-2.5">
+                                <svg class="w-5 h-5 text-amber-500 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/></svg>
+                                <div class="min-w-0">
+                                    <p class="text-sm font-semibold text-amber-900">Prospecto</p>
+                                    <p class="text-xs text-amber-700 mt-0.5">
+                                        Este número no está registrado como cliente en ISPWatch. Mostramos el nombre que el contacto tiene configurado en WhatsApp.
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="text-center py-6 text-gray-400">
+                            <svg class="w-10 h-10 mx-auto mb-2 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z"/></svg>
+                            <p class="text-xs">Sin servicio activo, facturas ni datos de cuenta.</p>
+                        </div>
+                    </template>
+                </div>
+            </aside>
+
+            <!-- Toggle button para reabrir el panel cuando está oculto -->
+            <button
+                v-if="activeConversationId && !showCustomerPanel"
+                @click="showCustomerPanel = true"
+                class="hidden lg:flex absolute right-3 top-20 z-20 items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-200 rounded-full shadow-sm text-xs font-medium text-gray-700 hover:bg-gray-50 transition"
+                title="Mostrar ficha del cliente"
+            >
+                <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M17.982 18.725A7.488 7.488 0 0012 15.75a7.488 7.488 0 00-5.982 2.975m11.963 0a9 9 0 10-11.963 0m11.963 0A8.966 8.966 0 0112 21a8.966 8.966 0 01-5.982-2.275M15 9.75a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                Ficha
+            </button>
         </div>
+
+        <!-- ═══════════════ Modal: Cerrar conversación ═══════════════ -->
+        <Teleport to="body">
+            <div v-if="showCloseModal" class="fixed inset-0 z-[60] flex items-center justify-center p-4">
+                <div class="fixed inset-0 bg-black/50" @click="showCloseModal = false"></div>
+                <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg animate-scale-in">
+                    <div class="p-6">
+                        <div class="flex items-start gap-3 mb-4">
+                            <div class="w-10 h-10 rounded-full bg-accent/10 flex items-center justify-center shrink-0">
+                                <svg class="w-5 h-5 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                            </div>
+                            <div class="min-w-0">
+                                <h3 class="text-lg font-bold text-gray-900">Cerrar conversación</h3>
+                                <p class="text-xs text-gray-500 truncate">{{ activeName }}</p>
+                            </div>
+                        </div>
+
+                        <form @submit.prevent="submitClosing" class="space-y-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Nota de cierre</label>
+                                <textarea v-model="closingForm.note" rows="4" placeholder="¿Cómo se resolvió? ¿Qué quedó pendiente?"
+                                          class="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-accent/30 focus:border-accent resize-none"
+                                          :class="{ 'border-red-400': closingForm.errors.note }"></textarea>
+                                <p v-if="closingForm.errors.note" class="text-red-500 text-xs mt-1">{{ closingForm.errors.note }}</p>
+                            </div>
+
+                            <div>
+                                <p class="text-[10px] text-gray-500 uppercase tracking-wider font-semibold mb-1.5">Plantillas rápidas</p>
+                                <div class="flex flex-wrap gap-1.5">
+                                    <button v-for="(tpl, i) in closingTemplates" :key="i" type="button" @click="applyClosingTemplate(tpl)"
+                                            class="px-2.5 py-1 bg-gray-100 hover:bg-gray-200 rounded-lg text-[11px] text-gray-700 transition">
+                                        {{ tpl.slice(0, 40) }}{{ tpl.length > 40 ? '…' : '' }}
+                                    </button>
+                                </div>
+                            </div>
+
+                            <label class="flex items-center cursor-pointer pt-1">
+                                <input v-model="closingForm.close_conversation" type="checkbox" class="rounded border-gray-300 text-accent focus:ring-accent/30">
+                                <span class="ml-2 text-sm text-gray-700">Cerrar la conversación al guardar</span>
+                            </label>
+                            <p v-if="!closingForm.close_conversation" class="text-[11px] text-amber-600 -mt-2 ml-6">Sin esto, queda solo como nota interna y la conversación sigue abierta.</p>
+
+                            <div class="flex justify-end gap-3 pt-3 border-t border-gray-50">
+                                <button type="button" @click="showCloseModal = false" class="px-4 py-2.5 text-sm text-gray-600 hover:bg-gray-100 rounded-xl transition">Cancelar</button>
+                                <button type="submit" :disabled="closingForm.processing || !closingForm.note" class="px-5 py-2.5 bg-accent text-white rounded-xl text-sm font-medium hover:bg-accent-hover transition disabled:opacity-50">
+                                    {{ closingForm.processing ? 'Guardando…' : 'Guardar' }}
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </Teleport>
 
         <!-- New Chat Modal -->
         <Teleport to="body">
