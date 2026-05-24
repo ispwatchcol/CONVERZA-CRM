@@ -99,6 +99,7 @@ class ChatController extends Controller
             'activeConversationId' => $activeConversationId ? (int) $activeConversationId : null,
             'activePhone' => $activeConversation?->contact?->phone,
             'activeName' => $activeConversation?->contact?->name ?: $activeConversation?->contact?->phone,
+            'activeStatus' => $activeConversation?->status,
             'quickReplies' => $quickReplies,
             'ispwatchCustomer' => $ispwatchCustomer,
             'ispwatchInvoices' => $ispwatchInvoices,

@@ -82,6 +82,9 @@ Route::middleware('auth')->group(function () {
     // Closing Notes
     Route::get('/closing-notes', [ClosingNoteController::class, 'index'])->name('closing-notes.index');
     Route::post('/closing-notes', [ClosingNoteController::class, 'store'])->name('closing-notes.store');
+    Route::put('/closing-notes/{closingNote}', [ClosingNoteController::class, 'update'])->name('closing-notes.update');
+    Route::delete('/closing-notes/{closingNote}', [ClosingNoteController::class, 'destroy'])->name('closing-notes.destroy');
+    Route::post('/closing-notes/{closingNote}/reopen', [ClosingNoteController::class, 'reopen'])->name('closing-notes.reopen');
 
     // Metrics
     Route::get('/metrics', [MetricsController::class, 'index'])->name('metrics.index');

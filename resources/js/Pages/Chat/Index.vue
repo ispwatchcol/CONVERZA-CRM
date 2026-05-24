@@ -9,6 +9,7 @@ const props = defineProps({
     activeConversationId: { type: Number, default: null },
     activePhone: { type: String, default: null },
     activeName: { type: String, default: null },
+    activeStatus: { type: String, default: null },
     quickReplies: { type: Array, default: () => [] },
     ispwatchCustomer: { type: Object, default: null },
     ispwatchInvoices: { type: Array, default: () => [] },
@@ -151,6 +152,45 @@ const imgErrors = ref({});
 function onImgError(id) { imgErrors.value[id] = true; }
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ── Cerrar conversación (closing note) ───────────────────────────────────────
+const showCloseModal = ref(false);
+const closingForm = useForm({
+    conversation_id: null,
+    note: '',
+    close_conversation: true,
+});
+
+const closingTemplates = [
+    'Cliente atendido, solicitud resuelta.',
+    'Sin respuesta del cliente. Cerrado por inactividad.',
+    'Problema técnico escalado al equipo correspondiente.',
+    'Información proporcionada exitosamente.',
+    'Cliente confirmó pago de factura pendiente.',
+];
+
+function openCloseModal() {
+    closingForm.reset();
+    closingForm.conversation_id = props.activeConversationId;
+    closingForm.close_conversation = true;
+    showCloseModal.value = true;
+}
+
+function applyClosingTemplate(text) {
+    closingForm.note = closingForm.note ? (closingForm.note + ' ' + text).trim() : text;
+}
+
+function submitClosing() {
+    closingForm.post(route('closing-notes.store'), {
+        preserveScroll: true,
+        onSuccess: () => {
+            showCloseModal.value = false;
+            closingForm.reset();
+            // Refrescar conversaciones + status para que el badge cambie a "Cerrada"
+            router.reload({ only: ['conversations', 'activeStatus'], preserveScroll: true });
+        },
+    });
+}
+
 // ── ISPWatch sidebar helpers ─────────────────────────────────────────────────
 const showCustomerPanel = ref(true);
 
@@ -244,7 +284,12 @@ onUnmounted(() => { if (pollingInterval) clearInterval(pollingInterval); });
                             </div>
                             <div class="ml-3 flex-1 min-w-0">
                                 <div class="flex justify-between items-baseline mb-0.5">
-                                    <h3 class="text-sm font-medium text-gray-900 truncate">{{ conv.name }}</h3>
+                                    <h3 class="text-sm font-medium text-gray-900 truncate flex items-center gap-1.5">
+                                        {{ conv.name }}
+                                        <span v-if="conv.status === 'closed'" class="px-1.5 py-0.5 rounded text-[9px] uppercase font-semibold tracking-wide bg-gray-100 text-gray-500">
+                                            Cerrada
+                                        </span>
+                                    </h3>
                                     <span class="text-[10px] text-gray-400 ml-2 shrink-0">{{ formatDate(conv.last_message_at) }}</span>
                                 </div>
                                 <p class="text-xs text-gray-500 truncate">
@@ -277,10 +322,22 @@ onUnmounted(() => { if (pollingInterval) clearInterval(pollingInterval); });
                         <div class="w-10 h-10 rounded-full bg-gradient-to-br from-accent to-accent-light flex items-center justify-center text-white font-bold shrink-0">
                             {{ (activeName || '?')[0].toUpperCase() }}
                         </div>
-                        <div class="ml-3">
-                            <h2 class="text-sm font-semibold text-gray-900">{{ activeName }}</h2>
-                            <p class="text-[11px] text-accent">En línea</p>
+                        <div class="ml-3 flex-1 min-w-0">
+                            <h2 class="text-sm font-semibold text-gray-900 truncate">{{ activeName }}</h2>
+                            <p v-if="activeStatus === 'closed'" class="text-[11px] text-gray-500 flex items-center gap-1">
+                                <span class="w-1.5 h-1.5 rounded-full bg-gray-400"></span>
+                                Conversación cerrada
+                            </p>
+                            <p v-else class="text-[11px] text-accent flex items-center gap-1">
+                                <span class="w-1.5 h-1.5 rounded-full bg-accent"></span>
+                                En línea
+                            </p>
                         </div>
+                        <button v-if="activeStatus !== 'closed'" @click="openCloseModal"
+                                class="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 rounded-lg text-xs font-medium text-gray-700 hover:bg-gray-50 hover:border-gray-300 transition">
+                            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                            Cerrar
+                        </button>
                     </div>
 
                     <!-- Messages -->
@@ -673,6 +730,59 @@ onUnmounted(() => { if (pollingInterval) clearInterval(pollingInterval); });
                 Ficha
             </button>
         </div>
+
+        <!-- ═══════════════ Modal: Cerrar conversación ═══════════════ -->
+        <Teleport to="body">
+            <div v-if="showCloseModal" class="fixed inset-0 z-[60] flex items-center justify-center p-4">
+                <div class="fixed inset-0 bg-black/50" @click="showCloseModal = false"></div>
+                <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg animate-scale-in">
+                    <div class="p-6">
+                        <div class="flex items-start gap-3 mb-4">
+                            <div class="w-10 h-10 rounded-full bg-accent/10 flex items-center justify-center shrink-0">
+                                <svg class="w-5 h-5 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                            </div>
+                            <div class="min-w-0">
+                                <h3 class="text-lg font-bold text-gray-900">Cerrar conversación</h3>
+                                <p class="text-xs text-gray-500 truncate">{{ activeName }}</p>
+                            </div>
+                        </div>
+
+                        <form @submit.prevent="submitClosing" class="space-y-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Nota de cierre</label>
+                                <textarea v-model="closingForm.note" rows="4" placeholder="¿Cómo se resolvió? ¿Qué quedó pendiente?"
+                                          class="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-accent/30 focus:border-accent resize-none"
+                                          :class="{ 'border-red-400': closingForm.errors.note }"></textarea>
+                                <p v-if="closingForm.errors.note" class="text-red-500 text-xs mt-1">{{ closingForm.errors.note }}</p>
+                            </div>
+
+                            <div>
+                                <p class="text-[10px] text-gray-500 uppercase tracking-wider font-semibold mb-1.5">Plantillas rápidas</p>
+                                <div class="flex flex-wrap gap-1.5">
+                                    <button v-for="(tpl, i) in closingTemplates" :key="i" type="button" @click="applyClosingTemplate(tpl)"
+                                            class="px-2.5 py-1 bg-gray-100 hover:bg-gray-200 rounded-lg text-[11px] text-gray-700 transition">
+                                        {{ tpl.slice(0, 40) }}{{ tpl.length > 40 ? '…' : '' }}
+                                    </button>
+                                </div>
+                            </div>
+
+                            <label class="flex items-center cursor-pointer pt-1">
+                                <input v-model="closingForm.close_conversation" type="checkbox" class="rounded border-gray-300 text-accent focus:ring-accent/30">
+                                <span class="ml-2 text-sm text-gray-700">Cerrar la conversación al guardar</span>
+                            </label>
+                            <p v-if="!closingForm.close_conversation" class="text-[11px] text-amber-600 -mt-2 ml-6">Sin esto, queda solo como nota interna y la conversación sigue abierta.</p>
+
+                            <div class="flex justify-end gap-3 pt-3 border-t border-gray-50">
+                                <button type="button" @click="showCloseModal = false" class="px-4 py-2.5 text-sm text-gray-600 hover:bg-gray-100 rounded-xl transition">Cancelar</button>
+                                <button type="submit" :disabled="closingForm.processing || !closingForm.note" class="px-5 py-2.5 bg-accent text-white rounded-xl text-sm font-medium hover:bg-accent-hover transition disabled:opacity-50">
+                                    {{ closingForm.processing ? 'Guardando…' : 'Guardar' }}
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </Teleport>
 
         <!-- New Chat Modal -->
         <Teleport to="body">
