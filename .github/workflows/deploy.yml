@@ -1,0 +1,49 @@
+name: Deploy to production
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} << 'EOF'
+            set -e
+            cd /var/www/converza-crm
+
+            echo "==> Pulling latest changes"
+            git pull origin main
+
+            echo "==> Installing PHP dependencies"
+            composer install --no-dev --optimize-autoloader --no-interaction
+
+            echo "==> Installing Node dependencies & building assets"
+            npm ci
+            npm run build
+
+            echo "==> Running migrations"
+            php artisan migrate --force
+
+            echo "==> Caching config & routes"
+            php artisan config:cache
+            php artisan route:cache
+            php artisan view:cache
+
+            echo "==> Restarting PHP-FPM"
+            sudo systemctl reload php8.2-fpm
+
+            echo "==> Deploy complete"
+          EOF
