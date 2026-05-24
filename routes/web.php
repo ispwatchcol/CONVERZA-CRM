@@ -88,5 +88,10 @@ Route::middleware('auth')->group(function () {
 
     // Settings
     Route::get('/settings', [SettingsController::class, 'index'])->name('settings.index');
-    Route::post('/settings', [SettingsController::class, 'update'])->name('settings.update');
+    Route::put('/settings/profile', [SettingsController::class, 'updateProfile'])->name('settings.profile.update');
+    Route::put('/settings/whatsapp', [SettingsController::class, 'updateWhatsApp'])->name('settings.whatsapp.update');
+    Route::post('/settings/whatsapp/test', [SettingsController::class, 'testWhatsAppConnection'])->name('settings.whatsapp.test');
+    Route::get('/settings/ispwatch/status', [SettingsController::class, 'ispwatchStatus'])->name('settings.ispwatch.status');
+    // La vinculación con ispwatch NO es editable desde la UI: se hace con
+    // `php artisan tenant:link` por el admin del SaaS.
 });

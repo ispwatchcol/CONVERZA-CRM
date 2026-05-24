@@ -56,6 +56,12 @@ php artisan migrate
 ```env
 APP_ENV=local
 APP_URL=http://127.0.0.1:8000
+
+# URL pública canónica del SaaS — siempre es la misma para todos los clientes
+# y no cambia entre local y prod. La usa /settings para mostrar la "Webhook URL
+# para Meta" y la "URL pública" en el card de workspace.
+APP_PUBLIC_URL=https://converza-crm.duckdns.org
+
 DB_CONNECTION=sqlite
 
 WHATSAPP_API_URL=https://graph.facebook.com/v18.0/<PHONE_NUMBER_ID>
@@ -241,6 +247,55 @@ Producción vuelve a procesar los webhooks sin reenviar nada.
 
 ---
 
+## Multi-tenancy e integración con ISPWatch
+
+Converza es **multi-tenant**: cada cliente del SaaS vive en su propio `tenant` con credenciales de WhatsApp separadas y una vinculación opcional a un cliente de **ISPWatch** (sistema externo de gestión IP, fuente de verdad de clientes/facturas).
+
+### Cómo se conecta cada pieza
+
+| Tabla en Converza | Apunta a | Para qué |
+|---|---|---|
+| `tenants.wa_*` | Meta Cloud API (cifrado) | Cada tenant trae su propia cuenta de WhatsApp Business |
+| `tenants.ispwatch_tenant_id` | `ispwatch.tenant.id` | FK lógico al cliente ISP en la BD de ISPWatch (Postgres/Supabase, read-only) |
+
+Cuando un contacto escribe por WhatsApp y abres la conversación, el sidebar de la derecha hace un lookup en ISPWatch por teléfono y muestra: estado del servicio, PPPoE, IP, saldo y facturas pendientes. Si el número no está en ISPWatch, se trata como prospecto.
+
+### Vincular un tenant Converza con uno de ISPWatch
+
+La vinculación es un acto de **administración del SaaS** — el cliente final no la ve ni la edita desde `/settings`. Solo el admin (tú) la hace por línea de comandos:
+
+```bash
+# Listar todos los tenants Converza y su vínculo actual
+php artisan tenant:link --list
+
+# Vincular tenant Converza #1 con el cliente ISPWatch #17
+php artisan tenant:link 1 17
+
+# Quitar la vinculación
+php artisan tenant:link 1 --unlink
+```
+
+El comando valida que el `ispwatch_tenant_id` exista realmente en la BD de ISPWatch antes de guardar, avisa si otro tenant Converza ya está vinculado al mismo cliente ISPWatch, e invalida el caché del repo para que el cambio se vea de inmediato en `/settings` y en el sidebar del chat.
+
+### Cómo lee Converza la BD de ISPWatch
+
+- Conexión `ispwatch` declarada en [config/database.php](config/database.php) (driver `pgsql`, variables `ISPWATCH_DB_*` en `.env`).
+- **Solo lectura**: Converza nunca escribe en ispwatch. Acceso encapsulado en [app/Services/Ispwatch/IspwatchRepository.php](app/Services/Ispwatch/IspwatchRepository.php) con caché de 60s.
+- Mirror models en `app/Models/Ispwatch/*` con `protected $connection = 'ispwatch'`.
+- En producción, idealmente usar el rol `converza_reader` (SELECT-only) en Supabase — ver `docs/ispwatch-readonly.sql`.
+
+### Configuración por tenant en `/settings`
+
+Lo que el admin del tenant SÍ puede editar desde la UI:
+- **Perfil**: nombre, slug, activo/inactivo
+- **WhatsApp**: Phone Number ID, Business Account ID, Access Token (cifrado), App Secret (cifrado), Verify Token, con un botón "Probar conexión" que hace `GET graph.facebook.com/v20.0/{phone_id}` para validar credenciales sin enviar mensajes.
+
+Lo que es **solo informativo** (no editable):
+- Vinculación con ISPWatch (gestionada por `tenant:link`)
+- URL del workspace (es la misma para todos los clientes — `APP_URL`)
+
+---
+
 ## Estructura del repo
 
 ```
@@ -269,6 +324,12 @@ config/services.php       # Config WhatsApp + forward_url
 npm run dev                          # Levantar todo
 php artisan migrate:fresh --seed     # Reset DB local
 php artisan tinker                   # Shell interactivo
+php artisan cache:clear              # Si ISPWatch cambió pero el sidebar muestra data vieja
+
+# Multi-tenancy (admin del SaaS)
+php artisan tenant:link --list       # Ver vinculaciones tenant Converza ↔ ISPWatch
+php artisan tenant:link 1 17         # Vincular Converza #1 con ISPWatch #17
+php artisan tenant:link 1 --unlink   # Desvincular
 
 # Producción (desde el droplet)
 sudo systemctl reload nginx          # Recargar nginx

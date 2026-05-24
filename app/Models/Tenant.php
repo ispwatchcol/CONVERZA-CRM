@@ -51,6 +51,8 @@ class Tenant extends Model
 
     public function hasWhatsAppConfigured(): bool
     {
-        return filled($this->wa_phone_number_id) && filled($this->wa_access_token);
+        // Usamos getRawOriginal para evitar disparar el cast 'encrypted'
+        // si el valor en BD no es un payload válido (texto plano legado o APP_KEY vieja).
+        return filled($this->wa_phone_number_id) && filled($this->getRawOriginal('wa_access_token'));
     }
 }

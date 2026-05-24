@@ -6,18 +6,17 @@ use App\Models\Contact;
 use App\Models\Conversation;
 use App\Models\Message;
 use App\Models\QuickReply;
+use App\Services\Ispwatch\IspwatchRepository;
 use App\Services\WhatsAppService;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 
 class ChatController extends Controller
 {
-    protected WhatsAppService $whatsappService;
-
-    public function __construct(WhatsAppService $whatsappService)
-    {
-        $this->whatsappService = $whatsappService;
-    }
+    public function __construct(
+        protected WhatsAppService $whatsappService,
+        protected IspwatchRepository $ispwatch,
+    ) {}
 
     private function normalizePhone($phone)
     {
@@ -89,6 +88,11 @@ class ChatController extends Controller
 
         $quickReplies = QuickReply::where('is_active', true)->get(['id', 'title', 'body', 'shortcut']);
 
+        [$ispwatchCustomer, $ispwatchInvoices] = $this->resolveIspwatchData(
+            $activeConversation?->contact?->phone,
+            $activeConversation?->contact?->name,
+        );
+
         return Inertia::render('Chat/Index', [
             'conversations' => $conversations,
             'activeChat' => $activeChat,
@@ -96,7 +100,47 @@ class ChatController extends Controller
             'activePhone' => $activeConversation?->contact?->phone,
             'activeName' => $activeConversation?->contact?->name ?: $activeConversation?->contact?->phone,
             'quickReplies' => $quickReplies,
+            'ispwatchCustomer' => $ispwatchCustomer,
+            'ispwatchInvoices' => $ispwatchInvoices,
         ]);
+    }
+
+    /**
+     * Resuelve [customer, invoices] desde ispwatch para el teléfono dado.
+     * Devuelve [null, []] si no hay tenant activo, no está linkeado a ispwatch,
+     * no hay teléfono o no hay match en ispwatch.
+     *
+     * $contactName se pasa al repo como tie-break cuando varios clientes en
+     * ispwatch comparten el mismo teléfono (caso real: familiares).
+     *
+     * @return array{0: array<string, mixed>|null, 1: array<int, array<string, mixed>>}
+     */
+    private function resolveIspwatchData(?string $phone, ?string $contactName): array
+    {
+        if (! app()->bound('tenant') || ! $phone) {
+            return [null, []];
+        }
+
+        $tenant = app('tenant');
+        if (! $tenant->ispwatch_tenant_id) {
+            return [null, []];
+        }
+
+        $customer = $this->ispwatch->customerByPhone(
+            (int) $tenant->ispwatch_tenant_id,
+            $phone,
+            $contactName,
+        );
+        if (! $customer) {
+            return [null, []];
+        }
+
+        $invoices = $this->ispwatch->pendingInvoicesForCustomer(
+            (int) $tenant->ispwatch_tenant_id,
+            (int) $customer['user_id'],
+        );
+
+        return [$customer, $invoices];
     }
 
     public function sendMessage(Request $request)
