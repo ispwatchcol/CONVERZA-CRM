@@ -1,6 +1,7 @@
 <script setup>
 import { Link, router, usePage } from '@inertiajs/vue3';
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
+import Logo from '@/Components/Logo.vue';
 
 const page = usePage();
 const sidebarOpen = ref(typeof window !== 'undefined' ? window.innerWidth >= 768 : true);
@@ -131,17 +132,18 @@ onUnmounted(() => document.removeEventListener('keydown', handleEsc));
                  :class="sidebarOpen ? 'px-5 justify-between' : 'justify-center'">
                  
                 <!-- Logo & Title -->
-                <div v-show="sidebarOpen" class="flex items-center space-x-3 overflow-hidden">
-                    <div class="w-9 h-9 rounded-xl bg-accent flex items-center justify-center shrink-0">
-                        <svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                        </svg>
-                    </div>
+                <Link
+                    v-show="sidebarOpen"
+                    :href="route('dashboard')"
+                    class="flex items-center space-x-3 overflow-hidden group"
+                    title="Ir al inicio"
+                >
+                    <Logo size="sm" />
                     <div class="truncate">
-                        <h1 class="text-white font-bold text-lg tracking-tight">CONVERZA</h1>
-                        <p class="text-text-muted text-[10px] uppercase tracking-widest">CRM & Chatbot</p>
+                        <h1 class="text-white font-bold text-lg tracking-tight group-hover:text-accent transition-colors">CONVERZA</h1>
+                        <p class="text-text-muted text-[10px] uppercase tracking-widest">CRM &amp; Chatbot</p>
                     </div>
-                </div>
+                </Link>
 
                 <!-- Hamburger inside sidebar -->
                 <button @click="sidebarOpen = !sidebarOpen" class="p-2 rounded-lg text-gray-400 hover:text-white hover:bg-white/10 transition hidden md:block shrink-0" title="Alternar menú">

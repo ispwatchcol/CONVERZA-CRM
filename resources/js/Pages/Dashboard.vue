@@ -1,5 +1,6 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
+import { Head } from '@inertiajs/vue3';
 
 defineProps({
     stats: Object,
@@ -9,6 +10,7 @@ defineProps({
 </script>
 
 <template>
+    <Head title="Dashboard" />
     <AppLayout>
         <div class="p-4 md:p-6 lg:p-8 animate-fade-in">
             <!-- Stats Grid -->
