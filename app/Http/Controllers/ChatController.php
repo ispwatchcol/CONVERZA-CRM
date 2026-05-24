@@ -61,7 +61,7 @@ class ChatController extends Controller
                         'status' => $msg->status,
                         'type' => $msg->type ?? 'text',
                         'caption' => $msg->caption,
-                        'media_url' => $msg->media_path ? asset('storage/' . $msg->media_path) : null,
+                        'media_url' => $msg->media_path ? route('media.serve', ['path' => $msg->media_path]) : null,
                         'media_mime' => $msg->media_mime,
                         'media_filename' => $msg->media_filename,
                         'created_at' => $msg->created_at->toIso8601String(),
@@ -75,10 +75,15 @@ class ChatController extends Controller
                 ->orderBy('created_at', 'asc')
                 ->get()
                 ->map(fn($msg) => [
-                    'id' => $msg->id,
-                    'body' => $msg->body,
-                    'status' => $msg->status,
-                    'created_at' => $msg->created_at->toIso8601String(),
+                    'id'             => $msg->id,
+                    'body'           => $msg->body,
+                    'status'         => $msg->status,
+                    'type'           => $msg->type ?? 'text',
+                    'caption'        => $msg->caption,
+                    'media_url'      => $msg->media_path ? asset('storage/' . $msg->media_path) : null,
+                    'media_mime'     => $msg->media_mime,
+                    'media_filename' => $msg->media_filename,
+                    'created_at'     => $msg->created_at->toIso8601String(),
                 ]);
         }
 

@@ -45,5 +45,9 @@ jobs:
             echo "==> Restarting PHP-FPM"
             sudo systemctl reload php8.2-fpm
 
+            echo "==> Restarting queue workers (Supervisor)"
+            sudo supervisorctl restart converza-worker:* \
+              || echo "  WARNING: workers not configured yet — run one-time setup from deploy/DEPLOY.md"
+
             echo "==> Deploy complete"
           EOF

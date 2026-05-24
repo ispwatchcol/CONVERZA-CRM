@@ -98,6 +98,57 @@ const filteredConversations = () => {
     return props.conversations.filter(c => c.name?.toLowerCase().includes(s) || c.phone?.includes(s));
 };
 
+// ── Audio player ─────────────────────────────────────────────────────────────
+const audioStates = ref({});
+
+function audioState(id) {
+    if (!audioStates.value[id]) {
+        audioStates.value[id] = { playing: false, currentTime: 0, duration: 0, error: false };
+    }
+    return audioStates.value[id];
+}
+
+function toggleAudio(id) {
+    const el = document.getElementById('audio-' + id);
+    if (!el) return;
+    if (audioState(id).playing) {
+        el.pause();
+    } else {
+        // pause any other playing audio
+        Object.keys(audioStates.value).forEach(otherId => {
+            if (otherId !== String(id) && audioStates.value[otherId].playing) {
+                document.getElementById('audio-' + otherId)?.pause();
+                audioStates.value[otherId].playing = false;
+            }
+        });
+        el.play().catch(() => { audioState(id).error = true; });
+    }
+}
+
+function onAudioPlay(id)        { audioState(id).playing = true; }
+function onAudioPause(id)       { audioState(id).playing = false; }
+function onAudioEnded(id)       { audioState(id).playing = false; audioState(id).currentTime = 0; }
+function onAudioError(id)       { audioState(id).error = true; }
+function onAudioTimeUpdate(id)  { const el = document.getElementById('audio-' + id); if (el) audioState(id).currentTime = el.currentTime; }
+function onAudioMetadata(id)    { const el = document.getElementById('audio-' + id); if (el) audioState(id).duration = el.duration; }
+
+function audioProgress(id) {
+    const s = audioState(id);
+    return s.duration ? (s.currentTime / s.duration) * 100 : 0;
+}
+
+function fmtAudioTime(sec) {
+    if (!sec || isNaN(sec)) return '0:00';
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60);
+    return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+// ── Image error tracking ──────────────────────────────────────────────────────
+const imgErrors = ref({});
+function onImgError(id) { imgErrors.value[id] = true; }
+// ─────────────────────────────────────────────────────────────────────────────
+
 // Polling
 let pollingInterval = null;
 onMounted(() => {
@@ -186,60 +237,95 @@ onUnmounted(() => { if (pollingInterval) clearInterval(pollingInterval); });
                     <div ref="messagesContainer" class="flex-1 overflow-y-auto p-4 space-y-2 z-0 relative">
                         <div v-for="msg in activeChat" :key="msg.id" class="flex animate-fade-in" :class="{ 'justify-end': msg.status === 'sent' }">
 
-                            <!-- ─── Sticker (sin burbuja) ───────────────────────────── -->
-                            <div v-if="msg.type === 'sticker' && msg.media_url" class="max-w-[75%] flex flex-col" :class="msg.status === 'sent' ? 'items-end' : 'items-start'">
-                                <img :src="msg.media_url" alt="sticker" class="max-w-[180px] max-h-[180px] object-contain drop-shadow" />
-                                <div class="mt-1 inline-flex items-center space-x-1 bg-black/60 backdrop-blur-sm rounded-full px-2 py-0.5">
-                                    <span class="text-[10px] text-white/90">{{ formatTime(msg.created_at) }}</span>
-                                    <svg v-if="msg.status === 'sent'" class="h-3 w-3 text-blue-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+                            <!-- ─── Sticker (badge mínimo, no se descarga) ──────────── -->
+                            <div v-if="msg.type === 'sticker'" class="max-w-[75%] flex flex-col" :class="msg.status === 'sent' ? 'items-end' : 'items-start'">
+                                <div class="inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 shadow-sm text-xs text-gray-500 italic"
+                                     :class="msg.status === 'sent' ? 'bg-[#d9fdd3]' : 'bg-white'">
+                                    <span>🎭</span><span>Sticker</span>
+                                </div>
+                                <div class="mt-1 flex items-center gap-1 px-1">
+                                    <span class="text-[10px] text-gray-400">{{ formatTime(msg.created_at) }}</span>
+                                    <svg v-if="msg.status === 'sent'" class="h-3 w-3 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
                                 </div>
                             </div>
 
                             <!-- ─── Imagen ─────────────────────────────────────────── -->
                             <div
-                                v-else-if="msg.type === 'image' && msg.media_url"
+                                v-else-if="msg.type === 'image'"
                                 class="max-w-[75%] rounded-2xl shadow-sm overflow-hidden"
                                 :class="msg.status === 'sent' ? 'bg-[#d9fdd3] rounded-tr-sm' : 'bg-white rounded-tl-sm'"
                             >
-                                <div class="relative p-1">
+                                <!-- Imagen disponible y sin error de carga -->
+                                <div v-if="msg.media_url && !imgErrors[msg.id]" class="relative p-1">
                                     <a :href="msg.media_url" target="_blank" rel="noopener noreferrer" class="block">
-                                        <img :src="msg.media_url" alt="imagen" class="max-w-full max-h-80 rounded-xl object-cover block" />
+                                        <img
+                                            :src="msg.media_url"
+                                            alt="imagen"
+                                            class="max-w-full max-h-80 rounded-xl object-cover block"
+                                            @error="onImgError(msg.id)"
+                                        />
                                     </a>
-                                    <!-- Overlay con hora si NO hay caption -->
                                     <div v-if="!msg.caption" class="absolute bottom-2 right-2 inline-flex items-center space-x-1 bg-black/55 backdrop-blur-sm rounded-full px-2 py-0.5">
                                         <span class="text-[10px] text-white/95">{{ formatTime(msg.created_at) }}</span>
                                         <svg v-if="msg.status === 'sent'" class="h-3 w-3 text-blue-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
                                     </div>
                                 </div>
-                                <!-- Caption + hora abajo si HAY caption -->
+                                <!-- Imagen no disponible o error de carga -->
+                                <div v-else class="flex items-center gap-2.5 px-3 py-3 min-w-[180px]">
+                                    <div class="w-9 h-9 rounded-lg bg-gray-200 flex items-center justify-center shrink-0">
+                                        <svg class="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" /></svg>
+                                    </div>
+                                    <p class="text-sm text-gray-400 italic">Imagen no disponible</p>
+                                </div>
+                                <!-- Caption -->
                                 <div v-if="msg.caption" class="px-3 pb-1.5 pt-0.5">
                                     <p class="text-sm text-gray-900 whitespace-pre-wrap break-words">{{ msg.caption }}</p>
                                     <div class="flex items-center justify-end space-x-1 mt-0.5">
                                         <span class="text-[10px] text-gray-500">{{ formatTime(msg.created_at) }}</span>
                                         <svg v-if="msg.status === 'sent'" class="h-3.5 w-3.5 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
                                     </div>
+                                </div>
+                                <!-- Hora sola cuando no hay caption y la imagen falló -->
+                                <div v-else-if="!msg.media_url || imgErrors[msg.id]" class="flex items-center justify-end gap-1 px-3 pb-1.5">
+                                    <span class="text-[10px] text-gray-500">{{ formatTime(msg.created_at) }}</span>
+                                    <svg v-if="msg.status === 'sent'" class="h-3.5 w-3.5 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
                                 </div>
                             </div>
 
-                            <!-- ─── Video ───────────────────────────────────────────── -->
+                            <!-- ─── Video (enlace de descarga) ───────────────────────── -->
                             <div
-                                v-else-if="msg.type === 'video' && msg.media_url"
+                                v-else-if="msg.type === 'video'"
                                 class="max-w-[75%] rounded-2xl shadow-sm overflow-hidden"
                                 :class="msg.status === 'sent' ? 'bg-[#d9fdd3] rounded-tr-sm' : 'bg-white rounded-tl-sm'"
                             >
-                                <div class="relative p-1">
-                                    <video :src="msg.media_url" controls class="max-w-full max-h-80 rounded-xl block bg-black"></video>
-                                    <div v-if="!msg.caption" class="absolute bottom-3 right-3 inline-flex items-center space-x-1 bg-black/55 backdrop-blur-sm rounded-full px-2 py-0.5 pointer-events-none">
-                                        <span class="text-[10px] text-white/95">{{ formatTime(msg.created_at) }}</span>
-                                        <svg v-if="msg.status === 'sent'" class="h-3 w-3 text-blue-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+                                <a
+                                    v-if="msg.media_url"
+                                    :href="msg.media_url"
+                                    :download="msg.media_filename || 'video'"
+                                    class="flex items-center gap-2.5 px-3 py-2.5 hover:bg-black/5 transition min-w-[200px]"
+                                >
+                                    <div class="w-10 h-10 rounded-full flex items-center justify-center shrink-0"
+                                         :class="msg.status === 'sent' ? 'bg-green-500' : 'bg-accent'">
+                                        <svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" /></svg>
                                     </div>
+                                    <div class="min-w-0 flex-1">
+                                        <p class="text-sm font-medium text-gray-900 truncate">{{ msg.media_filename || 'Video' }}</p>
+                                        <p class="text-[10px] text-gray-500">Toca para ver o descargar</p>
+                                    </div>
+                                    <svg class="w-4 h-4 text-gray-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" /></svg>
+                                </a>
+                                <div v-else class="flex items-center gap-2.5 px-3 py-2.5 min-w-[200px]">
+                                    <div class="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center shrink-0">
+                                        <svg class="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" /></svg>
+                                    </div>
+                                    <p class="text-sm text-gray-400 italic">Video no disponible</p>
                                 </div>
-                                <div v-if="msg.caption" class="px-3 pb-1.5 pt-0.5">
+                                <div v-if="msg.caption" class="px-3 pt-0.5 pb-1">
                                     <p class="text-sm text-gray-900 whitespace-pre-wrap break-words">{{ msg.caption }}</p>
-                                    <div class="flex items-center justify-end space-x-1 mt-0.5">
-                                        <span class="text-[10px] text-gray-500">{{ formatTime(msg.created_at) }}</span>
-                                        <svg v-if="msg.status === 'sent'" class="h-3.5 w-3.5 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
-                                    </div>
+                                </div>
+                                <div class="flex items-center justify-end gap-1 px-3 pb-1.5">
+                                    <span class="text-[10px] text-gray-500">{{ formatTime(msg.created_at) }}</span>
+                                    <svg v-if="msg.status === 'sent'" class="h-3.5 w-3.5 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
                                 </div>
                             </div>
 
@@ -249,20 +335,77 @@ onUnmounted(() => { if (pollingInterval) clearInterval(pollingInterval); });
                                 class="max-w-[75%] rounded-2xl shadow-sm overflow-hidden"
                                 :class="msg.status === 'sent' ? 'bg-[#d9fdd3] rounded-tr-sm' : 'bg-white rounded-tl-sm'"
                             >
-                                <template v-if="msg.type === 'audio' && msg.media_url">
-                                    <div class="px-3 pt-2 pb-1">
-                                        <audio :src="msg.media_url" controls class="w-64 max-w-full"></audio>
+                                <template v-if="msg.type === 'audio'">
+                                    <!-- Hidden native audio element -->
+                                    <audio
+                                        v-if="msg.media_url"
+                                        :id="'audio-' + msg.id"
+                                        :src="msg.media_url"
+                                        :type="msg.media_mime || 'audio/ogg'"
+                                        preload="metadata"
+                                        class="hidden"
+                                        @play="onAudioPlay(msg.id)"
+                                        @pause="onAudioPause(msg.id)"
+                                        @ended="onAudioEnded(msg.id)"
+                                        @error="onAudioError(msg.id)"
+                                        @timeupdate="onAudioTimeUpdate(msg.id)"
+                                        @loadedmetadata="onAudioMetadata(msg.id)"
+                                    />
+                                    <div class="flex items-center gap-2.5 px-3 py-2.5 min-w-[220px]">
+                                        <!-- Play / Pause button -->
+                                        <button
+                                            v-if="msg.media_url && !audioState(msg.id).error"
+                                            @click="toggleAudio(msg.id)"
+                                            class="w-10 h-10 rounded-full flex items-center justify-center shrink-0 transition"
+                                            :class="msg.status === 'sent' ? 'bg-green-500 hover:bg-green-600' : 'bg-accent hover:bg-accent-hover'"
+                                        >
+                                            <svg v-if="!audioState(msg.id).playing" class="w-5 h-5 text-white ml-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                                            <svg v-else class="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+                                        </button>
+                                        <!-- Error / unavailable icon -->
+                                        <div v-else class="w-10 h-10 rounded-full flex items-center justify-center shrink-0 bg-gray-300">
+                                            <svg class="w-5 h-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/></svg>
+                                        </div>
+
+                                        <!-- Progress + time -->
+                                        <div class="flex-1 min-w-0">
+                                            <div class="relative h-1.5 rounded-full overflow-hidden" :class="msg.status === 'sent' ? 'bg-green-200' : 'bg-gray-200'">
+                                                <div
+                                                    class="absolute inset-y-0 left-0 rounded-full transition-all duration-100"
+                                                    :class="msg.status === 'sent' ? 'bg-green-600' : 'bg-accent'"
+                                                    :style="{ width: audioProgress(msg.id) + '%' }"
+                                                />
+                                            </div>
+                                            <p class="text-[10px] mt-1" :class="msg.status === 'sent' ? 'text-green-700' : 'text-gray-500'">
+                                                <span v-if="audioState(msg.id).error">No disponible</span>
+                                                <span v-else-if="audioState(msg.id).currentTime">{{ fmtAudioTime(audioState(msg.id).currentTime) }} / {{ fmtAudioTime(audioState(msg.id).duration) }}</span>
+                                                <span v-else>{{ fmtAudioTime(audioState(msg.id).duration) || '...' }}</span>
+                                            </p>
+                                        </div>
+
+                                        <!-- Mic icon -->
+                                        <svg class="w-4 h-4 shrink-0" :class="msg.status === 'sent' ? 'text-green-600' : 'text-gray-400'" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z"/></svg>
                                     </div>
                                 </template>
 
-                                <template v-else-if="msg.type === 'document' && msg.media_url">
-                                    <a :href="msg.media_url" target="_blank" rel="noopener noreferrer" class="flex items-center px-3 py-2 space-x-2 hover:bg-black/5 transition">
+                                <template v-else-if="msg.type === 'document'">
+                                    <a
+                                        v-if="msg.media_url"
+                                        :href="msg.media_url"
+                                        :download="msg.media_filename || 'documento'"
+                                        class="flex items-center px-3 py-2.5 gap-2.5 hover:bg-black/5 transition"
+                                    >
                                         <svg class="w-8 h-8 text-gray-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" /></svg>
-                                        <div class="min-w-0">
+                                        <div class="min-w-0 flex-1">
                                             <p class="text-sm font-medium text-gray-900 truncate">{{ msg.media_filename || 'Documento' }}</p>
-                                            <p class="text-[10px] text-gray-500">{{ msg.media_mime }}</p>
+                                            <p class="text-[10px] text-gray-500">Toca para descargar</p>
                                         </div>
+                                        <svg class="w-4 h-4 text-gray-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
                                     </a>
+                                    <div v-else class="flex items-center gap-2.5 px-3 py-2.5">
+                                        <svg class="w-8 h-8 text-gray-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" /></svg>
+                                        <p class="text-sm text-gray-400 italic">Documento no disponible</p>
+                                    </div>
                                     <p v-if="msg.caption" class="px-3 pb-1 text-sm text-gray-900 whitespace-pre-wrap break-words">{{ msg.caption }}</p>
                                 </template>
 
