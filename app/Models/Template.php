@@ -2,11 +2,14 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\BelongsToTenant;
 use Illuminate\Database\Eloquent\Model;
 
 class Template extends Model
 {
-    protected $fillable = ['name', 'category', 'body', 'status', 'meta_id', 'team_label', 'is_active'];
+    use BelongsToTenant;
+
+    protected $fillable = ['tenant_id', 'name', 'category', 'body', 'status', 'meta_id', 'team_label', 'is_active'];
 
     protected function casts(): array
     {

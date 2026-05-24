@@ -77,6 +77,15 @@ class WhatsAppController extends Controller
 
         $this->forwardWebhook($request);
 
+        // TODO Fase 3: resolver tenant por phone_number_id del payload Meta.
+        // Por ahora, fallback al tenant default para que el scope global funcione.
+        if (! app()->bound('tenant')) {
+            $defaultTenant = \App\Models\Tenant::where('slug', 'default')->first();
+            if ($defaultTenant) {
+                app()->instance('tenant', $defaultTenant);
+            }
+        }
+
         if (isset($payload['entry'][0]['changes'][0]['value']['messages'][0])) {
             $messageData = $payload['entry'][0]['changes'][0]['value']['messages'][0];
 

@@ -2,11 +2,14 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\BelongsToTenant;
 use Illuminate\Database\Eloquent\Model;
 
 class QuickReply extends Model
 {
-    protected $fillable = ['title', 'body', 'shortcut', 'category', 'is_active'];
+    use BelongsToTenant;
+
+    protected $fillable = ['tenant_id', 'title', 'body', 'shortcut', 'category', 'is_active'];
 
     protected function casts(): array
     {

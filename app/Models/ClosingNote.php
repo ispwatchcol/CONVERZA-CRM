@@ -2,12 +2,15 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\BelongsToTenant;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class ClosingNote extends Model
 {
-    protected $fillable = ['conversation_id', 'user_id', 'note'];
+    use BelongsToTenant;
+
+    protected $fillable = ['tenant_id', 'conversation_id', 'user_id', 'note'];
 
     public function conversation(): BelongsTo
     {
