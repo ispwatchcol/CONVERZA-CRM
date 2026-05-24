@@ -13,6 +13,7 @@ use App\Http\Controllers\QuickReplyController;
 use App\Http\Controllers\ClosingNoteController;
 use App\Http\Controllers\MetricsController;
 use App\Http\Controllers\SettingsController;
+use App\Http\Controllers\MediaController;
 use App\Http\Controllers\WhatsAppController;
 
 // ── Auth (guest only) ────────────────────────────────────────────────────────
@@ -47,6 +48,11 @@ Route::middleware('auth')->group(function () {
     // Chat
     Route::get('/chat', [ChatController::class, 'index'])->name('chat.index');
     Route::post('/chat/send', [ChatController::class, 'sendMessage'])->name('chat.send');
+
+    // Media files (bypasses storage symlink issues, requires auth)
+    Route::get('/media/{path}', [MediaController::class, 'serve'])
+        ->where('path', '.+')
+        ->name('media.serve');
 
     // Templates (Etiquetas/Plantillas Meta)
     Route::get('/templates', [TemplateController::class, 'index'])->name('templates.index');

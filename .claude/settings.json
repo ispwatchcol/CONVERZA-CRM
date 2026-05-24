@@ -40,11 +40,21 @@
       "Bash(git ls-tree *)",
       "Bash(awk -F/ '{print $1}')",
       "Bash(git fetch *)",
-      "Bash(gh pr create --base main --head pruebas --title 'chore: shared Postgres for ispwatch integration' --body ' *)"
+      "Bash(gh pr create --base main --head pruebas --title 'chore: shared Postgres for ispwatch integration' --body ' *)",
+      "Bash(ngrok http *)",
+      "Bash(curl -s http://localhost:4040/api/tunnels)",
+      "Bash(python3 -c \"import sys,json; t=json.load\\(sys.stdin\\)['tunnels']; print\\(t[0]['public_url'] if t else 'no tunnels'\\)\")",
+      "PowerShell(Get-Command ngrok -ErrorAction SilentlyContinue)",
+      "Bash(sed -i 's/DB_SEARCH_PATH=converza_dev/DB_SEARCH_PATH=converza/' .env && php artisan config:clear)",
+      "Bash(xargs ls -lt)",
+      "Bash(php -r \"require 'vendor/autoload.php'; echo 'OK';\")",
+      "Bash(npm run *)",
+      "WebFetch(domain:developers.facebook.com)"
     ],
     "additionalDirectories": [
       "C:\\Users\\User\\Desktop\\GITHUB\\ISPWatch-CRM-Whastapp",
-      "C:\\Users\\User\\.claude\\projects\\c--Users-User-Desktop-GITHUB-CONVERZA-CRM"
+      "C:\\Users\\User\\.claude\\projects\\c--Users-User-Desktop-GITHUB-CONVERZA-CRM",
+      "c:\\Users\\User\\Desktop\\GITHUB\\CONVERZA-CRM"
     ]
   }
 }
