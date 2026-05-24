@@ -2,12 +2,15 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\BelongsToTenant;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 class Label extends Model
 {
-    protected $fillable = ['name', 'color', 'type', 'description'];
+    use BelongsToTenant;
+
+    protected $fillable = ['tenant_id', 'name', 'color', 'type', 'description'];
 
     public function contacts(): BelongsToMany
     {

@@ -29,10 +29,17 @@
       "PowerShell($envContent = Get-Content \".env\" -Raw; $token = \\([regex]::Match\\($envContent, \"WHATSAPP_API_TOKEN=\\(.+\\)\"\\)\\).Groups[1].Value.Trim\\(\\); $url = \\([regex]::Match\\($envContent, \"WHATSAPP_API_URL=\\(.+\\)\"\\)\\).Groups[1].Value.Trim\\(\\); \"Testing direct API call from local...\"; \"URL: $url/messages\"; \"Token length: $\\($token.Length\\)\"; \"\"; try { $resp = Invoke-WebRequest -Uri \"$url/messages\" -Method GET -Headers @{ \"Authorization\" = \"Bearer $token\" } -UseBasicParsing -TimeoutSec 15; \"STATUS: $\\($resp.StatusCode\\)\"; \"BODY: $\\($resp.Content\\)\" } catch { \"STATUS: $\\($_.Exception.Response.StatusCode.value__\\)\"; $reader = New-Object System.IO.StreamReader\\($_.Exception.Response.GetResponseStream\\(\\)\\); \"BODY: $\\($reader.ReadToEnd\\(\\)\\)\" })",
       "PowerShell($envContent = Get-Content \".env\" -Raw; $token = \\([regex]::Match\\($envContent, \"WHATSAPP_API_TOKEN=\\(.+\\)\"\\)\\).Groups[1].Value.Trim\\(\\); \"\"; \"=== TEST 1: GET /me \\(¿token válido?\\) ===\"; try { $r = Invoke-RestMethod -Uri \"https://graph.facebook.com/v18.0/me?access_token=$token\" -TimeoutSec 15; $r | ConvertTo-Json } catch { $stream = $_.Exception.Response.GetResponseStream\\(\\); $reader = New-Object System.IO.StreamReader\\($stream\\); \"STATUS: $\\($_.Exception.Response.StatusCode.value__\\)\"; \"ERROR: $\\($reader.ReadToEnd\\(\\)\\)\" }; \"\"; \"=== TEST 2: GET /debug_token ===\"; try { $r = Invoke-RestMethod -Uri \"https://graph.facebook.com/v18.0/debug_token?input_token=$token&access_token=$token\" -TimeoutSec 15; $r | ConvertTo-Json -Depth 5 } catch { $stream = $_.Exception.Response.GetResponseStream\\(\\); $reader = New-Object System.IO.StreamReader\\($stream\\); \"STATUS: $\\($_.Exception.Response.StatusCode.value__\\)\"; \"ERROR: $\\($reader.ReadToEnd\\(\\)\\)\" })",
       "PowerShell($envContent = Get-Content \".env\" -Raw; $token = \\([regex]::Match\\($envContent, \"WHATSAPP_API_TOKEN=\\(.+\\)\"\\)\\).Groups[1].Value.Trim\\(\\); \"\"; \"=== TEST 1: GET /me ===\"; try { $r = Invoke-RestMethod -Uri \"https://graph.facebook.com/v18.0/me?access_token=$token\" -TimeoutSec 15; \"OK: $\\($r | ConvertTo-Json -Compress\\)\" } catch { \"STATUS: $\\($_.Exception.Response.StatusCode.value__\\)\"; \"BODY: $\\($_.ErrorDetails.Message\\)\" }; \"\"; \"=== TEST 2: GET phone_number_id info ===\"; try { $r = Invoke-RestMethod -Uri \"https://graph.facebook.com/v18.0/998494756683000?access_token=$token\" -TimeoutSec 15; \"OK: $\\($r | ConvertTo-Json -Compress\\)\" } catch { \"STATUS: $\\($_.Exception.Response.StatusCode.value__\\)\"; \"BODY: $\\($_.ErrorDetails.Message\\)\" })",
-      "PowerShell(npm run build 2>&1)"
+      "PowerShell(npm run build 2>&1)",
+      "Bash(dir \"C:\\\\Users\\\\User\\\\Desktop\\\\GITHUB\" /b)",
+      "Bash(curl -s -o nul -w \"Login: HTTP %{http_code}\\\\n\" http://127.0.0.1:8765/login)",
+      "Bash(curl -s -c cookies.txt -o nul http://127.0.0.1:8765/login)",
+      "Bash(awk '{print $7}')",
+      "PowerShell(Get-Process php -ErrorAction SilentlyContinue)",
+      "PowerShell(Stop-Process -Force)"
     ],
     "additionalDirectories": [
-      "C:\\Users\\User\\Desktop\\GITHUB\\ISPWatch-CRM-Whastapp"
+      "C:\\Users\\User\\Desktop\\GITHUB\\ISPWatch-CRM-Whastapp",
+      "C:\\Users\\User\\.claude\\projects\\c--Users-User-Desktop-GITHUB-CONVERZA-CRM"
     ]
   }
 }
