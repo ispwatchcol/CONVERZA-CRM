@@ -45,6 +45,7 @@ Route::middleware('auth')->group(function () {
     Route::post('/labels', [LabelController::class, 'store'])->name('labels.store');
     Route::put('/labels/{label}', [LabelController::class, 'update'])->name('labels.update');
     Route::delete('/labels/{label}', [LabelController::class, 'destroy'])->name('labels.destroy');
+    Route::post('/labels/load-samples', [LabelController::class, 'loadSamples'])->name('labels.load-samples');
 
     // Chat
     Route::get('/chat', [ChatController::class, 'index'])->name('chat.index');
