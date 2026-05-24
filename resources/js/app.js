@@ -5,12 +5,14 @@ import { createApp, h } from 'vue';
 import { createInertiaApp } from '@inertiajs/vue3';
 import { resolvePageComponent } from 'laravel-vite-plugin/inertia-helpers';
 
-import { ZiggyVue } from 'ziggy-js';
-import { Ziggy } from './ziggy';
-import { route } from 'ziggy-js';
+import { ZiggyVue, route } from 'ziggy-js';
 
-// Mixin Ziggy config into the route function for global usage
-window.route = (name, params, absolute, config = Ziggy) => route(name, params, absolute, config);
+// Always use the Ziggy config injected at runtime by the @routes Blade
+// directive (window.Ziggy). This ensures URLs are correct per environment
+// (local / production) without baking them into the JS bundle.
+const getZiggy = () => window.Ziggy;
+
+window.route = (name, params, absolute, config) => route(name, params, absolute, config ?? getZiggy());
 
 const appName = import.meta.env.VITE_APP_NAME || 'Laravel';
 
@@ -20,7 +22,7 @@ createInertiaApp({
     setup({ el, App, props, plugin }) {
         return createApp({ render: () => h(App, props) })
             .use(plugin)
-            .use(ZiggyVue, Ziggy)
+            .use(ZiggyVue, getZiggy())
             .mount(el);
     },
     progress: {
