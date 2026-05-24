@@ -11,8 +11,6 @@ class Tenant extends Model
         'name',
         'slug',
         'ispwatch_tenant_id',
-        'ispwatch_api_base_url',
-        'ispwatch_api_token',
         'wa_phone_number_id',
         'wa_business_account_id',
         'wa_access_token',
@@ -23,7 +21,6 @@ class Tenant extends Model
     ];
 
     protected $hidden = [
-        'ispwatch_api_token',
         'wa_access_token',
         'wa_app_secret',
     ];
@@ -32,7 +29,6 @@ class Tenant extends Model
     {
         return [
             'is_active' => 'boolean',
-            'ispwatch_api_token' => 'encrypted',
             'wa_access_token' => 'encrypted',
             'wa_app_secret' => 'encrypted',
         ];

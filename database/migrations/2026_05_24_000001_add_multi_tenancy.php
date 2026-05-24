@@ -13,8 +13,6 @@ return new class extends Migration {
             $table->string('slug')->unique();
 
             $table->string('ispwatch_tenant_id')->nullable()->unique();
-            $table->string('ispwatch_api_base_url')->nullable();
-            $table->text('ispwatch_api_token')->nullable();
 
             $table->string('wa_phone_number_id')->nullable();
             $table->string('wa_business_account_id')->nullable();
