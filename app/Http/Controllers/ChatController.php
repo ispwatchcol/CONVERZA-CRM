@@ -41,8 +41,8 @@ class ChatController extends Controller
                 'status' => $conv->status,
                 'last_message' => $conv->latestMessage?->body,
                 'last_message_status' => $conv->latestMessage?->status,
-                'last_message_at' => $conv->latestMessage?->created_at?->toDateTimeString(),
-                'updated_at' => $conv->updated_at->toDateTimeString(),
+                'last_message_at' => $conv->latestMessage?->created_at?->toIso8601String(),
+                'updated_at' => $conv->updated_at->toIso8601String(),
             ]);
 
         $activeConversationId = $request->query('conversation');
@@ -59,7 +59,12 @@ class ChatController extends Controller
                         'id' => $msg->id,
                         'body' => $msg->body,
                         'status' => $msg->status,
-                        'created_at' => $msg->created_at->toDateTimeString(),
+                        'type' => $msg->type ?? 'text',
+                        'caption' => $msg->caption,
+                        'media_url' => $msg->media_path ? asset('storage/' . $msg->media_path) : null,
+                        'media_mime' => $msg->media_mime,
+                        'media_filename' => $msg->media_filename,
+                        'created_at' => $msg->created_at->toIso8601String(),
                     ]);
             }
         } elseif ($conversations->isNotEmpty()) {
@@ -73,7 +78,7 @@ class ChatController extends Controller
                     'id' => $msg->id,
                     'body' => $msg->body,
                     'status' => $msg->status,
-                    'created_at' => $msg->created_at->toDateTimeString(),
+                    'created_at' => $msg->created_at->toIso8601String(),
                 ]);
         }
 

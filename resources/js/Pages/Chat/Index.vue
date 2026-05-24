@@ -77,6 +77,11 @@ function formatDate(dateString) {
     }).format(date);
 }
 
+function formatTime(dateString) {
+    if (!dateString) return '';
+    return new Date(dateString).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
 function formatPhone(phone) {
     if (!phone) return '';
     if (phone.startsWith('57') && phone.length === 12) return phone.substring(2);
@@ -179,10 +184,93 @@ onUnmounted(() => { if (pollingInterval) clearInterval(pollingInterval); });
                     <!-- Messages -->
                     <div ref="messagesContainer" class="flex-1 overflow-y-auto p-4 space-y-2 z-0 relative">
                         <div v-for="msg in activeChat" :key="msg.id" class="flex animate-fade-in" :class="{ 'justify-end': msg.status === 'sent' }">
-                            <div class="max-w-[75%] rounded-2xl px-4 py-2 shadow-sm text-sm" :class="msg.status === 'sent' ? 'bg-[#d9fdd3] rounded-tr-sm' : 'bg-white rounded-tl-sm'">
-                                <p class="text-gray-900 whitespace-pre-wrap break-words pb-4">{{ msg.body }}</p>
-                                <div class="flex items-center justify-end space-x-1 -mt-3">
-                                    <span class="text-[10px] text-gray-500">{{ new Date(msg.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) }}</span>
+
+                            <!-- ─── Sticker (sin burbuja) ───────────────────────────── -->
+                            <div v-if="msg.type === 'sticker' && msg.media_url" class="max-w-[75%] flex flex-col" :class="msg.status === 'sent' ? 'items-end' : 'items-start'">
+                                <img :src="msg.media_url" alt="sticker" class="max-w-[180px] max-h-[180px] object-contain drop-shadow" />
+                                <div class="mt-1 inline-flex items-center space-x-1 bg-black/60 backdrop-blur-sm rounded-full px-2 py-0.5">
+                                    <span class="text-[10px] text-white/90">{{ formatTime(msg.created_at) }}</span>
+                                    <svg v-if="msg.status === 'sent'" class="h-3 w-3 text-blue-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+                                </div>
+                            </div>
+
+                            <!-- ─── Imagen ─────────────────────────────────────────── -->
+                            <div
+                                v-else-if="msg.type === 'image' && msg.media_url"
+                                class="max-w-[75%] rounded-2xl shadow-sm overflow-hidden"
+                                :class="msg.status === 'sent' ? 'bg-[#d9fdd3] rounded-tr-sm' : 'bg-white rounded-tl-sm'"
+                            >
+                                <div class="relative p-1">
+                                    <a :href="msg.media_url" target="_blank" rel="noopener noreferrer" class="block">
+                                        <img :src="msg.media_url" alt="imagen" class="max-w-full max-h-80 rounded-xl object-cover block" />
+                                    </a>
+                                    <!-- Overlay con hora si NO hay caption -->
+                                    <div v-if="!msg.caption" class="absolute bottom-2 right-2 inline-flex items-center space-x-1 bg-black/55 backdrop-blur-sm rounded-full px-2 py-0.5">
+                                        <span class="text-[10px] text-white/95">{{ formatTime(msg.created_at) }}</span>
+                                        <svg v-if="msg.status === 'sent'" class="h-3 w-3 text-blue-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+                                    </div>
+                                </div>
+                                <!-- Caption + hora abajo si HAY caption -->
+                                <div v-if="msg.caption" class="px-3 pb-1.5 pt-0.5">
+                                    <p class="text-sm text-gray-900 whitespace-pre-wrap break-words">{{ msg.caption }}</p>
+                                    <div class="flex items-center justify-end space-x-1 mt-0.5">
+                                        <span class="text-[10px] text-gray-500">{{ formatTime(msg.created_at) }}</span>
+                                        <svg v-if="msg.status === 'sent'" class="h-3.5 w-3.5 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- ─── Video ───────────────────────────────────────────── -->
+                            <div
+                                v-else-if="msg.type === 'video' && msg.media_url"
+                                class="max-w-[75%] rounded-2xl shadow-sm overflow-hidden"
+                                :class="msg.status === 'sent' ? 'bg-[#d9fdd3] rounded-tr-sm' : 'bg-white rounded-tl-sm'"
+                            >
+                                <div class="relative p-1">
+                                    <video :src="msg.media_url" controls class="max-w-full max-h-80 rounded-xl block bg-black"></video>
+                                    <div v-if="!msg.caption" class="absolute bottom-3 right-3 inline-flex items-center space-x-1 bg-black/55 backdrop-blur-sm rounded-full px-2 py-0.5 pointer-events-none">
+                                        <span class="text-[10px] text-white/95">{{ formatTime(msg.created_at) }}</span>
+                                        <svg v-if="msg.status === 'sent'" class="h-3 w-3 text-blue-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+                                    </div>
+                                </div>
+                                <div v-if="msg.caption" class="px-3 pb-1.5 pt-0.5">
+                                    <p class="text-sm text-gray-900 whitespace-pre-wrap break-words">{{ msg.caption }}</p>
+                                    <div class="flex items-center justify-end space-x-1 mt-0.5">
+                                        <span class="text-[10px] text-gray-500">{{ formatTime(msg.created_at) }}</span>
+                                        <svg v-if="msg.status === 'sent'" class="h-3.5 w-3.5 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- ─── Audio / Documento / Texto ──────────────────────── -->
+                            <div
+                                v-else
+                                class="max-w-[75%] rounded-2xl shadow-sm overflow-hidden"
+                                :class="msg.status === 'sent' ? 'bg-[#d9fdd3] rounded-tr-sm' : 'bg-white rounded-tl-sm'"
+                            >
+                                <template v-if="msg.type === 'audio' && msg.media_url">
+                                    <div class="px-3 pt-2 pb-1">
+                                        <audio :src="msg.media_url" controls class="w-64 max-w-full"></audio>
+                                    </div>
+                                </template>
+
+                                <template v-else-if="msg.type === 'document' && msg.media_url">
+                                    <a :href="msg.media_url" target="_blank" rel="noopener noreferrer" class="flex items-center px-3 py-2 space-x-2 hover:bg-black/5 transition">
+                                        <svg class="w-8 h-8 text-gray-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" /></svg>
+                                        <div class="min-w-0">
+                                            <p class="text-sm font-medium text-gray-900 truncate">{{ msg.media_filename || 'Documento' }}</p>
+                                            <p class="text-[10px] text-gray-500">{{ msg.media_mime }}</p>
+                                        </div>
+                                    </a>
+                                    <p v-if="msg.caption" class="px-3 pb-1 text-sm text-gray-900 whitespace-pre-wrap break-words">{{ msg.caption }}</p>
+                                </template>
+
+                                <template v-else>
+                                    <p class="text-gray-900 whitespace-pre-wrap break-words px-4 pt-2">{{ msg.body }}</p>
+                                </template>
+
+                                <div class="flex items-center justify-end space-x-1 px-3 pb-1.5">
+                                    <span class="text-[10px] text-gray-500">{{ formatTime(msg.created_at) }}</span>
                                     <svg v-if="msg.status === 'sent'" class="h-3.5 w-3.5 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
                                 </div>
                             </div>

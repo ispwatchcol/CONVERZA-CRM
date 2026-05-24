@@ -2,6 +2,7 @@
 
 namespace App\Http\Middleware;
 
+use App\Services\WhatsAppService;
 use Illuminate\Http\Request;
 use Inertia\Middleware;
 
@@ -46,6 +47,7 @@ class HandleInertiaRequests extends Middleware
                 'success' => fn() => $request->session()->get('success'),
                 'error' => fn() => $request->session()->get('error'),
             ],
+            'whatsappStatus' => fn() => app(WhatsAppService::class)->checkConnection(),
         ];
     }
 }
