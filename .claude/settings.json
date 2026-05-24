@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(if \\(Test-Path \"$env:USERPROFILE\\\\.ssh\\\\id_ed25519.pub\"\\) { Write-Output \"YA TIENES UNA LLAVE en $env:USERPROFILE\\\\.ssh\\\\id_ed25519.pub\" } elseif \\(Test-Path \"$env:USERPROFILE\\\\.ssh\\\\id_rsa.pub\"\\) { Write-Output \"YA TIENES UNA LLAVE RSA en $env:USERPROFILE\\\\.ssh\\\\id_rsa.pub\" } else { Write-Output \"NO TIENES LLAVE — generamos una nueva\" })",
+      "PowerShell(if \\(Test-Path \"$env:USERPROFILE\\\\.ssh\\\\id_ed25519.pub\"\\) { Get-Content \"$env:USERPROFILE\\\\.ssh\\\\id_ed25519.pub\" | Set-Clipboard; Write-Output \"OK — llave publica copiada al portapapeles. Pegala en DigitalOcean.\"; Write-Output \"---\"; Get-Content \"$env:USERPROFILE\\\\.ssh\\\\id_ed25519.pub\" } else { Write-Output \"Aun no existe — ejecuta primero ssh-keygen del Paso 2\" })",
+      "PowerShell(if \\(Test-Path \"$env:USERPROFILE\\\\.ssh\\\\id_ed25519.pub\"\\) { Get-Content \"$env:USERPROFILE\\\\.ssh\\\\id_ed25519.pub\" | Set-Clipboard; Write-Output \"OK - llave publica copiada al portapapeles \\(Ctrl+V en DigitalOcean\\)\"; Write-Output \"---\"; Write-Output \"Contenido \\(visible, esta es la PUBLICA, no pasa nada\\):\"; Get-Content \"$env:USERPROFILE\\\\.ssh\\\\id_ed25519.pub\" } else { Write-Output \"No encontre id_ed25519.pub - revisa que el archivo este en $env:USERPROFILE\\\\.ssh\\\\\" })",
+      "Bash(git remote *)",
+      "Bash(git ls-remote *)",
+      "Bash(xargs grep -l -i \"webhook\")",
+      "Bash(nslookup converza-crm.duckdns.org 8.8.8.8)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" --connect-timeout 5 http://159.223.140.27)",
+      "Bash(curl -s --connect-timeout 5 http://159.223.140.27)",
+      "Bash(curl -s -o /dev/null -w \"HTTP Status: %{http_code}\\\\nRedirect: %{redirect_url}\\\\nSSL: %{ssl_verify_result}\\\\n\" --connect-timeout 10 https://converza-crm.duckdns.org/)",
+      "Bash(curl -s --connect-timeout 10 https://converza-crm.duckdns.org/)",
+      "WebSearch",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)"
+    ],
+    "additionalDirectories": [
+      "C:\\Users\\User\\Desktop\\GITHUB\\ISPWatch-CRM-Whastapp"
+    ]
+  }
+}

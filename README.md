@@ -87,15 +87,57 @@ ssh deploy@159.223.140.27
 - Path del proyecto: `/var/www/converza-crm`
 - Config nginx: `/etc/nginx/sites-available/converza-crm`
 
-### Desplegar cambios
+### Deploy automático (GitHub Actions)
+
+Cada push a `main` dispara el workflow [.github/workflows/deploy.yml](.github/workflows/deploy.yml), que se conecta por SSH al droplet y ejecuta el deploy completo.
+
+#### Setup inicial (una sola vez)
+
+**1. Generar par de llaves SSH dedicado en el droplet:**
+```bash
+ssh deploy@159.223.140.27
+ssh-keygen -t ed25519 -C "github-actions" -f ~/.ssh/github_actions -N ""
+cat ~/.ssh/github_actions.pub >> ~/.ssh/authorized_keys
+chmod 600 ~/.ssh/authorized_keys
+cat ~/.ssh/github_actions   # copia TODO el contenido (incluye BEGIN/END)
+```
+
+**2. Permitir reload de PHP-FPM sin contraseña:**
+```bash
+sudo visudo -f /etc/sudoers.d/deploy-reload
+```
+Pega esta línea y guarda:
+```
+deploy ALL=(ALL) NOPASSWD: /bin/systemctl reload php8.2-fpm
+```
+
+**3. Configurar secrets en GitHub:**
+Ve a `Settings → Secrets and variables → Actions → New repository secret` y crea:
+
+| Nombre | Valor |
+|---|---|
+| `SSH_HOST` | `159.223.140.27` |
+| `SSH_USER` | `deploy` |
+| `SSH_PRIVATE_KEY` | Contenido completo del archivo `~/.ssh/github_actions` |
+
+**4. Listo.** Cada `git push origin main` (o merge a `main`) dispara el deploy. Puedes ver el progreso en la pestaña **Actions** del repo.
+
+#### Disparar deploy manual
+En la pestaña **Actions** → workflow **Deploy to production** → **Run workflow**.
+
+### Deploy manual (fallback)
+
+Si GitHub Actions falla o necesitas hacerlo a mano:
 ```bash
 ssh deploy@159.223.140.27
 cd /var/www/converza-crm
-git pull origin <rama>
+
+git pull origin main
 composer install --no-dev --optimize-autoloader
 npm ci && npm run build
 php artisan migrate --force
-php artisan config:cache && php artisan route:cache
+php artisan config:cache && php artisan route:cache && php artisan view:cache
+sudo systemctl reload php8.2-fpm
 ```
 
 ---
