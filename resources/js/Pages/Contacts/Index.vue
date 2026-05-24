@@ -1,6 +1,6 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
-import { useForm, router } from '@inertiajs/vue3';
+import { useForm, router, Head } from '@inertiajs/vue3';
 import { ref, computed } from 'vue';
 
 const props = defineProps({
@@ -73,6 +73,7 @@ function formatPhone(phone) {
 </script>
 
 <template>
+    <Head title="Contactos" />
     <AppLayout>
         <div class="p-4 md:p-6 lg:p-8 animate-fade-in">
             <!-- Header -->

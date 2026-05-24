@@ -1,5 +1,6 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
+import { Head } from '@inertiajs/vue3';
 
 const props = defineProps({
     stats: Object,
@@ -9,6 +10,7 @@ const props = defineProps({
 </script>
 
 <template>
+    <Head title="Métricas" />
     <AppLayout>
         <div class="p-4 md:p-6 lg:p-8 animate-fade-in">
             <div class="mb-6">

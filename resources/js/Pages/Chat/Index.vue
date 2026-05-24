@@ -1,6 +1,6 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
-import { useForm, router, Link } from '@inertiajs/vue3';
+import { useForm, router, Link, Head } from '@inertiajs/vue3';
 import { ref, onMounted, onUnmounted, nextTick, watch } from 'vue';
 
 const props = defineProps({
@@ -109,6 +109,7 @@ onUnmounted(() => { if (pollingInterval) clearInterval(pollingInterval); });
 </script>
 
 <template>
+    <Head title="Chat" />
     <AppLayout>
         <div class="flex h-[calc(100vh-4rem)] overflow-hidden">
             <!-- Conversation List Sidebar -->

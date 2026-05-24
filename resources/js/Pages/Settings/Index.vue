@@ -1,10 +1,12 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
+import { Head } from '@inertiajs/vue3';
 
 const props = defineProps({ settings: Object });
 </script>
 
 <template>
+    <Head title="Configuración" />
     <AppLayout>
         <div class="p-4 md:p-6 lg:p-8 animate-fade-in">
             <div class="mb-6">

@@ -1,6 +1,6 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
-import { useForm, router } from '@inertiajs/vue3';
+import { router, Head } from '@inertiajs/vue3';
 import { ref } from 'vue';
 
 const props = defineProps({ notes: Object, filters: Object });
@@ -12,6 +12,7 @@ function doSearch() {
 </script>
 
 <template>
+    <Head title="Notas de Cierre" />
     <AppLayout>
         <div class="p-4 md:p-6 lg:p-8 animate-fade-in">
             <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">

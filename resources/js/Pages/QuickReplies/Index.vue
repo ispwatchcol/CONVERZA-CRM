@@ -1,6 +1,6 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
-import { useForm, router } from '@inertiajs/vue3';
+import { useForm, router, Head } from '@inertiajs/vue3';
 import { ref } from 'vue';
 
 const props = defineProps({ quickReplies: Array, filters: Object });
@@ -24,6 +24,7 @@ function doSearch() { router.get(route('quick-replies.index'), { search: search.
 </script>
 
 <template>
+    <Head title="Respuestas Rápidas" />
     <AppLayout>
         <div class="p-4 md:p-6 lg:p-8 animate-fade-in">
             <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">

@@ -1,6 +1,6 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
-import { useForm, router } from '@inertiajs/vue3';
+import { useForm, router, Head } from '@inertiajs/vue3';
 import { ref } from 'vue';
 
 const props = defineProps({ teams: Array });
@@ -23,6 +23,7 @@ function deleteTeam(t) { if (confirm('¿Eliminar este equipo?')) router.delete(r
 </script>
 
 <template>
+    <Head title="Equipos" />
     <AppLayout>
         <div class="p-4 md:p-6 lg:p-8 animate-fade-in">
             <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">

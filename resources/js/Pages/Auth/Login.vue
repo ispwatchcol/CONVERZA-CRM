@@ -1,6 +1,7 @@
 <script setup>
 import { Head, useForm } from '@inertiajs/vue3';
 import { ref } from 'vue';
+import Logo from '@/Components/Logo.vue';
 
 defineProps({
     status: String,
@@ -46,11 +47,7 @@ const submit = () => {
             <div class="relative z-10 flex flex-col justify-between w-full">
                 <!-- Brand -->
                 <div class="flex items-center space-x-3">
-                    <div class="w-11 h-11 rounded-xl bg-accent flex items-center justify-center shrink-0">
-                        <svg class="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                        </svg>
-                    </div>
+                    <Logo size="lg" />
                     <div>
                         <h1 class="text-2xl font-bold tracking-tight">CONVERZA</h1>
                         <p class="text-text-muted text-[11px] uppercase tracking-widest">CRM &amp; Chatbot</p>
@@ -81,11 +78,7 @@ const submit = () => {
             <div class="w-full max-w-md">
                 <!-- Mobile brand -->
                 <div class="md:hidden flex items-center justify-center space-x-3 mb-10">
-                    <div class="w-10 h-10 rounded-xl bg-accent flex items-center justify-center">
-                        <svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                        </svg>
-                    </div>
+                    <Logo size="md" />
                     <h1 class="text-xl font-bold text-gray-900">CONVERZA</h1>
                 </div>
 
