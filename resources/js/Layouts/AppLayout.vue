@@ -1,11 +1,20 @@
 <script setup>
-import { Link, usePage } from '@inertiajs/vue3';
+import { Link, router, usePage } from '@inertiajs/vue3';
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 
 const page = usePage();
 const sidebarOpen = ref(typeof window !== 'undefined' ? window.innerWidth >= 768 : true);
 const flashMessage = ref(null);
 const flashType = ref('success');
+
+// ─── User ─────────────────────────────────────────────────────────────────────
+const authUser = computed(() => page.props.auth?.user ?? null);
+const userInitial = computed(() => (authUser.value?.name?.[0] ?? 'U').toUpperCase());
+const showUserMenu = ref(false);
+
+function logout() {
+    router.post(route('logout'));
+}
 
 // ─── Theme ────────────────────────────────────────────────────────────────────
 // Modes: 'light' | 'dark' | 'system'
@@ -88,11 +97,12 @@ watch(currentRoute, () => {
 });
 
 function handleEsc(e) {
-    if (e.key === 'Escape') { 
+    if (e.key === 'Escape') {
         if (typeof window !== 'undefined' && window.innerWidth < 768) {
-            sidebarOpen.value = false; 
+            sidebarOpen.value = false;
         }
-        showThemeMenu.value = false; 
+        showThemeMenu.value = false;
+        showUserMenu.value = false;
     }
 }
 onMounted(() => document.addEventListener('keydown', handleEsc));
@@ -243,9 +253,38 @@ onUnmounted(() => document.removeEventListener('keydown', handleEsc));
                     </div>
 
 
-                    <!-- User avatar -->
-                    <div class="w-9 h-9 rounded-full bg-gradient-to-br from-accent to-accent-light flex items-center justify-center text-white text-sm font-bold">
-                        U
+                    <!-- ── User menu ───────────────────────────────────────── -->
+                    <div class="relative">
+                        <button
+                            @click="showUserMenu = !showUserMenu"
+                            class="flex items-center space-x-2 p-1 pr-2 rounded-full hover:bg-gray-100 transition group"
+                            title="Mi cuenta"
+                        >
+                            <span class="w-9 h-9 rounded-full bg-gradient-to-br from-accent to-accent-light flex items-center justify-center text-white text-sm font-bold shadow-sm">
+                                {{ userInitial }}
+                            </span>
+                            <svg class="w-4 h-4 text-gray-400 group-hover:text-gray-600 transition" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+                            </svg>
+                        </button>
+
+                        <Transition enter-active-class="transition ease-out duration-150" enter-from-class="opacity-0 scale-95" enter-to-class="opacity-100 scale-100" leave-active-class="transition ease-in duration-100" leave-from-class="opacity-100 scale-100" leave-to-class="opacity-0 scale-95">
+                            <div v-if="showUserMenu" class="absolute right-0 top-12 w-60 bg-white rounded-xl shadow-xl border border-gray-200 z-50 overflow-hidden animate-scale-in">
+                                <div class="px-4 py-3 border-b border-gray-100">
+                                    <p class="text-sm font-semibold text-gray-900 truncate">{{ authUser?.name ?? 'Usuario' }}</p>
+                                    <p class="text-xs text-gray-500 truncate">{{ authUser?.email ?? '' }}</p>
+                                </div>
+                                <button
+                                    @click="logout"
+                                    class="w-full flex items-center px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 transition"
+                                >
+                                    <svg class="w-4 h-4 mr-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15M12 9l-3 3m0 0l3 3m-3-3h12.75" />
+                                    </svg>
+                                    Cerrar sesión
+                                </button>
+                            </div>
+                        </Transition>
                     </div>
                 </div>
             </header>
