@@ -35,7 +35,11 @@
       "Bash(curl -s -c cookies.txt -o nul http://127.0.0.1:8765/login)",
       "Bash(awk '{print $7}')",
       "PowerShell(Get-Process php -ErrorAction SilentlyContinue)",
-      "PowerShell(Stop-Process -Force)"
+      "PowerShell(Stop-Process -Force)",
+      "Bash(git rev-list *)",
+      "Bash(git ls-tree *)",
+      "Bash(awk -F/ '{print $1}')",
+      "Bash(git fetch *)"
     ],
     "additionalDirectories": [
       "C:\\Users\\User\\Desktop\\GITHUB\\ISPWatch-CRM-Whastapp",

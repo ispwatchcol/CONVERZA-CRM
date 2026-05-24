@@ -63,6 +63,23 @@ return [
             ]) : [],
         ],
 
+        // Conexión READ-ONLY a la base de ispwatch (Postgres en Supabase).
+        // El usuario configurado en ISPWATCH_DB_USERNAME debería tener ÚNICAMENTE
+        // permisos SELECT sobre las tablas relevantes — ver SQL en docs/ispwatch-readonly.sql.
+        'ispwatch' => [
+            'driver' => 'pgsql',
+            'host' => env('ISPWATCH_DB_HOST'),
+            'port' => env('ISPWATCH_DB_PORT', '5432'),
+            'database' => env('ISPWATCH_DB_DATABASE', 'postgres'),
+            'username' => env('ISPWATCH_DB_USERNAME'),
+            'password' => env('ISPWATCH_DB_PASSWORD', ''),
+            'charset' => env('ISPWATCH_DB_CHARSET', 'utf8'),
+            'prefix' => '',
+            'prefix_indexes' => true,
+            'search_path' => env('ISPWATCH_DB_SEARCH_PATH', 'public'),
+            'sslmode' => env('ISPWATCH_DB_SSLMODE', 'require'),
+        ],
+
         'mariadb' => [
             'driver' => 'mariadb',
             'url' => env('DB_URL'),
@@ -94,7 +111,10 @@ return [
             'charset' => env('DB_CHARSET', 'utf8'),
             'prefix' => '',
             'prefix_indexes' => true,
-            'search_path' => 'public',
+            // Schema dedicado de Converza. Local: converza_dev. Prod: converza.
+            // Las tablas de ispwatch viven en `public` y se acceden con la
+            // conexión separada `ispwatch` (read-only).
+            'search_path' => env('DB_SEARCH_PATH', 'converza'),
             'sslmode' => env('DB_SSLMODE', 'prefer'),
         ],
 
