@@ -39,5 +39,6 @@ return [
         'url' => env('WHATSAPP_API_URL', ''),
         'token' => env('WHATSAPP_API_TOKEN', ''),
         'verify_token' => env('WHATSAPP_VERIFY_TOKEN', 'ispwatch-token'),
+        'forward_url' => env('WEBHOOK_FORWARD_URL'),
     ],
 ];

@@ -1,59 +1,235 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# CONVERZA CRM
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+CRM con chatbot integrado vía **WhatsApp Cloud API**. Construido con **Laravel 12 + Inertia + Vue 3 + Tailwind**.
 
-## About Laravel
+---
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+## Stack
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+| Capa | Tecnología |
+|---|---|
+| Backend | Laravel 12 (PHP 8.2) |
+| Frontend | Vue 3 + Inertia.js + Tailwind CSS 4 |
+| Build | Vite |
+| DB local | SQLite |
+| DB producción | MySQL |
+| Cache/Sesión producción | Redis |
+| Mensajería | Meta WhatsApp Cloud API |
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+---
 
-## Learning Laravel
+## Entornos
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework. You can also check out [Laravel Learn](https://laravel.com/learn), where you will be guided through building a modern Laravel application.
+| Entorno | URL |
+|---|---|
+| Local | http://127.0.0.1:8000 |
+| Producción | https://converza-crm.duckdns.org |
 
-If you don't feel like reading, [Laracasts](https://laracasts.com) can help. Laracasts contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+---
 
-## Laravel Sponsors
+## Setup local
 
-We would like to extend our thanks to the following sponsors for funding Laravel development. If you are interested in becoming a sponsor, please visit the [Laravel Partners program](https://partners.laravel.com).
+### Requisitos
+- PHP 8.2+
+- Composer
+- Node 18+
+- Git
 
-### Premium Partners
+### Instalación inicial
+```powershell
+git clone <repo> CONVERZA-CRM
+cd CONVERZA-CRM
 
-- **[Vehikl](https://vehikl.com)**
-- **[Tighten Co.](https://tighten.co)**
-- **[Kirschbaum Development Group](https://kirschbaumdevelopment.com)**
-- **[64 Robots](https://64robots.com)**
-- **[Curotec](https://www.curotec.com/services/technologies/laravel)**
-- **[DevSquad](https://devsquad.com/hire-laravel-developers)**
-- **[Redberry](https://redberry.international/laravel-development)**
-- **[Active Logic](https://activelogic.com)**
+composer install
+npm install
 
-## Contributing
+cp .env.example .env
+php artisan key:generate
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+# Crea el archivo SQLite vacío
+New-Item database\database.sqlite
 
-## Code of Conduct
+php artisan migrate
+```
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+### Variables de entorno relevantes (`.env`)
+```env
+APP_ENV=local
+APP_URL=http://127.0.0.1:8000
+DB_CONNECTION=sqlite
 
-## Security Vulnerabilities
+WHATSAPP_API_URL=https://graph.facebook.com/v18.0/<PHONE_NUMBER_ID>
+WHATSAPP_API_TOKEN=<TOKEN_PERMANENTE_META>
+WHATSAPP_APP_SECRET=<APP_SECRET>
+WHATSAPP_VERIFY_TOKEN=converza-token-2024
+```
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+### Levantar el servidor
+```powershell
+npm run dev
+```
 
-## License
+Este comando levanta **Laravel + Vite** juntos (vía `concurrently`). Abre [http://127.0.0.1:8000](http://127.0.0.1:8000).
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+---
+
+## Producción
+
+El droplet es Ubuntu en DigitalOcean, ip `159.223.140.27`, accesible vía:
+```powershell
+ssh deploy@159.223.140.27
+```
+
+### Stack del droplet
+- nginx + PHP-FPM 8.2
+- MySQL + Redis
+- SSL Let's Encrypt (Certbot, auto-renew)
+- Path del proyecto: `/var/www/converza-crm`
+- Config nginx: `/etc/nginx/sites-available/converza-crm`
+
+### Desplegar cambios
+```bash
+ssh deploy@159.223.140.27
+cd /var/www/converza-crm
+git pull origin <rama>
+composer install --no-dev --optimize-autoloader
+npm ci && npm run build
+php artisan migrate --force
+php artisan config:cache && php artisan route:cache
+```
+
+---
+
+## Webhook de WhatsApp
+
+### URL pública
+```
+https://converza-crm.duckdns.org/webhook
+```
+
+### Verify Token
+Configurado en `.env` como `WHATSAPP_VERIFY_TOKEN`. Por defecto: `converza-token-2024`.
+
+### Comprobar que el webhook responde
+```bash
+curl "https://converza-crm.duckdns.org/webhook?hub.mode=subscribe&hub.verify_token=converza-token-2024&hub.challenge=TEST123"
+# Debe devolver: TEST123
+```
+
+### Suscripción de campos (Facebook Developer)
+Solo es estrictamente necesario:
+- `messages`
+
+Los demás (`account_alerts`, `phone_number_quality_update`, etc.) son opcionales para monitoreo de cuenta.
+
+---
+
+## Reenviar el webhook a tu local (desarrollo)
+
+Como Facebook solo permite **una URL** para el webhook, el flujo es:
+**Meta → Producción → (reenvía a) → tu local vía ngrok**
+
+Así puedes ver mensajes reales mientras desarrollas sin tumbar producción.
+
+### 1. Levantar el local
+```powershell
+npm run dev
+```
+
+### 2. Exponer el local con ngrok
+En otra terminal:
+```powershell
+.\ngrok.exe http 8000
+```
+
+Verás algo como:
+```
+Forwarding   https://abc123-xyz.ngrok-free.app -> http://localhost:8000
+```
+**Copia esa URL HTTPS.**
+
+### 3. Activar el forwarder en producción
+En el droplet:
+```bash
+ssh deploy@159.223.140.27
+nano /var/www/converza-crm/.env
+```
+
+Agrega/edita la variable:
+```env
+WEBHOOK_FORWARD_URL=https://abc123-xyz.ngrok-free.app/webhook
+```
+
+Limpia caché:
+```bash
+cd /var/www/converza-crm
+php artisan config:cache
+```
+
+> Si subiste cambios al código del controlador, primero hace falta `git pull origin <rama>`.
+
+### 4. Probar
+Envía un mensaje de WhatsApp al número de prueba. Deberías ver:
+
+| Dónde | Qué |
+|---|---|
+| Log de producción | `Webhook received:` |
+| Consola de ngrok | Una petición `POST /webhook` entrante |
+| Log local | El mismo mensaje procesado |
+
+Logs útiles:
+```bash
+# En producción
+tail -f /var/www/converza-crm/storage/logs/laravel.log
+```
+```powershell
+# En local
+Get-Content storage\logs\laravel.log -Wait
+```
+
+### 5. Desactivar el forwarder
+Cuando termines de desarrollar:
+```bash
+nano /var/www/converza-crm/.env
+# Deja la variable vacía:  WEBHOOK_FORWARD_URL=
+php artisan config:cache
+```
+
+Producción vuelve a procesar los webhooks sin reenviar nada.
+
+---
+
+## Estructura del repo
+
+```
+app/
+├── Http/
+│   ├── Controllers/      # Dashboard, Chat, Contacts, WhatsApp, etc.
+│   └── Middleware/
+├── Models/               # Contact, Conversation, Message, Label, Template...
+└── Services/
+    └── WhatsAppService.php
+
+resources/js/
+├── Layouts/AppLayout.vue
+└── Pages/                # Inertia pages (Dashboard, Chat, Contacts, ...)
+
+routes/web.php            # Rutas Inertia + webhook público
+config/services.php       # Config WhatsApp + forward_url
+```
+
+---
+
+## Comandos útiles
+
+```powershell
+# Local
+npm run dev                          # Levantar todo
+php artisan migrate:fresh --seed     # Reset DB local
+php artisan tinker                   # Shell interactivo
+
+# Producción (desde el droplet)
+sudo systemctl reload nginx          # Recargar nginx
+sudo certbot renew                   # Renovar SSL manual (corre auto vía cron)
+tail -f storage/logs/laravel.log     # Ver logs en vivo
+```

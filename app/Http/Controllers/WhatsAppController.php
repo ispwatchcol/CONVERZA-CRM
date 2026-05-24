@@ -2,128 +2,22 @@
 
 namespace App\Http\Controllers;
 
-use App\Services\WhatsAppService;
+use App\Models\Contact;
+use App\Models\Conversation;
+use App\Models\Message;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Storage;
-use Inertia\Inertia;
 
 class WhatsAppController extends Controller
 {
-    protected WhatsAppService $whatsappService;
-
-    public function __construct(WhatsAppService $whatsappService)
-    {
-        $this->whatsappService = $whatsappService;
-    }
-
     private function normalizePhone($phone)
     {
-        // Remove non-numeric characters
         $phone = preg_replace('/[^0-9]/', '', $phone);
-
-        // If it's a Colombian mobile number (10 digits, starts with 3), add 57
         if (strlen($phone) === 10 && str_starts_with($phone, '3')) {
             $phone = '57' . $phone;
         }
-
         return $phone;
-    }
-
-    public function index(Request $request)
-    {
-        // Load messages from local storage (JSON file)
-        $messages = [];
-        if (Storage::disk('local')->exists('messages.json')) {
-            $messages = json_decode(Storage::disk('local')->get('messages.json'), true);
-        }
-
-        // Grouper messages by phone
-        $conversations = [];
-        foreach ($messages as $msg) {
-            $phone = $this->normalizePhone($msg['phone']); // Normalize for grouping
-            if (!isset($conversations[$phone])) {
-                $conversations[$phone] = [
-                    'phone' => $phone,
-                    'messages' => [],
-                    'last_message' => null,
-                ];
-            }
-            $conversations[$phone]['messages'][] = $msg;
-        }
-
-        // Sort messages within each conversation and determine last message
-        foreach ($conversations as &$conv) {
-            usort($conv['messages'], function ($a, $b) {
-                return strtotime($a['created_at']) - strtotime($b['created_at']);
-            });
-            $conv['last_message'] = end($conv['messages']);
-        }
-
-        // Convert key-value array to indexed array and sort by last message date desc
-        $conversationsList = array_values($conversations);
-        usort($conversationsList, function ($a, $b) {
-            return strtotime($b['last_message']['created_at']) - strtotime($a['last_message']['created_at']);
-        });
-
-        // Determine active chat
-        $activePhone = $request->query('phone');
-        if ($activePhone) {
-            $activePhone = $this->normalizePhone($activePhone);
-        }
-
-        $activeChat = [];
-
-        if ($activePhone && isset($conversations[$activePhone])) {
-            $activeChat = $conversations[$activePhone]['messages'];
-        } elseif (empty($activePhone) && !empty($conversationsList)) {
-            $activePhone = $conversationsList[0]['phone'];
-            $activeChat = $conversationsList[0]['messages'];
-        }
-
-        return Inertia::render('Dashboard', [
-            'conversations' => $conversationsList,
-            'activeChat' => $activeChat,
-            'activePhone' => $activePhone,
-        ]);
-    }
-
-    public function store(Request $request)
-    {
-        $request->validate([
-            'phone' => 'required|numeric|digits_between:10,15',
-            'message' => 'required|string',
-        ]);
-
-        $phone = $this->normalizePhone($request->input('phone'));
-        $messageContent = $request->input('message');
-
-        // Send via service
-        $result = $this->whatsappService->sendMessage($phone, $messageContent);
-
-        if ($result['success']) {
-            // Save to local storage
-            $messages = [];
-            if (Storage::disk('local')->exists('messages.json')) {
-                $messages = json_decode(Storage::disk('local')->get('messages.json'), true);
-            }
-
-            $newMessage = [
-                'id' => uniqid(),
-                'phone' => $phone, // Save normalized
-                'message' => $messageContent,
-                'status' => 'sent',
-                'created_at' => now()->toDateTimeString(),
-                'api_response' => $result['data'] ?? 'mock'
-            ];
-
-            $messages[] = $newMessage;
-            Storage::disk('local')->put('messages.json', json_encode($messages, JSON_PRETTY_PRINT));
-
-            return to_route('dashboard', ['phone' => $phone])->with('success', 'Mensaje enviado correctamente.');
-        }
-
-        return to_route('dashboard', ['phone' => $phone])->withErrors(['message' => 'Error al enviar mensaje: ' . ($result['error'] ?? 'Unknown error')]);
     }
 
     public function verifyWebhook(Request $request)
@@ -139,37 +33,62 @@ class WhatsAppController extends Controller
         return response()->json(['error' => 'Forbidden'], 403);
     }
 
+    private function forwardWebhook(Request $request): void
+    {
+        $forwardUrl = config('services.whatsapp.forward_url');
+
+        if (! $forwardUrl) {
+            return;
+        }
+
+        try {
+            Http::timeout(3)
+                ->withHeaders([
+                    'X-Hub-Signature-256' => $request->header('X-Hub-Signature-256', ''),
+                    'X-Forwarded-Webhook' => '1',
+                ])
+                ->post($forwardUrl, $request->all());
+        } catch (\Throwable $e) {
+            Log::warning('Webhook forward failed', ['error' => $e->getMessage(), 'url' => $forwardUrl]);
+        }
+    }
+
     public function handleWebhook(Request $request)
     {
         $payload = $request->all();
-
         Log::info('Webhook received:', $payload);
+
+        $this->forwardWebhook($request);
 
         if (isset($payload['entry'][0]['changes'][0]['value']['messages'][0])) {
             $messageData = $payload['entry'][0]['changes'][0]['value']['messages'][0];
 
-            $phone = $messageData['from'];
+            $phone = $this->normalizePhone($messageData['from']);
             $text = $messageData['text']['body'] ?? '';
+            $waMessageId = $messageData['id'] ?? null;
 
-            // Normalize phone from webhook
-            $phone = $this->normalizePhone($phone);
+            // Find or create contact
+            $contact = Contact::firstOrCreate(
+                ['phone' => $phone],
+                ['name' => $payload['entry'][0]['changes'][0]['value']['contacts'][0]['profile']['name'] ?? null]
+            );
 
-            // Save to local storage
-            $messages = [];
-            if (Storage::disk('local')->exists('messages.json')) {
-                $messages = json_decode(Storage::disk('local')->get('messages.json'), true);
-            }
+            // Find or create open conversation
+            $conversation = Conversation::firstOrCreate(
+                ['contact_id' => $contact->id, 'status' => 'open'],
+                ['contact_id' => $contact->id]
+            );
 
-            $newMessage = [
-                'id' => $messageData['id'],
-                'phone' => $phone,
-                'message' => $text,
+            // Create message
+            Message::create([
+                'conversation_id' => $conversation->id,
+                'contact_id' => $contact->id,
+                'body' => $text,
                 'status' => 'received',
-                'created_at' => now()->toDateTimeString(),
-            ];
+                'wa_message_id' => $waMessageId,
+            ]);
 
-            $messages[] = $newMessage;
-            Storage::disk('local')->put('messages.json', json_encode($messages, JSON_PRETTY_PRINT));
+            $conversation->touch();
         } else {
             Log::warning('Webhook received but no messages found in payload', ['payload' => $payload]);
         }
