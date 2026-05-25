@@ -15,6 +15,9 @@ return Application::configure(basePath: dirname(__DIR__))
             \App\Http\Middleware\HandleInertiaRequests::class,
             \App\Http\Middleware\ResolveTenant::class,
         ]);
+        $middleware->alias([
+            'superadmin' => \App\Http\Middleware\EnsureSuperadmin::class,
+        ]);
         $middleware->validateCsrfTokens(except: [
             'webhook',
         ]);

@@ -40,9 +40,17 @@ class HandleInertiaRequests extends Middleware
             ...parent::share($request),
             'auth' => [
                 'user' => fn() => $request->user()
-                    ? $request->user()->only('id', 'name', 'email')
+                    ? array_merge(
+                        $request->user()->only('id', 'name', 'email'),
+                        ['is_superadmin' => (bool) $request->user()->is_superadmin]
+                    )
                     : null,
             ],
+            // Tenant resuelto por ResolveTenant middleware — útil para personalizar
+            // UI (saludos de soporte, headers, etc.). Solo expone lo no-sensible.
+            'tenant' => fn() => app()->bound('tenant')
+                ? ['name' => app('tenant')->name, 'slug' => app('tenant')->slug]
+                : null,
             'flash' => [
                 'success' => fn() => $request->session()->get('success'),
                 'error' => fn() => $request->session()->get('error'),
