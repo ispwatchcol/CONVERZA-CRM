@@ -46,6 +46,28 @@ onMounted(() => {
 });
 
 const showThemeMenu = ref(false);
+const themeMenuRef = ref(null);
+const userMenuRef = ref(null);
+
+// Toggle exclusivo: abrir uno cierra el otro.
+function toggleThemeMenu() {
+    showUserMenu.value = false;
+    showThemeMenu.value = !showThemeMenu.value;
+}
+function toggleUserMenu() {
+    showThemeMenu.value = false;
+    showUserMenu.value = !showUserMenu.value;
+}
+
+// Click fuera de cualquier dropdown abierto → lo cierra.
+function handleDocumentClick(e) {
+    if (showThemeMenu.value && themeMenuRef.value && !themeMenuRef.value.contains(e.target)) {
+        showThemeMenu.value = false;
+    }
+    if (showUserMenu.value && userMenuRef.value && !userMenuRef.value.contains(e.target)) {
+        showUserMenu.value = false;
+    }
+}
 
 const themeIcon = computed(() => {
     if (theme.value === 'dark') return 'moon';
@@ -128,8 +150,14 @@ function handleEsc(e) {
         showUserMenu.value = false;
     }
 }
-onMounted(() => document.addEventListener('keydown', handleEsc));
-onUnmounted(() => document.removeEventListener('keydown', handleEsc));
+onMounted(() => {
+    document.addEventListener('keydown', handleEsc);
+    document.addEventListener('mousedown', handleDocumentClick);
+});
+onUnmounted(() => {
+    document.removeEventListener('keydown', handleEsc);
+    document.removeEventListener('mousedown', handleDocumentClick);
+});
 </script>
 
 <template>
@@ -259,23 +287,23 @@ onUnmounted(() => document.removeEventListener('keydown', handleEsc));
         <div class="flex-1 flex flex-col overflow-hidden">
 
             <!-- Top bar -->
-            <header class="bg-white border-b border-gray-200 h-16 flex items-center justify-between px-4 md:px-6 shrink-0 relative z-20">
-                <div class="flex items-center space-x-3">
+            <header class="bg-white border-b border-gray-200 h-16 flex items-center justify-between px-3 sm:px-4 md:px-6 shrink-0 relative z-20 gap-2">
+                <div class="flex items-center space-x-2 sm:space-x-3 min-w-0 flex-1">
                     <!-- Mobile menu -->
-                    <button @click="sidebarOpen = !sidebarOpen" class="md:hidden p-2 rounded-lg text-gray-500 hover:bg-gray-100 transition">
+                    <button @click="sidebarOpen = !sidebarOpen" class="md:hidden p-2 rounded-lg text-gray-500 hover:bg-gray-100 transition shrink-0">
                         <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" /></svg>
                     </button>
-                    <h2 class="text-base font-semibold text-gray-800">
+                    <h2 class="text-base font-semibold text-gray-800 truncate">
                         {{ navItems.find(i => isActive(i.route))?.name || 'Dashboard' }}
                     </h2>
                 </div>
 
-                <div class="flex items-center space-x-2">
+                <div class="flex items-center space-x-1 sm:space-x-2 shrink-0">
 
                     <!-- ── Theme switcher ──────────────────────────────────── -->
-                    <div class="relative">
+                    <div ref="themeMenuRef" class="relative">
                         <button
-                            @click="showThemeMenu = !showThemeMenu"
+                            @click="toggleThemeMenu"
                             class="p-2 rounded-lg text-gray-500 hover:bg-gray-100 transition"
                             title="Cambiar tema"
                         >
@@ -317,9 +345,9 @@ onUnmounted(() => document.removeEventListener('keydown', handleEsc));
 
 
                     <!-- ── User menu ───────────────────────────────────────── -->
-                    <div class="relative">
+                    <div ref="userMenuRef" class="relative">
                         <button
-                            @click="showUserMenu = !showUserMenu"
+                            @click="toggleUserMenu"
                             class="flex items-center space-x-2 p-1 pr-2 rounded-full hover:bg-gray-100 transition group"
                             title="Mi cuenta"
                         >

@@ -237,7 +237,10 @@ function submitClosing() {
 }
 
 // ── ISPWatch sidebar helpers ─────────────────────────────────────────────────
-const showCustomerPanel = ref(true);
+// En desktop (lg+) el panel se muestra al lado del chat por defecto.
+// En mobile/tablet (< lg) se abre como drawer overlay desde la derecha,
+// cerrado por defecto para no robar espacio al chat.
+const showCustomerPanel = ref(typeof window !== 'undefined' ? window.innerWidth >= 1024 : true);
 
 function formatMoney(amount, currency = 'COP') {
     if (amount == null) return '—';
@@ -292,6 +295,21 @@ onMounted(() => {
     }, 5000);
 });
 onUnmounted(() => { if (pollingInterval) clearInterval(pollingInterval); });
+
+// Cerrar el drawer del cliente al pasar de mobile a desktop para evitar
+// que el backdrop quede atrapado en una capa que ya no debería verse.
+function handleResize() {
+    if (typeof window === 'undefined') return;
+    if (window.innerWidth >= 1024) {
+        // En desktop, abrir por defecto si hay conversación activa
+        showCustomerPanel.value = true;
+    } else {
+        // En mobile/tablet, cerrar para no robar espacio al chat
+        showCustomerPanel.value = false;
+    }
+}
+onMounted(() => window.addEventListener('resize', handleResize));
+onUnmounted(() => window.removeEventListener('resize', handleResize));
 </script>
 
 <template>
@@ -455,6 +473,15 @@ onUnmounted(() => { if (pollingInterval) clearInterval(pollingInterval); });
                                 class="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 rounded-lg text-xs font-medium text-gray-700 hover:bg-gray-50 hover:border-gray-300 transition">
                             <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
                             Cerrar
+                        </button>
+
+                        <!-- Ficha toggle (visible en todos los tamaños) -->
+                        <button @click="showCustomerPanel = !showCustomerPanel"
+                                class="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 border border-gray-200 rounded-lg text-xs font-medium text-gray-700 hover:bg-gray-50 hover:border-gray-300 transition"
+                                :class="{ 'bg-accent/10 border-accent/30 text-accent': showCustomerPanel }"
+                                :title="showCustomerPanel ? 'Ocultar ficha' : 'Mostrar ficha'">
+                            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M17.982 18.725A7.488 7.488 0 0012 15.75a7.488 7.488 0 00-5.982 2.975m11.963 0a9 9 0 10-11.963 0m11.963 0A8.966 8.966 0 0112 21a8.966 8.966 0 01-5.982-2.275M15 9.75a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                            <span class="hidden sm:inline">Ficha</span>
                         </button>
                     </div>
 
@@ -685,8 +712,12 @@ onUnmounted(() => { if (pollingInterval) clearInterval(pollingInterval); });
                                 <button type="button" @click="showQuickReplies = !showQuickReplies" class="p-2.5 text-gray-500 hover:text-accent transition rounded-lg hover:bg-white">
                                     <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" /></svg>
                                 </button>
+                                <!-- Backdrop para cerrar al hacer click fuera -->
+                                <Teleport to="body">
+                                    <div v-if="showQuickReplies && quickReplies.length" class="fixed inset-0 z-[19]" @click="showQuickReplies = false"></div>
+                                </Teleport>
                                 <!-- Quick replies dropdown -->
-                                <div v-if="showQuickReplies && quickReplies.length" class="absolute bottom-12 left-0 w-72 bg-white rounded-xl shadow-xl border border-gray-200 max-h-60 overflow-y-auto z-20 animate-scale-in">
+                                <div v-if="showQuickReplies && quickReplies.length" class="absolute bottom-12 left-0 w-[calc(100vw-2rem)] sm:w-72 max-w-xs bg-white rounded-xl shadow-xl border border-gray-200 max-h-60 overflow-y-auto z-20 animate-scale-in">
                                     <div class="p-2">
                                         <button v-for="qr in quickReplies" :key="qr.id" type="button" @click="useQuickReply(qr)" class="w-full text-left p-3 rounded-lg hover:bg-gray-50 transition">
                                             <p class="text-sm font-medium text-gray-900">{{ qr.title }}</p>
@@ -716,10 +747,19 @@ onUnmounted(() => { if (pollingInterval) clearInterval(pollingInterval); });
                 </div>
             </div>
 
+            <!-- ─── Backdrop drawer (solo mobile/tablet) ─────────────────────── -->
+            <div
+                v-if="activeConversationId && showCustomerPanel"
+                class="fixed inset-0 z-40 bg-black/50 lg:hidden"
+                @click="showCustomerPanel = false"
+            ></div>
+
             <!-- ─── Customer Sidebar (ISPWatch) ───────────────────────────────── -->
+            <!-- En lg+: panel estático al lado del chat.
+                 En < lg: drawer overlay desde la derecha. -->
             <aside
                 v-if="activeConversationId && showCustomerPanel"
-                class="hidden lg:flex w-80 xl:w-96 border-l border-gray-200 bg-white flex-col shrink-0"
+                class="fixed lg:relative inset-y-0 right-0 z-50 lg:z-auto w-[88vw] max-w-sm lg:w-80 xl:w-96 border-l border-gray-200 bg-white flex flex-col shrink-0 shadow-2xl lg:shadow-none animate-slide-in-right lg:animate-none"
             >
                 <!-- Header -->
                 <div class="p-4 border-b border-gray-100 shrink-0">
@@ -849,16 +889,6 @@ onUnmounted(() => { if (pollingInterval) clearInterval(pollingInterval); });
                 </div>
             </aside>
 
-            <!-- Toggle button para reabrir el panel cuando está oculto -->
-            <button
-                v-if="activeConversationId && !showCustomerPanel"
-                @click="showCustomerPanel = true"
-                class="hidden lg:flex absolute right-3 top-20 z-20 items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-200 rounded-full shadow-sm text-xs font-medium text-gray-700 hover:bg-gray-50 transition"
-                title="Mostrar ficha del cliente"
-            >
-                <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M17.982 18.725A7.488 7.488 0 0012 15.75a7.488 7.488 0 00-5.982 2.975m11.963 0a9 9 0 10-11.963 0m11.963 0A8.966 8.966 0 0112 21a8.966 8.966 0 01-5.982-2.275M15 9.75a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
-                Ficha
-            </button>
         </div>
 
         <!-- ═══════════════ Modal: Cerrar conversación ═══════════════ -->
