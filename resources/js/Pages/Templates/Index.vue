@@ -1,114 +1,453 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
-import { useForm, router, Head } from '@inertiajs/vue3';
-import { ref } from 'vue';
+import { useForm, router, Head, Link } from '@inertiajs/vue3';
+import { ref, computed } from 'vue';
 
-const props = defineProps({ templates: Array, filters: Object });
-const showModal = ref(false);
-const editing = ref(null);
+const props = defineProps({
+    templates: { type: Array, default: () => [] },
+    filters:   { type: Object, default: () => ({}) },
+    stats:     { type: Object, default: () => ({}) },
+    languages: { type: Object, default: () => ({}) },
+    metaConfigured: { type: Boolean, default: false },
+});
+
+// ── Filtros ──────────────────────────────────────────────────────────────────
+const search = ref(props.filters?.search || '');
 const statusFilter = ref(props.filters?.status || '');
 
-const form = useForm({ name: '', category: 'utility', body: '', team_label: '', is_active: true });
+const statusChips = [
+    { value: '',         label: 'Todas' },
+    { value: 'approved', label: 'Aprobadas' },
+    { value: 'pending',  label: 'Pendientes' },
+    { value: 'rejected', label: 'Rechazadas' },
+];
 
-const statusColors = { pending: 'bg-yellow-100 text-yellow-700', approved: 'bg-green-100 text-green-700', rejected: 'bg-red-100 text-red-700' };
-const statusLabels = { pending: 'Pendiente', approved: 'Aprobada', rejected: 'Rechazada' };
-const categoryLabels = { marketing: 'Marketing', utility: 'Utilidad', authentication: 'Autenticación' };
+function applyFilters() {
+    router.get(route('templates.index'), {
+        search: search.value || undefined,
+        status: statusFilter.value || undefined,
+    }, { preserveState: true, preserveScroll: true, replace: true });
+}
 
-function openCreate() { editing.value = null; form.reset(); showModal.value = true; }
-function openEdit(t) {
-    editing.value = t;
-    form.name = t.name; form.category = t.category; form.body = t.body;
-    form.team_label = t.team_label || ''; form.is_active = t.is_active;
+function setStatus(v) {
+    statusFilter.value = v;
+    applyFilters();
+}
+
+function clearFilters() {
+    search.value = '';
+    statusFilter.value = '';
+    applyFilters();
+}
+
+const hasFilters = computed(() => search.value !== '' || statusFilter.value !== '');
+
+// ── Modal create/edit ────────────────────────────────────────────────────────
+const showModal = ref(false);
+const editing = ref(null);
+const form = useForm({
+    name: '',
+    category: 'utility',
+    language: 'es_CO',
+    body: '',
+    team_label: '',
+});
+
+const bodyChars = computed(() => (form.body || '').length);
+const bodyOverflow = computed(() => bodyChars.value > 1024);
+
+// Detecta variables {{1}}, {{2}}, etc. en el body
+const detectedVariables = computed(() => {
+    const matches = (form.body || '').match(/\{\{\s*\d+\s*\}\}/g) || [];
+    return [...new Set(matches)].sort();
+});
+
+function openCreate() {
+    editing.value = null;
+    form.reset();
+    form.category = 'utility';
+    form.language = 'es_CO';
     showModal.value = true;
 }
+
+function openEdit(t) {
+    editing.value = t;
+    form.name = t.name;
+    form.category = t.category;
+    form.language = t.language || 'es_CO';
+    form.body = t.body;
+    form.team_label = t.team_label || '';
+    showModal.value = true;
+    showDetail.value = false;
+}
+
 function save() {
+    const opts = { preserveScroll: true, onSuccess: () => { showModal.value = false; form.reset(); } };
     if (editing.value) {
-        form.put(route('templates.update', editing.value.id), { onSuccess: () => { showModal.value = false; }, preserveScroll: true });
+        form.put(route('templates.update', editing.value.id), opts);
     } else {
-        form.post(route('templates.store'), { onSuccess: () => { showModal.value = false; form.reset(); }, preserveScroll: true });
+        form.post(route('templates.store'), opts);
     }
 }
-function toggleActive(t) { router.patch(route('templates.toggle', t.id), {}, { preserveScroll: true }); }
-function deleteTemplate(t) { if (confirm('¿Eliminar esta plantilla?')) router.delete(route('templates.destroy', t.id), { preserveScroll: true }); }
-function filterStatus(s) { statusFilter.value = s; router.get(route('templates.index'), s ? { status: s } : {}, { preserveState: true }); }
+
+function toggleActive(t) {
+    router.patch(route('templates.toggle', t.id), {}, { preserveScroll: true });
+}
+
+function deleteTemplate(t) {
+    const metaMsg = t.meta_id
+        ? 'Esta plantilla está sincronizada con Meta. Borrarla solo la quita del mirror local — sigue existiendo en Meta Business hasta que la elimines allá. '
+        : '';
+    if (!confirm(`${metaMsg}¿Eliminar "${t.name}"?`)) return;
+    router.delete(route('templates.destroy', t.id), { preserveScroll: true });
+}
+
+// ── Sync con Meta ────────────────────────────────────────────────────────────
+const syncing = ref(false);
+function syncWithMeta() {
+    if (!confirm('Se va a consultar a Meta y actualizar tu mirror local de plantillas. ¿Continuar?')) return;
+    syncing.value = true;
+    router.post(route('templates.sync'), {}, {
+        preserveScroll: true,
+        onFinish: () => { syncing.value = false; },
+    });
+}
+
+// ── Drawer de detalle ────────────────────────────────────────────────────────
+const showDetail = ref(false);
+const selected = ref(null);
+
+function openDetail(t) {
+    selected.value = t;
+    showDetail.value = true;
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+function statusBadge(status) {
+    return {
+        approved: 'bg-emerald-100 text-emerald-700',
+        pending:  'bg-amber-100 text-amber-700',
+        rejected: 'bg-red-100 text-red-700',
+    }[status] || 'bg-gray-100 text-gray-600';
+}
+
+function statusLabel(status) {
+    return { approved: 'Aprobada', pending: 'Pendiente', rejected: 'Rechazada' }[status] || status;
+}
+
+function categoryBadge(cat) {
+    return {
+        marketing:      'bg-pink-100 text-pink-700',
+        utility:        'bg-blue-100 text-blue-700',
+        authentication: 'bg-purple-100 text-purple-700',
+    }[cat] || 'bg-gray-100 text-gray-600';
+}
+
+function categoryLabel(cat) {
+    return { marketing: 'Marketing', utility: 'Utilidad', authentication: 'Autenticación' }[cat] || cat;
+}
+
+// Renderiza el body destacando las variables {{1}}, {{2}}...
+function renderBodyWithVars(body) {
+    if (!body) return '';
+    return body.replace(/(\{\{\s*\d+\s*\}\})/g,
+        '<span class="bg-amber-100 text-amber-800 px-1 rounded font-mono text-[11px]">$1</span>');
+}
+
+function formatDateTime(iso) {
+    if (!iso) return '—';
+    return new Intl.DateTimeFormat('es-CO', {
+        day: '2-digit', month: 'short', year: 'numeric',
+        hour: '2-digit', minute: '2-digit',
+    }).format(new Date(iso));
+}
+
+// Ejemplos de sintaxis (los meto como vars para evitar que Vue interpole los `{{ }}` dentro del template)
+const varExample = '{{1}}, {{2}}';
+const placeholderExample = 'Hola {{1}}, tu factura {{2}} está vencida. Paga ahora para evitar suspensión.';
 </script>
 
 <template>
     <Head title="Plantillas" />
     <AppLayout>
-        <div class="p-4 md:p-6 lg:p-8 animate-fade-in">
-            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+        <div class="p-4 md:p-6 lg:p-8 animate-fade-in max-w-6xl mx-auto">
+            <!-- Header -->
+            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
                 <div>
-                    <h1 class="text-2xl font-bold text-gray-900">Plantillas</h1>
-                    <p class="text-sm text-gray-500 mt-1">Plantillas de WhatsApp para aprobación de Meta</p>
+                    <h1 class="text-2xl font-bold text-gray-900">Plantillas WhatsApp</h1>
+                    <p class="text-sm text-gray-500 mt-1">Mensajes pre-aprobados por Meta para usar fuera de la ventana de 24 horas</p>
                 </div>
-                <button @click="openCreate" class="inline-flex items-center px-4 py-2.5 bg-accent text-white rounded-xl text-sm font-medium hover:bg-accent-hover transition shadow-sm">
-                    <svg class="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" /></svg>
-                    Nueva Plantilla
-                </button>
+                <div class="flex gap-2">
+                    <button @click="syncWithMeta" :disabled="syncing || !metaConfigured"
+                            class="inline-flex items-center px-4 py-2.5 border border-gray-200 text-gray-700 rounded-xl text-sm font-medium hover:bg-gray-50 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                            :title="!metaConfigured ? 'Configura primero WhatsApp en Settings' : 'Traer plantillas desde Meta'">
+                        <svg class="w-4 h-4 mr-2" :class="{ 'animate-spin': syncing }" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99"/></svg>
+                        {{ syncing ? 'Sincronizando…' : 'Sincronizar con Meta' }}
+                    </button>
+                    <button @click="openCreate" class="inline-flex items-center px-4 py-2.5 bg-accent text-white rounded-xl text-sm font-medium hover:bg-accent-hover transition shadow-sm">
+                        <svg class="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
+                        Nueva plantilla
+                    </button>
+                </div>
             </div>
 
-            <div class="flex gap-2 mb-6">
-                <button @click="filterStatus('')" class="px-4 py-2 rounded-xl text-sm font-medium transition" :class="!statusFilter ? 'bg-accent text-white' : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'">Todas</button>
-                <button v-for="(label, key) in statusLabels" :key="key" @click="filterStatus(key)" class="px-4 py-2 rounded-xl text-sm font-medium transition" :class="statusFilter === key ? 'bg-accent text-white' : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'">{{ label }}</button>
+            <!-- Aviso si Meta no está configurado -->
+            <Link v-if="!metaConfigured" :href="route('settings.index')"
+                  class="mb-6 flex items-center gap-2.5 px-4 py-2.5 bg-amber-50 border border-amber-200 rounded-xl text-sm text-amber-900 hover:bg-amber-100 transition">
+                <svg class="w-4 h-4 text-amber-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/></svg>
+                <span class="font-medium">Falta configurar WhatsApp / Meta para sincronizar plantillas.</span>
+                <span class="text-xs text-amber-700 ml-auto">Ir a configuración →</span>
+            </Link>
+
+            <!-- Stats -->
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+                <div class="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+                    <p class="text-[11px] text-gray-500 uppercase tracking-wider font-semibold">Total</p>
+                    <p class="text-2xl font-bold text-gray-900 mt-1">{{ stats.total }}</p>
+                    <p class="text-[10px] text-gray-400 mt-0.5">{{ stats.synced }} sync de Meta</p>
+                </div>
+                <div class="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+                    <p class="text-[11px] text-gray-500 uppercase tracking-wider font-semibold">Aprobadas</p>
+                    <p class="text-2xl font-bold text-emerald-600 mt-1">{{ stats.approved }}</p>
+                    <p class="text-[10px] text-gray-400 mt-0.5">{{ stats.active }} activas</p>
+                </div>
+                <div class="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+                    <p class="text-[11px] text-gray-500 uppercase tracking-wider font-semibold">Pendientes</p>
+                    <p class="text-2xl font-bold text-amber-600 mt-1">{{ stats.pending }}</p>
+                </div>
+                <div class="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+                    <p class="text-[11px] text-gray-500 uppercase tracking-wider font-semibold">Rechazadas</p>
+                    <p class="text-2xl font-bold text-red-600 mt-1">{{ stats.rejected }}</p>
+                </div>
             </div>
 
-            <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-                <div class="overflow-x-auto">
-                    <table v-if="templates.length" class="w-full">
-                        <thead class="bg-gray-50">
-                            <tr>
-                                <th class="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">ID</th>
-                                <th class="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Equipo</th>
-                                <th class="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Nombre</th>
-                                <th class="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase hidden lg:table-cell">Contenido</th>
-                                <th class="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Estado</th>
-                                <th class="px-6 py-3 text-center text-xs font-semibold text-gray-500 uppercase">Activo</th>
-                                <th class="px-6 py-3 text-right text-xs font-semibold text-gray-500 uppercase">Acciones</th>
-                            </tr>
-                        </thead>
-                        <tbody class="divide-y divide-gray-100">
-                            <tr v-for="t in templates" :key="t.id" class="hover:bg-gray-50 transition">
-                                <td class="px-6 py-4 text-sm text-gray-500">{{ t.id }}</td>
-                                <td class="px-6 py-4"><span class="px-2 py-1 rounded-full text-[10px] font-medium bg-blue-100 text-blue-700">{{ t.team_label || 'Del Equipo' }}</span></td>
-                                <td class="px-6 py-4 text-sm font-medium text-gray-900">{{ t.name }}</td>
-                                <td class="px-6 py-4 text-sm text-gray-500 max-w-xs truncate hidden lg:table-cell">{{ t.body }}</td>
-                                <td class="px-6 py-4"><span class="px-2 py-1 rounded-full text-[10px] font-medium" :class="statusColors[t.status]">{{ statusLabels[t.status] }}</span></td>
-                                <td class="px-6 py-4 text-center">
-                                    <button @click="toggleActive(t)" class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors" :class="t.is_active ? 'bg-accent' : 'bg-gray-300'">
-                                        <span class="inline-block h-4 w-4 transform rounded-full bg-white transition-transform shadow" :class="t.is_active ? 'translate-x-6' : 'translate-x-1'"></span>
-                                    </button>
-                                </td>
-                                <td class="px-6 py-4 text-right">
-                                    <div class="flex items-center justify-end space-x-1">
-                                        <button @click="openEdit(t)" class="p-2 rounded-lg text-blue-500 hover:bg-blue-50 transition"><svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" /></svg></button>
-                                        <button @click="deleteTemplate(t)" class="p-2 rounded-lg text-red-500 hover:bg-red-50 transition"><svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" /></svg></button>
-                                    </div>
-                                </td>
-                            </tr>
-                        </tbody>
-                    </table>
-                    <div v-else class="p-12 text-center text-gray-400">
-                        <p class="text-sm">No hay plantillas creadas</p>
+            <!-- Filtros -->
+            <div class="bg-white rounded-2xl p-4 mb-4 shadow-sm border border-gray-100">
+                <div class="flex flex-col md:flex-row gap-3 md:items-center">
+                    <div class="relative flex-1">
+                        <input v-model="search" @keyup.enter="applyFilters" type="text" placeholder="Buscar por nombre o contenido…" class="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-accent/30 focus:border-accent">
+                        <svg class="w-4 h-4 text-gray-400 absolute left-3 top-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                    </div>
+
+                    <div class="flex items-center gap-1 bg-gray-50 rounded-xl p-1">
+                        <button v-for="opt in statusChips" :key="opt.value" @click="setStatus(opt.value)"
+                                class="px-3 py-1.5 rounded-lg text-xs font-medium transition"
+                                :class="statusFilter === opt.value ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'">
+                            {{ opt.label }}
+                        </button>
+                    </div>
+
+                    <button v-if="hasFilters" @click="clearFilters" class="text-xs text-gray-500 hover:text-gray-700 px-2 transition">
+                        Limpiar
+                    </button>
+                </div>
+            </div>
+
+            <!-- Grid de cards -->
+            <div v-if="templates.length" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                <div v-for="t in templates" :key="t.id" @click="openDetail(t)"
+                     class="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 hover:shadow-md transition-all cursor-pointer group flex flex-col"
+                     :class="{ 'opacity-60': !t.is_active && t.status === 'approved' }">
+                    <!-- Top: name + status -->
+                    <div class="flex items-start justify-between mb-2 gap-2">
+                        <div class="min-w-0 flex-1">
+                            <h3 class="text-sm font-semibold text-gray-900 font-mono truncate">{{ t.name }}</h3>
+                            <p class="text-[10px] text-gray-400 mt-0.5">{{ t.language || 'es_CO' }}</p>
+                        </div>
+                        <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wide shrink-0" :class="statusBadge(t.status)">
+                            {{ statusLabel(t.status) }}
+                        </span>
+                    </div>
+
+                    <!-- Body preview con variables resaltadas -->
+                    <p class="text-xs text-gray-600 line-clamp-3 flex-1 whitespace-pre-wrap" v-html="renderBodyWithVars(t.body)"></p>
+
+                    <!-- Footer -->
+                    <div class="mt-3 pt-3 border-t border-gray-50 flex items-center justify-between gap-2">
+                        <span class="px-1.5 py-0.5 rounded text-[9px] uppercase font-semibold tracking-wide" :class="categoryBadge(t.category)">
+                            {{ categoryLabel(t.category) }}
+                        </span>
+                        <div class="flex items-center gap-2">
+                            <span v-if="t.meta_id" class="inline-flex items-center gap-1 text-[10px] text-emerald-600" title="Sincronizada con Meta">
+                                <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"/></svg>
+                                Meta
+                            </span>
+                            <button v-if="t.status === 'approved'" @click.stop="toggleActive(t)"
+                                    class="flex items-center" :title="t.is_active ? 'Activa' : 'Inactiva'">
+                                <span class="relative inline-block w-7 h-4 rounded-full transition-colors" :class="t.is_active ? 'bg-emerald-500' : 'bg-gray-300'">
+                                    <span class="absolute top-0.5 w-3 h-3 bg-white rounded-full transition-transform" :class="t.is_active ? 'left-3.5' : 'left-0.5'"></span>
+                                </span>
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
+
+            <!-- Empty state -->
+            <div v-else class="bg-white rounded-2xl p-12 text-center shadow-sm border border-gray-100">
+                <svg class="w-16 h-16 mx-auto mb-4 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"/></svg>
+                <h3 class="text-base font-semibold text-gray-700 mb-1">
+                    {{ hasFilters ? 'Ninguna plantilla coincide con los filtros' : 'Aún no hay plantillas' }}
+                </h3>
+                <p class="text-sm text-gray-400 mb-5 max-w-md mx-auto">
+                    <template v-if="hasFilters">Ajusta o limpia los filtros.</template>
+                    <template v-else>
+                        Las plantillas WhatsApp son mensajes pre-aprobados por Meta que puedes enviar a clientes fuera de la ventana de 24h.
+                        Si ya tienes plantillas en Meta Business, sincronízalas con un click.
+                    </template>
+                </p>
+                <div v-if="!hasFilters" class="flex justify-center gap-2">
+                    <button v-if="metaConfigured" @click="syncWithMeta" :disabled="syncing"
+                            class="px-4 py-2 bg-accent text-white rounded-xl text-sm font-medium hover:bg-accent-hover transition disabled:opacity-50">
+                        {{ syncing ? 'Sincronizando…' : 'Traer desde Meta' }}
+                    </button>
+                    <button @click="openCreate" class="px-4 py-2 border border-gray-200 text-gray-700 rounded-xl text-sm font-medium hover:bg-gray-50 transition">
+                        Crear manualmente
+                    </button>
+                </div>
+                <button v-else @click="clearFilters" class="text-xs text-accent hover:underline">Limpiar filtros</button>
+            </div>
         </div>
 
+        <!-- ═══════════════ Modal: Detalle ═══════════════ -->
         <Teleport to="body">
-            <div v-if="showModal" class="fixed inset-0 z-[60] flex items-center justify-center p-4">
-                <div class="fixed inset-0 bg-black/50" @click="showModal = false"></div>
-                <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg animate-scale-in">
+            <div v-if="showDetail && selected" class="fixed inset-0 z-[60] flex items-center justify-center p-4">
+                <div class="fixed inset-0 bg-black/50" @click="showDetail = false"></div>
+                <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto animate-scale-in">
                     <div class="p-6">
-                        <h3 class="text-lg font-bold text-gray-900 mb-4">{{ editing ? 'Editar Plantilla' : 'Nueva Plantilla' }}</h3>
+                        <!-- Header -->
+                        <div class="flex items-start justify-between mb-4">
+                            <div class="min-w-0 flex-1">
+                                <h3 class="text-lg font-bold text-gray-900 font-mono break-all">{{ selected.name }}</h3>
+                                <div class="flex flex-wrap gap-1.5 mt-2">
+                                    <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase" :class="statusBadge(selected.status)">{{ statusLabel(selected.status) }}</span>
+                                    <span class="px-2 py-0.5 rounded-full text-[10px] font-medium" :class="categoryBadge(selected.category)">{{ categoryLabel(selected.category) }}</span>
+                                    <span class="px-2 py-0.5 rounded-full text-[10px] font-medium bg-gray-100 text-gray-700">{{ selected.language || 'es_CO' }}</span>
+                                </div>
+                            </div>
+                            <button @click="showDetail = false" class="p-1 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition shrink-0">
+                                <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+                            </button>
+                        </div>
+
+                        <!-- Sync info -->
+                        <div v-if="selected.meta_id" class="bg-emerald-50 border border-emerald-100 rounded-xl p-3 mb-4 text-xs text-emerald-900">
+                            <div class="flex items-start gap-2">
+                                <svg class="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"/></svg>
+                                <div class="min-w-0">
+                                    <p class="font-semibold">Sincronizada con Meta</p>
+                                    <p class="font-mono text-[10px] text-emerald-700 mt-0.5 break-all">Meta ID: {{ selected.meta_id }}</p>
+                                    <p class="text-[10px] text-emerald-700 mt-0.5">Última sync: {{ formatDateTime(selected.last_synced_at) }}</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Body con variables resaltadas (preview como WhatsApp) -->
+                        <div class="mb-4">
+                            <p class="text-[10px] text-gray-500 uppercase tracking-wider font-semibold mb-2">Vista previa</p>
+                            <div class="bg-[#d9fdd3] rounded-2xl rounded-tl-sm p-3 max-w-sm border border-gray-100">
+                                <p class="text-sm text-gray-900 whitespace-pre-wrap" v-html="renderBodyWithVars(selected.body)"></p>
+                            </div>
+                            <p class="text-[10px] text-gray-400 mt-2">Las variables resaltadas en ámbar se reemplazarán al enviar.</p>
+                        </div>
+
+                        <!-- Metadata -->
+                        <div class="text-xs text-gray-500 space-y-1 mb-4 pb-4 border-b border-gray-100">
+                            <p v-if="selected.team_label"><span class="text-gray-400">Equipo:</span> {{ selected.team_label }}</p>
+                            <p><span class="text-gray-400">Creada:</span> {{ formatDateTime(selected.created_at) }}</p>
+                            <p><span class="text-gray-400">Actualizada:</span> {{ formatDateTime(selected.updated_at) }}</p>
+                        </div>
+
+                        <!-- Acciones -->
+                        <div class="flex flex-col sm:flex-row gap-2">
+                            <button v-if="!selected.meta_id" @click="openEdit(selected)" class="flex-1 px-4 py-2.5 bg-accent text-white rounded-xl text-sm font-medium hover:bg-accent-hover transition">
+                                Editar
+                            </button>
+                            <button v-else disabled class="flex-1 px-4 py-2.5 bg-gray-100 text-gray-400 rounded-xl text-sm font-medium cursor-not-allowed"
+                                    title="Plantillas de Meta solo se editan en Meta Business">
+                                Editar en Meta
+                            </button>
+                            <button @click="deleteTemplate(selected)" class="px-4 py-2.5 border border-red-200 text-red-700 rounded-xl text-sm font-medium hover:bg-red-50 transition">
+                                Eliminar
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </Teleport>
+
+        <!-- ═══════════════ Modal: Crear/editar ═══════════════ -->
+        <Teleport to="body">
+            <div v-if="showModal" class="fixed inset-0 z-[70] flex items-center justify-center p-4">
+                <div class="fixed inset-0 bg-black/50" @click="showModal = false"></div>
+                <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg animate-scale-in max-h-[90vh] overflow-y-auto">
+                    <div class="p-6">
+                        <h3 class="text-lg font-bold text-gray-900 mb-1">{{ editing ? 'Editar plantilla' : 'Nueva plantilla' }}</h3>
+                        <p class="text-xs text-gray-500 mb-4">
+                            <template v-if="editing">Editas el borrador local. Para que llegue a producción, somete a aprobación en Meta Business.</template>
+                            <template v-else>Crea un borrador local. Después tendrás que crearlo en Meta Business y sincronizar.</template>
+                        </p>
+
                         <form @submit.prevent="save" class="space-y-4">
-                            <div><label class="block text-sm font-medium text-gray-700 mb-1">Nombre *</label><input v-model="form.name" type="text" class="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-accent/30 focus:border-accent"></div>
-                            <div><label class="block text-sm font-medium text-gray-700 mb-1">Categoría</label><select v-model="form.category" class="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-accent/30"><option value="utility">Utilidad</option><option value="marketing">Marketing</option><option value="authentication">Autenticación</option></select></div>
-                            <div><label class="block text-sm font-medium text-gray-700 mb-1">Etiqueta de Equipo</label><input v-model="form.team_label" type="text" placeholder="Del Equipo" class="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-accent/30 focus:border-accent"></div>
-                            <div><label class="block text-sm font-medium text-gray-700 mb-1">Contenido *</label><textarea v-model="form.body" rows="4" class="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-accent/30 focus:border-accent resize-none"></textarea></div>
-                            <div class="flex justify-end space-x-3 pt-2">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Nombre <span class="text-red-500">*</span></label>
+                                <input v-model="form.name" type="text" placeholder="bienvenida_cliente"
+                                       class="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm font-mono focus:ring-2 focus:ring-accent/30 focus:border-accent" :class="{ 'border-red-400': form.errors.name }">
+                                <p v-if="form.errors.name" class="text-red-500 text-xs mt-1">{{ form.errors.name }}</p>
+                                <p v-else class="text-[10px] text-gray-400 mt-1">Formato Meta: solo minúsculas, números y guión bajo. Ej. <code>bienvenida_cliente</code></p>
+                            </div>
+
+                            <div class="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Categoría <span class="text-red-500">*</span></label>
+                                    <select v-model="form.category" class="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-accent/30 focus:border-accent">
+                                        <option value="utility">Utilidad (transaccional)</option>
+                                        <option value="marketing">Marketing (promocional)</option>
+                                        <option value="authentication">Autenticación (OTP)</option>
+                                    </select>
+                                    <p v-if="form.errors.category" class="text-red-500 text-xs mt-1">{{ form.errors.category }}</p>
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">Idioma <span class="text-red-500">*</span></label>
+                                    <select v-model="form.language" class="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-accent/30 focus:border-accent">
+                                        <option v-for="(label, code) in languages" :key="code" :value="code">{{ label }}</option>
+                                    </select>
+                                    <p v-if="form.errors.language" class="text-red-500 text-xs mt-1">{{ form.errors.language }}</p>
+                                </div>
+                            </div>
+
+                            <div>
+                                <div class="flex items-center justify-between mb-1">
+                                    <label class="block text-sm font-medium text-gray-700">Contenido (body) <span class="text-red-500">*</span></label>
+                                    <span class="text-[10px] tabular-nums" :class="bodyOverflow ? 'text-red-500 font-semibold' : 'text-gray-400'">{{ bodyChars }} / 1024</span>
+                                </div>
+                                <textarea v-model="form.body" rows="5" :placeholder="placeholderExample"
+                                          class="w-full px-4 py-2.5 border rounded-xl text-sm focus:ring-2 focus:ring-accent/30 focus:border-accent resize-none"
+                                          :class="form.errors.body || bodyOverflow ? 'border-red-400' : 'border-gray-200'"></textarea>
+                                <p v-if="form.errors.body" class="text-red-500 text-xs mt-1">{{ form.errors.body }}</p>
+                                <p v-else class="text-[10px] text-gray-400 mt-1">Usa <code class="font-mono">{{ varExample }}</code> para variables que se reemplazan al enviar.</p>
+                            </div>
+
+                            <!-- Detección automática de variables -->
+                            <div v-if="detectedVariables.length" class="bg-amber-50 border border-amber-100 rounded-xl p-2.5">
+                                <p class="text-[10px] text-amber-800 font-semibold uppercase tracking-wider mb-1">Variables detectadas</p>
+                                <div class="flex flex-wrap gap-1">
+                                    <span v-for="v in detectedVariables" :key="v" class="px-2 py-0.5 bg-white border border-amber-200 rounded font-mono text-[11px] text-amber-800">
+                                        {{ v }}
+                                    </span>
+                                </div>
+                            </div>
+
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Etiqueta de equipo <span class="text-gray-400 font-normal">(opcional)</span></label>
+                                <input v-model="form.team_label" type="text" placeholder="Soporte, Cobranza..." class="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-accent/30 focus:border-accent">
+                            </div>
+
+                            <div class="flex justify-end gap-3 pt-3 border-t border-gray-50">
                                 <button type="button" @click="showModal = false" class="px-4 py-2.5 text-sm text-gray-600 hover:bg-gray-100 rounded-xl transition">Cancelar</button>
-                                <button type="submit" :disabled="form.processing" class="px-6 py-2.5 bg-accent text-white rounded-xl text-sm font-medium hover:bg-accent-hover transition disabled:opacity-50">Guardar</button>
+                                <button type="submit" :disabled="form.processing || bodyOverflow" class="px-5 py-2.5 bg-accent text-white rounded-xl text-sm font-medium hover:bg-accent-hover transition disabled:opacity-50">
+                                    {{ form.processing ? 'Guardando…' : 'Guardar' }}
+                                </button>
                             </div>
                         </form>
                     </div>
