@@ -153,6 +153,7 @@ function formatPhone(phone) {
 
 function selectConversation(conv) {
     mobileShowChat.value = true;
+    delete unreadConvIds.value[conv.id];
 }
 
 const filteredConversations = () => {
@@ -172,6 +173,86 @@ function executeDelete() {
         onSuccess: () => { deleteConfirm.value = { show: false, id: null, name: '' }; },
     });
 }
+
+// ── Notificaciones: sonido + título + badge de no leídos ─────────────────────
+let sharedAudioCtx = null;
+const unreadConvIds = ref({});
+let _unreadTotal = 0;
+const prevConvTimestamps = ref({});
+const docTitle = typeof document !== 'undefined' ? document.title : 'Converza';
+let titleBlinker = null;
+
+function unlockAudio() {
+    try {
+        if (!sharedAudioCtx) sharedAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (sharedAudioCtx.state === 'suspended') sharedAudioCtx.resume();
+    } catch (e) {}
+}
+
+function playNotificationSound() {
+    if (!sharedAudioCtx || sharedAudioCtx.state !== 'running') return;
+    try {
+        const ctx = sharedAudioCtx;
+        const t = ctx.currentTime;
+        [{ f: 523.25, s: 0, d: 0.3 }, { f: 659.25, s: 0.12, d: 0.4 }].forEach(({ f, s, d }) => {
+            const osc = ctx.createOscillator();
+            const g = ctx.createGain();
+            osc.type = 'sine';
+            osc.frequency.value = f;
+            g.gain.setValueAtTime(0.4, t + s);
+            g.gain.exponentialRampToValueAtTime(0.001, t + s + d);
+            osc.connect(g);
+            g.connect(ctx.destination);
+            osc.start(t + s);
+            osc.stop(t + s + d);
+        });
+    } catch (e) {}
+}
+
+function blinkTitle(count) {
+    if (titleBlinker) clearInterval(titleBlinker);
+    let show = true;
+    titleBlinker = setInterval(() => {
+        document.title = show ? `(${count}) Nuevo mensaje` : docTitle;
+        show = !show;
+    }, 1000);
+}
+
+function clearNotifications() {
+    _unreadTotal = 0;
+    unreadConvIds.value = {};
+    if (titleBlinker) { clearInterval(titleBlinker); titleBlinker = null; }
+    document.title = docTitle;
+}
+
+watch(() => props.conversations, (newConvs) => {
+    let incoming = 0;
+    newConvs.forEach(c => {
+        const prev = prevConvTimestamps.value[c.id];
+        if (prev !== undefined && c.last_message_at !== prev && c.last_message_status !== 'sent') {
+            incoming++;
+            unreadConvIds.value[c.id] = true;
+        }
+        prevConvTimestamps.value[c.id] = c.last_message_at;
+    });
+    if (incoming > 0) {
+        _unreadTotal += incoming;
+        playNotificationSound();
+        blinkTitle(_unreadTotal);
+    }
+}, { deep: true });
+
+onMounted(() => {
+    props.conversations.forEach(c => { prevConvTimestamps.value[c.id] = c.last_message_at; });
+    document.addEventListener('click', unlockAudio, { once: true });
+    window.addEventListener('focus', clearNotifications);
+});
+
+onUnmounted(() => {
+    window.removeEventListener('focus', clearNotifications);
+    clearNotifications();
+});
+// ─────────────────────────────────────────────────────────────────────────────
 
 // ── Audio player ─────────────────────────────────────────────────────────────
 const audioStates = ref({});
@@ -449,9 +530,12 @@ onUnmounted(() => window.removeEventListener('resize', handleResize));
                                                 Cerrada
                                             </span>
                                         </h3>
-                                        <span class="text-[10px] text-gray-400 ml-2 shrink-0">{{ formatDate(conv.last_message_at) }}</span>
+                                        <div class="flex items-center gap-1.5 ml-2 shrink-0">
+                                            <span class="text-[10px] text-gray-400">{{ formatDate(conv.last_message_at) }}</span>
+                                            <span v-if="unreadConvIds[conv.id]" class="w-2 h-2 rounded-full bg-emerald-500"></span>
+                                        </div>
                                     </div>
-                                    <p class="text-xs text-gray-500 truncate">
+                                    <p class="text-xs truncate" :class="unreadConvIds[conv.id] ? 'text-gray-900 font-semibold' : 'text-gray-500'">
                                         <span v-if="conv.last_message_status === 'sent'" class="mr-1">
                                             <svg class="h-3 w-3 inline text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
                                         </span>
