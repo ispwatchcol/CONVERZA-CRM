@@ -95,7 +95,22 @@ ssh deploy@159.223.140.27
 
 ### Deploy automático (GitHub Actions)
 
-Cada push a `main` dispara el workflow [.github/workflows/deploy.yml](.github/workflows/deploy.yml), que se conecta por SSH al droplet y ejecuta el deploy completo.
+Cada push a `main` dispara el workflow [.github/workflows/deploy.yml](.github/workflows/deploy.yml).
+
+#### Cómo funciona
+
+El workflow tiene **dos fases**:
+
+| Fase | Dónde corre | Por qué |
+|---|---|---|
+| **Build de assets** (`npm ci && npm run build`) | Runner de GitHub (7 GB RAM) | El droplet solo tiene 1 GB de RAM — vite build se queda sin memoria y el kernel mata el proceso (OOM). Buildear en el runner evita esto. |
+| **Deploy server-side** (git checkout + composer + migrate + cache + reload) | Droplet vía SSH | Es lo único que necesita acceso al servidor real. |
+
+El runner sube los assets construidos al droplet vía `rsync --delete` (limpia hashes viejos que ya no existen — el bug que tuvimos antes), luego corre el resto vía SSH.
+
+Además:
+- **`concurrency: deploy-production`** — solo un deploy a la vez. Si llegan 2 pushes seguidos, el 2do espera al 1ro.
+- **`git checkout ${{ github.sha }}`** — el droplet hace checkout al commit EXACTO que disparó el workflow, no a `HEAD` de `main`. Garantiza que el PHP code matchee los assets subidos, aunque alguien haga otro push mientras el deploy corre.
 
 #### Setup inicial (una sola vez)
 
@@ -108,13 +123,14 @@ chmod 600 ~/.ssh/authorized_keys
 cat ~/.ssh/github_actions   # copia TODO el contenido (incluye BEGIN/END)
 ```
 
-**2. Permitir reload de PHP-FPM sin contraseña:**
+**2. Permitir reload de PHP-FPM y restart de Supervisor sin contraseña:**
 ```bash
 sudo visudo -f /etc/sudoers.d/deploy-reload
 ```
-Pega esta línea y guarda:
+Pega estas líneas y guarda:
 ```
 deploy ALL=(ALL) NOPASSWD: /bin/systemctl reload php8.2-fpm
+deploy ALL=(ALL) NOPASSWD: /usr/bin/supervisorctl restart converza-worker:*
 ```
 
 **3. Configurar secrets en GitHub:**
@@ -133,18 +149,26 @@ En la pestaña **Actions** → workflow **Deploy to production** → **Run workf
 
 ### Deploy manual (fallback)
 
-Si GitHub Actions falla o necesitas hacerlo a mano:
-```bash
-ssh deploy@159.223.140.27
-cd /var/www/converza-crm
+Si GitHub Actions está caído y necesitas deployar a mano desde tu PC:
 
-git pull origin main
-composer install --no-dev --optimize-autoloader
+```powershell
+# En tu PC local
+git fetch origin && git checkout main && git pull origin main
 npm ci && npm run build
-php artisan migrate --force
-php artisan config:cache && php artisan route:cache && php artisan view:cache
-sudo systemctl reload php8.2-fpm
+
+# Subir assets al droplet
+scp -r public/build/* deploy@159.223.140.27:/var/www/converza-crm/public/build/
+
+# Correr el resto en el droplet
+ssh deploy@159.223.140.27 'cd /var/www/converza-crm && \
+  git pull origin main && \
+  composer install --no-dev --optimize-autoloader --no-interaction && \
+  php artisan migrate --force && \
+  php artisan view:clear && php artisan config:cache && php artisan route:cache && \
+  sudo systemctl reload php8.2-fpm'
 ```
+
+**NO** corras `npm run build` directamente en el droplet — el OOM-killer matará el proceso. Build siempre en local o en el runner.
 
 ---
 
