@@ -329,6 +329,20 @@ class ChatController extends Controller
     }
 
     /**
+     * Elimina una conversación y todos sus mensajes.
+     */
+    public function destroy(Conversation $conversation)
+    {
+        $tenantId = app('tenant')->id;
+        abort_if($conversation->tenant_id !== $tenantId, 403);
+
+        Message::where('conversation_id', $conversation->id)->delete();
+        $conversation->delete();
+
+        return redirect()->route('chat.index')->with('success', 'Conversación eliminada.');
+    }
+
+    /**
      * Reabre una conversación cerrada (solo cambia status, no toca closing notes).
      */
     public function reopen(Conversation $conversation)
