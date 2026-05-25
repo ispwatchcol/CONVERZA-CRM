@@ -98,6 +98,39 @@
     color: #484f58 !important;
 }
 
+/* Fondos tintados (cards informativas, tips, alertas) — versiones oscuras
+   con el tinte del color para mantener jerarquía visual */
+.dark .bg-blue-50    { background-color: #0d1f3a !important; }
+.dark .bg-amber-50   { background-color: #2a1f08 !important; }
+.dark .bg-red-50     { background-color: #2a0f12 !important; }
+.dark .bg-emerald-50 { background-color: #0a2820 !important; }
+.dark .bg-green-50   { background-color: #0a2820 !important; }
+.dark .bg-yellow-50  { background-color: #2a1f08 !important; }
+.dark .bg-purple-50  { background-color: #1d1230 !important; }
+.dark .bg-indigo-50  { background-color: #14193d !important; }
+.dark .bg-orange-50  { background-color: #2a1608 !important; }
+
+/* Bordes tintados correspondientes — más opacos para que se vean en dark */
+.dark .border-blue-100,    .dark .border-blue-200    { border-color: #1e3a6b !important; }
+.dark .border-amber-100,   .dark .border-amber-200   { border-color: #5c3a0a !important; }
+.dark .border-red-100,     .dark .border-red-200     { border-color: #5c1a20 !important; }
+.dark .border-emerald-100, .dark .border-emerald-200 { border-color: #155c46 !important; }
+.dark .border-green-100,   .dark .border-green-200   { border-color: #155c46 !important; }
+.dark .border-yellow-100,  .dark .border-yellow-200  { border-color: #5c3a0a !important; }
+.dark .border-purple-100,  .dark .border-purple-200  { border-color: #3d2466 !important; }
+.dark .border-indigo-100,  .dark .border-indigo-200  { border-color: #2a3680 !important; }
+.dark .border-orange-100,  .dark .border-orange-200  { border-color: #5c2a0a !important; }
+
+/* Títulos de cards informativas — un tono más claro para legibilidad sobre los fondos oscuros */
+.dark .text-blue-700    { color: #79b8ff !important; }
+.dark .text-blue-900    { color: #c8e1ff !important; }
+.dark .text-amber-700   { color: #f0b860 !important; }
+.dark .text-amber-900   { color: #ffd591 !important; }
+.dark .text-red-700     { color: #ff9090 !important; }
+.dark .text-red-900     { color: #ffc2c2 !important; }
+.dark .text-emerald-700 { color: #5cd6ad !important; }
+.dark .text-green-700   { color: #5cd6ad !important; }
+
 .dark .bg-\[\#efeae2\] {
     background-color: #1a1f2e !important;
 }
@@ -165,10 +198,24 @@
     }
 }
 
+@keyframes slideInRight {
+    from {
+        transform: translateX(100%);
+    }
+
+    to {
+        transform: translateX(0);
+    }
+}
+
 .animate-fade-in {
     animation: fadeIn 0.3s ease-out;
 }
 
 .animate-scale-in {
     animation: scaleIn 0.2s ease-out;
+}
+
+.animate-slide-in-right {
+    animation: slideInRight 0.25s ease-out;
 }
