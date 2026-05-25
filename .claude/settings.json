@@ -69,7 +69,9 @@
       "Bash(./ngrok.exe http *)",
       "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}\\\\nBody: \" \"https://unbewildering-contentiously-dorothy.ngrok-free.dev/webhook?hub_mode=subscribe&hub_verify_token=converza-token-2024&hub_challenge=test123\")",
       "Bash(curl -s \"https://unbewildering-contentiously-dorothy.ngrok-free.dev/webhook?hub_mode=subscribe&hub_verify_token=converza-token-2024&hub_challenge=test123\")",
-      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}\\\\n\" \"https://unbewildering-contentiously-dorothy.ngrok-free.dev/webhook?hub_mode=subscribe&hub_verify_token=mal&hub_challenge=test123\")"
+      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}\\\\n\" \"https://unbewildering-contentiously-dorothy.ngrok-free.dev/webhook?hub_mode=subscribe&hub_verify_token=mal&hub_challenge=test123\")",
+      "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\User\\\\Desktop\\\\GITHUB\\\\CONVERZA-CRM\" -Directory)",
+      "Bash(Select-Object Name)"
     ],
     "additionalDirectories": [
       "C:\\Users\\User\\Desktop\\GITHUB\\ISPWatch-CRM-Whastapp",

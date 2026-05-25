@@ -62,6 +62,7 @@ Route::middleware('auth')->group(function () {
     Route::post('/chat/send-media', [ChatController::class, 'sendMedia'])->name('chat.send-media');
     Route::patch('/chat/conversations/{conversation}/assign', [ChatController::class, 'assign'])->name('chat.conversations.assign');
     Route::post('/chat/conversations/{conversation}/reopen', [ChatController::class, 'reopen'])->name('chat.conversations.reopen');
+    Route::delete('/chat/conversations/{conversation}', [ChatController::class, 'destroy'])->name('chat.conversations.destroy');
 
     // Media files (bypasses storage symlink issues, requires auth)
     Route::get('/media/{path}', [MediaController::class, 'serve'])

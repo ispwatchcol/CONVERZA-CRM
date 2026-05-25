@@ -161,6 +161,18 @@ const filteredConversations = () => {
     return props.conversations.filter(c => c.name?.toLowerCase().includes(s) || c.phone?.includes(s));
 };
 
+const deleteConfirm = ref({ show: false, id: null, name: '' });
+
+function confirmDelete(conv) {
+    deleteConfirm.value = { show: true, id: conv.id, name: conv.name || conv.phone || 'este chat' };
+}
+
+function executeDelete() {
+    router.delete(route('chat.conversations.destroy', { conversation: deleteConfirm.value.id }), {
+        onSuccess: () => { deleteConfirm.value = { show: false, id: null, name: '' }; },
+    });
+}
+
 // ── Audio player ─────────────────────────────────────────────────────────────
 const audioStates = ref({});
 
@@ -403,47 +415,60 @@ onUnmounted(() => window.removeEventListener('resize', handleResize));
                 <!-- Conversation List -->
                 <div class="flex-1 overflow-y-auto">
                     <template v-if="conversations.length">
-                        <Link
+                        <div
                             v-for="conv in filteredConversations()"
                             :key="conv.id"
-                            :href="route('chat.index', { conversation: conv.id })"
-                            @click="selectConversation(conv)"
-                            class="flex items-center p-3 hover:bg-gray-50 cursor-pointer border-b border-gray-50 transition"
-                            :class="{ 'bg-accent/5 border-l-3 border-l-accent': activeConversationId === conv.id }"
+                            class="relative group border-b border-gray-50"
                         >
-                            <div class="relative shrink-0">
-                                <div class="w-11 h-11 rounded-full bg-gradient-to-br from-accent to-accent-light flex items-center justify-center text-white font-bold text-sm">
-                                    {{ (conv.name || '?')[0].toUpperCase() }}
+                            <Link
+                                :href="route('chat.index', { conversation: conv.id })"
+                                @click="selectConversation(conv)"
+                                class="flex items-center p-3 hover:bg-gray-50 cursor-pointer transition pr-9"
+                                :class="{ 'bg-accent/5 border-l-3 border-l-accent': activeConversationId === conv.id }"
+                            >
+                                <div class="relative shrink-0">
+                                    <div class="w-11 h-11 rounded-full bg-gradient-to-br from-accent to-accent-light flex items-center justify-center text-white font-bold text-sm">
+                                        {{ (conv.name || '?')[0].toUpperCase() }}
+                                    </div>
+                                    <!-- Mini avatar del agente asignado -->
+                                    <div v-if="conv.assigned_to"
+                                         class="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-emerald-500 ring-2 ring-white flex items-center justify-center text-[8px] font-bold text-white"
+                                         :title="`Asignado a ${conv.assigned_to.name}`">
+                                        {{ conv.assigned_to.initial?.toUpperCase() }}
+                                    </div>
+                                    <!-- Sin asignar dot -->
+                                    <div v-else-if="conv.status === 'open'"
+                                         class="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-amber-400 ring-2 ring-white"
+                                         title="Sin asignar"></div>
                                 </div>
-                                <!-- Mini avatar del agente asignado -->
-                                <div v-if="conv.assigned_to"
-                                     class="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-emerald-500 ring-2 ring-white flex items-center justify-center text-[8px] font-bold text-white"
-                                     :title="`Asignado a ${conv.assigned_to.name}`">
-                                    {{ conv.assigned_to.initial?.toUpperCase() }}
-                                </div>
-                                <!-- Sin asignar dot -->
-                                <div v-else-if="conv.status === 'open'"
-                                     class="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-amber-400 ring-2 ring-white"
-                                     title="Sin asignar"></div>
-                            </div>
-                            <div class="ml-3 flex-1 min-w-0">
-                                <div class="flex justify-between items-baseline mb-0.5">
-                                    <h3 class="text-sm font-medium text-gray-900 truncate flex items-center gap-1.5">
-                                        {{ conv.name }}
-                                        <span v-if="conv.status === 'closed'" class="px-1.5 py-0.5 rounded text-[9px] uppercase font-semibold tracking-wide bg-gray-100 text-gray-500">
-                                            Cerrada
+                                <div class="ml-3 flex-1 min-w-0">
+                                    <div class="flex justify-between items-baseline mb-0.5">
+                                        <h3 class="text-sm font-medium text-gray-900 truncate flex items-center gap-1.5">
+                                            {{ conv.name }}
+                                            <span v-if="conv.status === 'closed'" class="px-1.5 py-0.5 rounded text-[9px] uppercase font-semibold tracking-wide bg-gray-100 text-gray-500">
+                                                Cerrada
+                                            </span>
+                                        </h3>
+                                        <span class="text-[10px] text-gray-400 ml-2 shrink-0">{{ formatDate(conv.last_message_at) }}</span>
+                                    </div>
+                                    <p class="text-xs text-gray-500 truncate">
+                                        <span v-if="conv.last_message_status === 'sent'" class="mr-1">
+                                            <svg class="h-3 w-3 inline text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
                                         </span>
-                                    </h3>
-                                    <span class="text-[10px] text-gray-400 ml-2 shrink-0">{{ formatDate(conv.last_message_at) }}</span>
+                                        {{ conv.last_message || 'Sin mensajes' }}
+                                    </p>
                                 </div>
-                                <p class="text-xs text-gray-500 truncate">
-                                    <span v-if="conv.last_message_status === 'sent'" class="mr-1">
-                                        <svg class="h-3 w-3 inline text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
-                                    </span>
-                                    {{ conv.last_message || 'Sin mensajes' }}
-                                </p>
-                            </div>
-                        </Link>
+                            </Link>
+                            <button
+                                @click.prevent.stop="confirmDelete(conv)"
+                                class="absolute top-1/2 -translate-y-1/2 right-2 p-1.5 rounded-full text-gray-400 hover:text-red-500 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-opacity"
+                                title="Eliminar conversación"
+                            >
+                                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                </svg>
+                            </button>
+                        </div>
                     </template>
                     <div v-else class="p-8 text-center text-gray-400">
                         <svg class="w-12 h-12 mx-auto mb-2 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M20.25 8.511c.884.284 1.5 1.128 1.5 2.097v4.286c0 1.136-.847 2.1-1.98 2.193-.34.027-.68.052-1.02.072v3.091l-3-3c-1.354 0-2.694-.055-4.02-.163a2.115 2.115 0 01-.825-.242m9.345-8.334a2.126 2.126 0 00-.476-.095 48.64 48.64 0 00-8.048 0c-1.131.094-1.976 1.057-1.976 2.192v4.286c0 .837.46 1.58 1.155 1.951m9.345-8.334V6.637c0-1.621-1.152-3.026-2.76-3.235A48.455 48.455 0 0011.25 3c-2.115 0-4.198.137-6.24.402-1.608.209-2.76 1.614-2.76 3.235v6.226c0 1.621 1.152 3.026 2.76 3.235.577.075 1.157.14 1.74.194V21l4.155-4.155" /></svg>
@@ -1047,6 +1072,36 @@ onUnmounted(() => window.removeEventListener('resize', handleResize));
                                 </button>
                             </div>
                         </form>
+                    </div>
+                </div>
+            </div>
+        </Teleport>
+
+        <!-- Delete Confirmation Modal -->
+        <Teleport to="body">
+            <div v-if="deleteConfirm.show" class="fixed inset-0 z-[70] flex items-center justify-center p-4">
+                <div class="fixed inset-0 bg-black/40" @click="deleteConfirm.show = false"></div>
+                <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-sm">
+                    <div class="p-6">
+                        <div class="flex items-center gap-3 mb-3">
+                            <div class="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center shrink-0">
+                                <svg class="w-5 h-5 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                </svg>
+                            </div>
+                            <h3 class="text-base font-semibold text-gray-900">Eliminar conversación</h3>
+                        </div>
+                        <p class="text-sm text-gray-600 mb-5">
+                            ¿Estás seguro de que deseas eliminar la conversación con <strong>{{ deleteConfirm.name }}</strong>? Se eliminarán todos los mensajes y no se puede deshacer.
+                        </p>
+                        <div class="flex justify-end gap-2">
+                            <button @click="deleteConfirm.show = false" class="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg transition">
+                                Cancelar
+                            </button>
+                            <button @click="executeDelete" class="px-4 py-2 text-sm text-white bg-red-500 hover:bg-red-600 rounded-lg transition">
+                                Eliminar
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
