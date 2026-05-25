@@ -58,9 +58,10 @@ Route::middleware('auth')->group(function () {
         ->where('path', '.+')
         ->name('media.serve');
 
-    // Templates (Etiquetas/Plantillas Meta)
+    // Templates (Plantillas Meta de WhatsApp)
     Route::get('/templates', [TemplateController::class, 'index'])->name('templates.index');
     Route::post('/templates', [TemplateController::class, 'store'])->name('templates.store');
+    Route::post('/templates/sync', [TemplateController::class, 'sync'])->name('templates.sync');
     Route::put('/templates/{template}', [TemplateController::class, 'update'])->name('templates.update');
     Route::patch('/templates/{template}/toggle', [TemplateController::class, 'toggleActive'])->name('templates.toggle');
     Route::delete('/templates/{template}', [TemplateController::class, 'destroy'])->name('templates.destroy');
