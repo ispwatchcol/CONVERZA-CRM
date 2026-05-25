@@ -6,9 +6,11 @@ use App\Models\Contact;
 use App\Models\Conversation;
 use App\Models\Message;
 use App\Models\QuickReply;
+use App\Models\StaffMember;
 use App\Services\Ispwatch\IspwatchRepository;
 use App\Services\WhatsAppService;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 use Inertia\Inertia;
 
 class ChatController extends Controller
@@ -18,104 +20,234 @@ class ChatController extends Controller
         protected IspwatchRepository $ispwatch,
     ) {}
 
-    private function normalizePhone($phone)
-    {
-        $phone = preg_replace('/[^0-9]/', '', $phone);
-        if (strlen($phone) === 10 && str_starts_with($phone, '3')) {
-            $phone = '57' . $phone;
-        }
-        return $phone;
-    }
-
     public function index(Request $request)
     {
-        $conversations = Conversation::with(['contact', 'latestMessage'])
-            ->orderBy('updated_at', 'desc')
+        $tenant = app('tenant');
+        $tenantId = $tenant->id;
+        $userId = $request->user()->id;
+
+        // ── Auto-crear StaffMember para el usuario actual ────────────────────
+        // Permite asignarse conversaciones sin pasar primero por la UI de Staff.
+        $myStaffMember = $this->getOrCreateStaffForUser($tenantId, $userId, $request->user()->name);
+
+        // ── Filtro de la lista de conversaciones ─────────────────────────────
+        $filter = $request->query('filter', 'all'); // all | open | mine | unassigned | closed
+
+        $conversationsQuery = Conversation::query()
+            ->where('tenant_id', $tenantId)
+            ->with(['contact', 'latestMessage', 'assignee.user']);
+
+        if ($filter === 'open') {
+            $conversationsQuery->where('status', 'open');
+        } elseif ($filter === 'closed') {
+            $conversationsQuery->where('status', 'closed');
+        } elseif ($filter === 'mine') {
+            $conversationsQuery->where('assigned_to', $myStaffMember->id)->where('status', 'open');
+        } elseif ($filter === 'unassigned') {
+            $conversationsQuery->whereNull('assigned_to')->where('status', 'open');
+        }
+
+        $conversations = $conversationsQuery
+            ->orderByDesc('updated_at')
             ->get()
-            ->map(fn($conv) => [
-                'id' => $conv->id,
-                'contact_id' => $conv->contact_id,
-                'phone' => $conv->contact->phone,
-                'name' => $conv->contact->name ?: $conv->contact->phone,
-                'status' => $conv->status,
-                'last_message' => $conv->latestMessage?->body,
+            ->map(fn (Conversation $conv) => [
+                'id'                  => $conv->id,
+                'contact_id'          => $conv->contact_id,
+                'phone'               => $conv->contact?->phone,
+                'name'                => $conv->contact?->name ?: $conv->contact?->phone,
+                'status'              => $conv->status,
+                'last_message'        => $conv->latestMessage?->body,
                 'last_message_status' => $conv->latestMessage?->status,
-                'last_message_at' => $conv->latestMessage?->created_at?->toIso8601String(),
-                'updated_at' => $conv->updated_at->toIso8601String(),
+                'last_message_at'     => $conv->latestMessage?->created_at?->toIso8601String(),
+                'updated_at'          => $conv->updated_at?->toIso8601String(),
+                'assigned_to'         => $conv->assignee ? [
+                    'id'      => $conv->assignee->id,
+                    'name'    => $conv->assignee->user?->name ?? 'Agente',
+                    'initial' => mb_substr($conv->assignee->user?->name ?? '?', 0, 1),
+                ] : null,
             ]);
 
+        // ── Conversación activa ──────────────────────────────────────────────
         $activeConversationId = $request->query('conversation');
         $activeChat = [];
         $activeConversation = null;
+        $activeAssignedTo = null;
 
         if ($activeConversationId) {
-            $activeConversation = Conversation::with('contact')->find($activeConversationId);
-            if ($activeConversation) {
-                $activeChat = Message::where('conversation_id', $activeConversationId)
-                    ->orderBy('created_at', 'asc')
-                    ->get()
-                    ->map(fn($msg) => [
-                        'id' => $msg->id,
-                        'body' => $msg->body,
-                        'status' => $msg->status,
-                        'type' => $msg->type ?? 'text',
-                        'caption' => $msg->caption,
-                        'media_url' => $msg->media_path ? route('media.serve', ['path' => $msg->media_path]) : null,
-                        'media_mime' => $msg->media_mime,
-                        'media_filename' => $msg->media_filename,
-                        'created_at' => $msg->created_at->toIso8601String(),
-                    ]);
-            }
+            $activeConversation = Conversation::with(['contact', 'assignee.user'])
+                ->where('tenant_id', $tenantId)
+                ->find($activeConversationId);
         } elseif ($conversations->isNotEmpty()) {
-            $firstConv = $conversations->first();
-            $activeConversationId = $firstConv['id'];
-            $activeConversation = Conversation::with('contact')->find($activeConversationId);
-            $activeChat = Message::where('conversation_id', $activeConversationId)
-                ->orderBy('created_at', 'asc')
+            $firstId = $conversations->first()['id'];
+            $activeConversation = Conversation::with(['contact', 'assignee.user'])
+                ->where('tenant_id', $tenantId)
+                ->find($firstId);
+            $activeConversationId = $firstId;
+        }
+
+        if ($activeConversation) {
+            $activeChat = Message::where('conversation_id', $activeConversation->id)
+                ->where('tenant_id', $tenantId)
+                ->orderBy('created_at')
                 ->get()
-                ->map(fn($msg) => [
+                ->map(fn (Message $msg) => [
                     'id'             => $msg->id,
                     'body'           => $msg->body,
                     'status'         => $msg->status,
                     'type'           => $msg->type ?? 'text',
                     'caption'        => $msg->caption,
-                    'media_url'      => $msg->media_path ? asset('storage/' . $msg->media_path) : null,
+                    'media_url'      => $msg->media_path ? route('media.serve', ['path' => $msg->media_path]) : null,
                     'media_mime'     => $msg->media_mime,
                     'media_filename' => $msg->media_filename,
                     'created_at'     => $msg->created_at->toIso8601String(),
-                ]);
+                ])
+                ->all();
+
+            if ($activeConversation->assignee) {
+                $activeAssignedTo = [
+                    'id'      => $activeConversation->assignee->id,
+                    'name'    => $activeConversation->assignee->user?->name ?? 'Agente',
+                    'initial' => mb_substr($activeConversation->assignee->user?->name ?? '?', 0, 1),
+                ];
+            }
         }
 
-        $quickReplies = QuickReply::where('is_active', true)->get(['id', 'title', 'body', 'shortcut']);
+        $quickReplies = QuickReply::where('tenant_id', $tenantId)
+            ->where('is_active', true)
+            ->orderBy('category')
+            ->orderBy('title')
+            ->get(['id', 'title', 'body', 'shortcut', 'category']);
 
         [$ispwatchCustomer, $ispwatchInvoices] = $this->resolveIspwatchData(
             $activeConversation?->contact?->phone,
             $activeConversation?->contact?->name,
         );
 
+        $staffMembers = StaffMember::query()
+            ->where('tenant_id', $tenantId)
+            ->where('is_active', true)
+            ->with('user:id,name')
+            ->orderBy('id')
+            ->get()
+            ->map(fn (StaffMember $s) => [
+                'id'      => $s->id,
+                'name'    => $s->user?->name ?? 'Agente',
+                'initial' => mb_substr($s->user?->name ?? '?', 0, 1),
+                'is_me'   => $s->id === $myStaffMember->id,
+            ])
+            ->all();
+
         return Inertia::render('Chat/Index', [
-            'conversations' => $conversations,
-            'activeChat' => $activeChat,
+            'conversations'        => $conversations,
+            'activeChat'           => $activeChat,
             'activeConversationId' => $activeConversationId ? (int) $activeConversationId : null,
-            'activePhone' => $activeConversation?->contact?->phone,
-            'activeName' => $activeConversation?->contact?->name ?: $activeConversation?->contact?->phone,
-            'activeStatus' => $activeConversation?->status,
-            'quickReplies' => $quickReplies,
-            'ispwatchCustomer' => $ispwatchCustomer,
-            'ispwatchInvoices' => $ispwatchInvoices,
+            'activePhone'          => $activeConversation?->contact?->phone,
+            'activeName'           => $activeConversation?->contact?->name ?: $activeConversation?->contact?->phone,
+            'activeStatus'         => $activeConversation?->status,
+            'activeAssignedTo'     => $activeAssignedTo,
+            'quickReplies'         => $quickReplies,
+            'ispwatchCustomer'     => $ispwatchCustomer,
+            'ispwatchInvoices'     => $ispwatchInvoices,
+            'staffMembers'         => $staffMembers,
+            'myStaffMemberId'      => $myStaffMember->id,
+            'filter'               => $filter,
+            'filterCounts'         => $this->filterCounts($tenantId, $myStaffMember->id),
         ]);
     }
 
+    public function sendMessage(Request $request)
+    {
+        $tenant = app('tenant');
+        $tenantId = $tenant->id;
+
+        $request->validate([
+            'phone'           => 'required|string',
+            'message'         => 'required|string|max:4096',
+            'conversation_id' => [
+                'nullable', 'integer',
+                Rule::exists('conversations', 'id')->where('tenant_id', $tenantId),
+            ],
+        ]);
+
+        $phone = Contact::normalizePhone($request->input('phone'));
+        $messageContent = $request->input('message');
+
+        $contact = Contact::firstOrCreate(
+            ['phone' => $phone, 'tenant_id' => $tenantId],
+            ['phone' => $phone, 'tenant_id' => $tenantId],
+        );
+
+        $conversation = null;
+        if ($request->conversation_id) {
+            $conversation = Conversation::where('tenant_id', $tenantId)->find($request->conversation_id);
+        }
+        if (! $conversation) {
+            $conversation = Conversation::firstOrCreate(
+                ['contact_id' => $contact->id, 'status' => 'open', 'tenant_id' => $tenantId],
+                ['contact_id' => $contact->id, 'tenant_id' => $tenantId],
+            );
+        }
+
+        // Reabrir si estaba cerrada — enviar un mensaje implica que retomamos la conversación
+        if ($conversation->status === 'closed') {
+            $conversation->update(['status' => 'open']);
+        }
+
+        $result = $this->whatsappService->sendMessage($phone, $messageContent);
+
+        if ($result['success']) {
+            Message::create([
+                'tenant_id'       => $tenantId,
+                'conversation_id' => $conversation->id,
+                'contact_id'      => $contact->id,
+                'body'            => $messageContent,
+                'status'          => 'sent',
+                'wa_message_id'   => $result['data']['messages'][0]['id'] ?? null,
+            ]);
+
+            $conversation->touch();
+
+            return back()->with('success', 'Mensaje enviado.');
+        }
+
+        return back()->withErrors(['message' => 'Error al enviar: ' . ($result['error'] ?? 'Error desconocido')]);
+    }
+
     /**
-     * Resuelve [customer, invoices] desde ispwatch para el teléfono dado.
-     * Devuelve [null, []] si no hay tenant activo, no está linkeado a ispwatch,
-     * no hay teléfono o no hay match en ispwatch.
-     *
-     * $contactName se pasa al repo como tie-break cuando varios clientes en
-     * ispwatch comparten el mismo teléfono (caso real: familiares).
-     *
-     * @return array{0: array<string, mixed>|null, 1: array<int, array<string, mixed>>}
+     * Asigna una conversación a un StaffMember (o desasigna si se pasa null).
      */
+    public function assign(Request $request, Conversation $conversation)
+    {
+        $tenantId = app('tenant')->id;
+        abort_if($conversation->tenant_id !== $tenantId, 403);
+
+        $validated = $request->validate([
+            'staff_member_id' => [
+                'nullable', 'integer',
+                Rule::exists('staff_members', 'id')->where('tenant_id', $tenantId)->where('is_active', true),
+            ],
+        ]);
+
+        $conversation->update(['assigned_to' => $validated['staff_member_id'] ?? null]);
+
+        return back()->with('success', $validated['staff_member_id'] ? 'Conversación asignada.' : 'Asignación quitada.');
+    }
+
+    /**
+     * Reabre una conversación cerrada (solo cambia status, no toca closing notes).
+     */
+    public function reopen(Conversation $conversation)
+    {
+        $tenantId = app('tenant')->id;
+        abort_if($conversation->tenant_id !== $tenantId, 403);
+
+        $conversation->update(['status' => 'open']);
+
+        return back()->with('success', 'Conversación reabierta.');
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+
     private function resolveIspwatchData(?string $phone, ?string $contactName): array
     {
         if (! app()->bound('tenant') || ! $phone) {
@@ -144,49 +276,34 @@ class ChatController extends Controller
         return [$customer, $invoices];
     }
 
-    public function sendMessage(Request $request)
+    /**
+     * Devuelve el StaffMember del user actual en este tenant, creándolo
+     * si no existe. Así el agente puede asignarse conversaciones sin
+     * pasar primero por la UI de Staff.
+     */
+    private function getOrCreateStaffForUser(int $tenantId, int $userId, ?string $userName): StaffMember
     {
-        $request->validate([
-            'phone' => 'required|string',
-            'message' => 'required|string',
-            'conversation_id' => 'nullable|integer|exists:conversations,id',
-        ]);
+        return StaffMember::firstOrCreate(
+            ['tenant_id' => $tenantId, 'user_id' => $userId],
+            ['tenant_id' => $tenantId, 'user_id' => $userId, 'role' => 'agent', 'is_active' => true],
+        );
+    }
 
-        $phone = $this->normalizePhone($request->input('phone'));
-        $messageContent = $request->input('message');
+    /**
+     * Conteos por filtro para mostrar en los chips de la lista.
+     *
+     * @return array<string, int>
+     */
+    private function filterCounts(int $tenantId, int $myStaffMemberId): array
+    {
+        $base = Conversation::query()->where('tenant_id', $tenantId);
 
-        // Find or create contact
-        $contact = Contact::firstOrCreate(['phone' => $phone]);
-
-        // Find or create conversation
-        $conversation = null;
-        if ($request->conversation_id) {
-            $conversation = Conversation::find($request->conversation_id);
-        }
-        if (!$conversation) {
-            $conversation = Conversation::firstOrCreate(
-                ['contact_id' => $contact->id, 'status' => 'open'],
-                ['contact_id' => $contact->id]
-            );
-        }
-
-        // Send via API
-        $result = $this->whatsappService->sendMessage($phone, $messageContent);
-
-        if ($result['success']) {
-            Message::create([
-                'conversation_id' => $conversation->id,
-                'contact_id' => $contact->id,
-                'body' => $messageContent,
-                'status' => 'sent',
-                'wa_message_id' => $result['data']['messages'][0]['id'] ?? null,
-            ]);
-
-            $conversation->touch();
-
-            return back()->with('success', 'Mensaje enviado correctamente.');
-        }
-
-        return back()->withErrors(['message' => 'Error al enviar: ' . ($result['error'] ?? 'Error desconocido')]);
+        return [
+            'all'        => (clone $base)->count(),
+            'open'       => (clone $base)->where('status', 'open')->count(),
+            'mine'       => (clone $base)->where('status', 'open')->where('assigned_to', $myStaffMemberId)->count(),
+            'unassigned' => (clone $base)->where('status', 'open')->whereNull('assigned_to')->count(),
+            'closed'     => (clone $base)->where('status', 'closed')->count(),
+        ];
     }
 }

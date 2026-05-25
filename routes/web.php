@@ -50,6 +50,8 @@ Route::middleware('auth')->group(function () {
     // Chat
     Route::get('/chat', [ChatController::class, 'index'])->name('chat.index');
     Route::post('/chat/send', [ChatController::class, 'sendMessage'])->name('chat.send');
+    Route::patch('/chat/conversations/{conversation}/assign', [ChatController::class, 'assign'])->name('chat.conversations.assign');
+    Route::post('/chat/conversations/{conversation}/reopen', [ChatController::class, 'reopen'])->name('chat.conversations.reopen');
 
     // Media files (bypasses storage symlink issues, requires auth)
     Route::get('/media/{path}', [MediaController::class, 'serve'])

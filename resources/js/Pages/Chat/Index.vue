@@ -10,9 +10,14 @@ const props = defineProps({
     activePhone: { type: String, default: null },
     activeName: { type: String, default: null },
     activeStatus: { type: String, default: null },
+    activeAssignedTo: { type: Object, default: null },
     quickReplies: { type: Array, default: () => [] },
     ispwatchCustomer: { type: Object, default: null },
     ispwatchInvoices: { type: Array, default: () => [] },
+    staffMembers: { type: Array, default: () => [] },
+    myStaffMemberId: { type: Number, default: null },
+    filter: { type: String, default: 'all' },
+    filterCounts: { type: Object, default: () => ({}) },
 });
 
 const showNewChatModal = ref(false);
@@ -152,6 +157,46 @@ const imgErrors = ref({});
 function onImgError(id) { imgErrors.value[id] = true; }
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ── Filtros de lista de conversaciones ───────────────────────────────────────
+const filterChips = [
+    { value: 'all',        label: 'Todas' },
+    { value: 'open',       label: 'Abiertas' },
+    { value: 'mine',       label: 'Mías' },
+    { value: 'unassigned', label: 'Sin asignar' },
+    { value: 'closed',     label: 'Cerradas' },
+];
+
+function setFilter(value) {
+    router.get(route('chat.index'), {
+        filter: value !== 'all' ? value : undefined,
+        conversation: props.activeConversationId || undefined,
+    }, { preserveState: true, preserveScroll: true, replace: true });
+}
+
+// ── Asignación de agente ─────────────────────────────────────────────────────
+const showAssignMenu = ref(false);
+
+function assignTo(staffMemberId) {
+    router.patch(route('chat.conversations.assign', props.activeConversationId), {
+        staff_member_id: staffMemberId,
+    }, {
+        preserveScroll: true,
+        onSuccess: () => { showAssignMenu.value = false; },
+    });
+}
+
+function unassign() {
+    assignTo(null);
+}
+
+// ── Reabrir conversación ─────────────────────────────────────────────────────
+function reopenConversation() {
+    if (!confirm('¿Reabrir esta conversación? Vas a poder enviar mensajes de nuevo.')) return;
+    router.post(route('chat.conversations.reopen', props.activeConversationId), {}, {
+        preserveScroll: true,
+    });
+}
+
 // ── Cerrar conversación (closing note) ───────────────────────────────────────
 const showCloseModal = ref(false);
 const closingForm = useForm({
@@ -256,14 +301,28 @@ onUnmounted(() => { if (pollingInterval) clearInterval(pollingInterval); });
             <!-- Conversation List Sidebar -->
             <div class="w-full md:w-80 lg:w-96 border-r border-gray-200 flex flex-col bg-white shrink-0" :class="{ 'hidden md:flex': mobileShowChat }">
                 <!-- Search Header -->
-                <div class="p-3 border-b border-gray-100 shrink-0">
+                <div class="p-3 border-b border-gray-100 shrink-0 space-y-2">
                     <div class="flex items-center space-x-2">
                         <div class="relative flex-1">
                             <input v-model="search" type="text" placeholder="Buscar conversación..." class="w-full pl-9 pr-4 py-2 bg-gray-50 border-none rounded-xl text-sm focus:ring-2 focus:ring-accent/30">
                             <svg class="w-4 h-4 text-gray-400 absolute left-3 top-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
                         </div>
-                        <button @click="showNewChatModal = true" class="p-2 bg-accent text-white rounded-xl hover:bg-accent-hover transition">
+                        <button @click="showNewChatModal = true" class="p-2 bg-accent text-white rounded-xl hover:bg-accent-hover transition" title="Nuevo chat">
                             <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" /></svg>
+                        </button>
+                    </div>
+
+                    <!-- Filter chips -->
+                    <div class="flex gap-1 overflow-x-auto pb-1 -mx-0.5 px-0.5">
+                        <button v-for="opt in filterChips" :key="opt.value" @click="setFilter(opt.value)"
+                                class="shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-medium transition whitespace-nowrap"
+                                :class="filter === opt.value ? 'bg-accent text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'">
+                            {{ opt.label }}
+                            <span v-if="filterCounts[opt.value] !== undefined"
+                                  class="px-1.5 py-0 rounded-full text-[9px] font-semibold tabular-nums"
+                                  :class="filter === opt.value ? 'bg-white/25' : 'bg-white text-gray-500'">
+                                {{ filterCounts[opt.value] }}
+                            </span>
                         </button>
                     </div>
                 </div>
@@ -279,8 +338,20 @@ onUnmounted(() => { if (pollingInterval) clearInterval(pollingInterval); });
                             class="flex items-center p-3 hover:bg-gray-50 cursor-pointer border-b border-gray-50 transition"
                             :class="{ 'bg-accent/5 border-l-3 border-l-accent': activeConversationId === conv.id }"
                         >
-                            <div class="w-11 h-11 rounded-full bg-gradient-to-br from-accent to-accent-light flex items-center justify-center text-white font-bold text-sm shrink-0">
-                                {{ (conv.name || '?')[0].toUpperCase() }}
+                            <div class="relative shrink-0">
+                                <div class="w-11 h-11 rounded-full bg-gradient-to-br from-accent to-accent-light flex items-center justify-center text-white font-bold text-sm">
+                                    {{ (conv.name || '?')[0].toUpperCase() }}
+                                </div>
+                                <!-- Mini avatar del agente asignado -->
+                                <div v-if="conv.assigned_to"
+                                     class="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-emerald-500 ring-2 ring-white flex items-center justify-center text-[8px] font-bold text-white"
+                                     :title="`Asignado a ${conv.assigned_to.name}`">
+                                    {{ conv.assigned_to.initial?.toUpperCase() }}
+                                </div>
+                                <!-- Sin asignar dot -->
+                                <div v-else-if="conv.status === 'open'"
+                                     class="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-amber-400 ring-2 ring-white"
+                                     title="Sin asignar"></div>
                             </div>
                             <div class="ml-3 flex-1 min-w-0">
                                 <div class="flex justify-between items-baseline mb-0.5">
@@ -315,14 +386,14 @@ onUnmounted(() => { if (pollingInterval) clearInterval(pollingInterval); });
 
                 <template v-if="activeConversationId">
                     <!-- Chat Header -->
-                    <div class="bg-white p-3 border-b border-gray-200 flex items-center shadow-sm z-10 shrink-0">
-                        <button @click="mobileShowChat = false" class="md:hidden p-1 mr-2 text-gray-500">
+                    <div class="bg-white p-3 border-b border-gray-200 flex items-center shadow-sm z-10 shrink-0 gap-2">
+                        <button @click="mobileShowChat = false" class="md:hidden p-1 text-gray-500">
                             <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" /></svg>
                         </button>
                         <div class="w-10 h-10 rounded-full bg-gradient-to-br from-accent to-accent-light flex items-center justify-center text-white font-bold shrink-0">
                             {{ (activeName || '?')[0].toUpperCase() }}
                         </div>
-                        <div class="ml-3 flex-1 min-w-0">
+                        <div class="flex-1 min-w-0">
                             <h2 class="text-sm font-semibold text-gray-900 truncate">{{ activeName }}</h2>
                             <p v-if="activeStatus === 'closed'" class="text-[11px] text-gray-500 flex items-center gap-1">
                                 <span class="w-1.5 h-1.5 rounded-full bg-gray-400"></span>
@@ -333,6 +404,53 @@ onUnmounted(() => { if (pollingInterval) clearInterval(pollingInterval); });
                                 En línea
                             </p>
                         </div>
+
+                        <!-- ── Asignación (dropdown) ── -->
+                        <div class="relative">
+                            <button @click="showAssignMenu = !showAssignMenu"
+                                    class="inline-flex items-center gap-1.5 px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs font-medium text-gray-700 hover:bg-gray-50 hover:border-gray-300 transition">
+                                <span v-if="activeAssignedTo"
+                                      class="w-5 h-5 rounded-full bg-emerald-500 flex items-center justify-center text-[9px] font-bold text-white">
+                                    {{ activeAssignedTo.initial?.toUpperCase() }}
+                                </span>
+                                <svg v-else class="w-3.5 h-3.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z"/></svg>
+                                <span class="hidden sm:inline truncate max-w-[90px]">{{ activeAssignedTo ? activeAssignedTo.name : 'Sin asignar' }}</span>
+                                <svg class="w-3 h-3 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5"/></svg>
+                            </button>
+
+                            <!-- Dropdown -->
+                            <Teleport to="body">
+                                <div v-if="showAssignMenu" class="fixed inset-0 z-[55]" @click="showAssignMenu = false"></div>
+                            </Teleport>
+                            <div v-if="showAssignMenu"
+                                 class="absolute right-0 mt-1 w-60 bg-white rounded-xl shadow-xl border border-gray-200 py-1 z-[56] animate-scale-in">
+                                <p class="px-3 py-1.5 text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Asignar a</p>
+
+                                <button v-if="myStaffMemberId !== activeAssignedTo?.id" @click="assignTo(myStaffMemberId)"
+                                        class="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-accent/10 transition">
+                                    <span class="w-6 h-6 rounded-full bg-accent flex items-center justify-center text-[10px] font-bold text-white">YO</span>
+                                    <span class="flex-1 text-left">Asignarme</span>
+                                </button>
+
+                                <button v-for="staff in staffMembers.filter(s => !s.is_me)" :key="staff.id"
+                                        @click="assignTo(staff.id)"
+                                        class="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 transition"
+                                        :class="{ 'bg-emerald-50': activeAssignedTo?.id === staff.id }">
+                                    <span class="w-6 h-6 rounded-full bg-emerald-500 flex items-center justify-center text-[10px] font-bold text-white">
+                                        {{ staff.initial?.toUpperCase() }}
+                                    </span>
+                                    <span class="flex-1 text-left">{{ staff.name }}</span>
+                                    <svg v-if="activeAssignedTo?.id === staff.id" class="w-4 h-4 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"/></svg>
+                                </button>
+
+                                <button v-if="activeAssignedTo" @click="unassign"
+                                        class="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-500 hover:bg-red-50 hover:text-red-700 transition border-t border-gray-100 mt-1">
+                                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+                                    <span>Quitar asignación</span>
+                                </button>
+                            </div>
+                        </div>
+
                         <button v-if="activeStatus !== 'closed'" @click="openCloseModal"
                                 class="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 rounded-lg text-xs font-medium text-gray-700 hover:bg-gray-50 hover:border-gray-300 transition">
                             <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
@@ -547,8 +665,20 @@ onUnmounted(() => { if (pollingInterval) clearInterval(pollingInterval); });
                         </div>
                     </div>
 
+                    <!-- Banner conversación cerrada (con botón Reabrir) -->
+                    <div v-if="activeStatus === 'closed'" class="bg-gray-100 border-t border-gray-200 px-4 py-3 z-10 shrink-0 flex items-center justify-between gap-3">
+                        <div class="flex items-center gap-2 text-sm text-gray-700 min-w-0">
+                            <svg class="w-4 h-4 text-gray-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z"/></svg>
+                            <span class="truncate">Esta conversación está cerrada. No puedes enviar mensajes hasta reabrirla.</span>
+                        </div>
+                        <button @click="reopenConversation"
+                                class="shrink-0 px-3 py-1.5 bg-accent text-white rounded-lg text-xs font-medium hover:bg-accent-hover transition">
+                            Reabrir
+                        </button>
+                    </div>
+
                     <!-- Input Area -->
-                    <div class="bg-[#f0f2f5] p-3 z-10 shrink-0">
+                    <div v-else class="bg-[#f0f2f5] p-3 z-10 shrink-0">
                         <form @submit.prevent="submit" class="flex items-end space-x-2">
                             <!-- Quick replies button -->
                             <div class="relative">
