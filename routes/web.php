@@ -30,6 +30,14 @@ Route::post('/webhook', [WhatsAppController::class, 'handleWebhook'])->name('web
 Route::middleware('auth')->group(function () {
     Route::post('/logout', [LoginController::class, 'destroy'])->name('logout');
 
+    // ── Superadmin (dueño del SaaS) ──────────────────────────────────────────
+    Route::middleware('superadmin')->prefix('admin')->name('admin.')->group(function () {
+        Route::get('/tenants', [\App\Http\Controllers\Admin\TenantsController::class, 'index'])->name('tenants.index');
+        Route::post('/tenants', [\App\Http\Controllers\Admin\TenantsController::class, 'store'])->name('tenants.store');
+        Route::put('/tenants/{tenant}', [\App\Http\Controllers\Admin\TenantsController::class, 'update'])->name('tenants.update');
+        Route::delete('/tenants/{tenant}', [\App\Http\Controllers\Admin\TenantsController::class, 'destroy'])->name('tenants.destroy');
+    });
+
     // Dashboard
     Route::get('/', [DashboardController::class, 'index'])->name('dashboard');
 

@@ -40,7 +40,10 @@ class HandleInertiaRequests extends Middleware
             ...parent::share($request),
             'auth' => [
                 'user' => fn() => $request->user()
-                    ? $request->user()->only('id', 'name', 'email')
+                    ? array_merge(
+                        $request->user()->only('id', 'name', 'email'),
+                        ['is_superadmin' => (bool) $request->user()->is_superadmin]
+                    )
                     : null,
             ],
             'flash' => [

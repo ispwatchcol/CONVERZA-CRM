@@ -79,6 +79,13 @@ const navItems = [
     { name: 'Configuración', route: 'settings.index', icon: 'settings' },
 ];
 
+// Items que solo ven los superadmins del SaaS (no admins de tenants).
+const superadminNavItems = [
+    { name: 'Tenants', route: 'admin.tenants.index', icon: 'tenants' },
+];
+
+const isSuperadmin = computed(() => authUser.value?.is_superadmin === true);
+
 function isActive(routeName) {
     return currentRoute.value?.startsWith(routeName.split('.')[0]);
 }
@@ -182,6 +189,36 @@ onUnmounted(() => document.removeEventListener('keydown', handleEsc));
                     </span>
                     <span v-show="sidebarOpen" class="truncate">{{ item.name }}</span>
                 </Link>
+
+                <!-- ── Sección Superadmin SaaS ────────────────────────────── -->
+                <template v-if="isSuperadmin">
+                    <div class="mt-4 mb-2 px-3" :class="!sidebarOpen && 'flex justify-center px-0'">
+                        <div v-if="sidebarOpen" class="flex items-center gap-2">
+                            <div class="h-px bg-white/10 flex-1"></div>
+                            <span class="text-[9px] uppercase tracking-wider text-amber-300/70 font-semibold whitespace-nowrap">SaaS Admin</span>
+                            <div class="h-px bg-white/10 flex-1"></div>
+                        </div>
+                        <div v-else class="h-px bg-white/10 w-8"></div>
+                    </div>
+                    <Link
+                        v-for="item in superadminNavItems"
+                        :key="item.route"
+                        :href="route(item.route)"
+                        class="group flex items-center rounded-lg font-medium transition-all duration-200"
+                        :class="[
+                            sidebarOpen ? 'px-3 py-2.5 text-sm w-full' : 'p-3 justify-center w-12 h-12',
+                            isActive(item.route)
+                                ? (sidebarOpen ? 'bg-amber-500/20 text-amber-100 border-l-[3px] border-amber-400' : 'bg-amber-500/20 text-amber-100')
+                                : 'text-amber-200/70 hover:bg-amber-500/10 hover:text-amber-100'
+                        ]"
+                        :title="!sidebarOpen ? item.name : ''"
+                    >
+                        <span class="shrink-0 flex items-center justify-center transition-transform group-hover:scale-110" :class="sidebarOpen ? 'w-5 h-5 mr-3' : 'w-6 h-6'">
+                            <svg v-if="item.icon === 'tenants'" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 21h19.5m-18-18v18m10.5-18v18m6-13.5V21M6.75 6.75h.75m-.75 3h.75m-.75 3h.75m3-6h.75m-.75 3h.75m-.75 3h.75M6.75 21v-3.375c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21M3 3h12m-.75 4.5H21m-3.75 3.75h.008v.008h-.008v-.008zm0 3h.008v.008h-.008v-.008zm0 3h.008v.008h-.008v-.008z"/></svg>
+                        </span>
+                        <span v-show="sidebarOpen" class="truncate">{{ item.name }}</span>
+                    </Link>
+                </template>
             </nav>
 
             <!-- WhatsApp API badge -->
