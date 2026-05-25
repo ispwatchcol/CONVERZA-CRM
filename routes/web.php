@@ -69,12 +69,16 @@ Route::middleware('auth')->group(function () {
     // Staff
     Route::get('/staff', [StaffController::class, 'index'])->name('staff.index');
     Route::post('/staff', [StaffController::class, 'store'])->name('staff.store');
+    Route::post('/staff/invite', [StaffController::class, 'invite'])->name('staff.invite');
     Route::put('/staff/{staff}', [StaffController::class, 'update'])->name('staff.update');
+    Route::patch('/staff/{staff}/toggle', [StaffController::class, 'toggle'])->name('staff.toggle');
     Route::delete('/staff/{staff}', [StaffController::class, 'destroy'])->name('staff.destroy');
 
     // Teams
     Route::get('/teams', [TeamController::class, 'index'])->name('teams.index');
     Route::post('/teams', [TeamController::class, 'store'])->name('teams.store');
+    Route::get('/teams/{team}/members', [TeamController::class, 'members'])->name('teams.members');
+    Route::post('/teams/load-samples', [TeamController::class, 'loadSamples'])->name('teams.load-samples');
     Route::put('/teams/{team}', [TeamController::class, 'update'])->name('teams.update');
     Route::delete('/teams/{team}', [TeamController::class, 'destroy'])->name('teams.destroy');
 
