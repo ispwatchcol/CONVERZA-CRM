@@ -6,11 +6,38 @@ on:
       - main
   workflow_dispatch:
 
+# Solo un deploy a la vez. Si llegan 2 pushes seguidos, el 2do espera
+# al 1ro en vez de pisarlo a medias.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ───────────────────────────────────────────────────────────────────
+      # 1) Build de assets EN EL RUNNER (7 GB RAM, sin riesgo de OOM)
+      # ───────────────────────────────────────────────────────────────────
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install Node deps
+        run: npm ci
+
+      - name: Build assets
+        run: npm run build
+
+      # ───────────────────────────────────────────────────────────────────
+      # 2) Configurar SSH para hablar con el droplet
+      # ───────────────────────────────────────────────────────────────────
       - name: Configure SSH
         run: |
           mkdir -p ~/.ssh
@@ -18,36 +45,50 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
 
-      - name: Deploy
+      # ───────────────────────────────────────────────────────────────────
+      # 3) Subir assets ya construidos al droplet vía rsync
+      #    --delete limpia archivos viejos (manifest.json apuntando a
+      #    hashes que ya no existen → 500). Es el bug que tuvimos.
+      # ───────────────────────────────────────────────────────────────────
+      - name: Upload built assets to droplet
         run: |
-          ssh -i ~/.ssh/deploy_key ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} << 'EOF'
+          rsync -avz --delete -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no" \
+            public/build/ \
+            ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/var/www/converza-crm/public/build/
+
+      # ───────────────────────────────────────────────────────────────────
+      # 4) Pasos server-side (NO npm — los assets ya están subidos)
+      #    El git checkout al SHA exacto del trigger asegura que el PHP
+      #    code matcheé los assets que acabamos de subir, aunque alguien
+      #    haga otro push mientras este deploy corre.
+      # ───────────────────────────────────────────────────────────────────
+      - name: Run server-side deploy on droplet
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} bash -s << EOF
             set -e
             cd /var/www/converza-crm
 
-            echo "==> Pulling latest changes"
-            git pull origin main
+            echo "==> Fetching and checking out ${{ github.sha }}"
+            git fetch origin
+            git checkout ${{ github.sha }}
 
             echo "==> Installing PHP dependencies"
             composer install --no-dev --optimize-autoloader --no-interaction
 
-            echo "==> Installing Node dependencies & building assets"
-            npm ci
-            npm run build
-
             echo "==> Running migrations"
             php artisan migrate --force
 
-            echo "==> Caching config & routes"
+            echo "==> Clearing and caching"
+            php artisan view:clear
             php artisan config:cache
             php artisan route:cache
-            php artisan view:cache
 
-            echo "==> Restarting PHP-FPM"
+            echo "==> Reloading PHP-FPM"
             sudo systemctl reload php8.2-fpm
 
             echo "==> Restarting queue workers (Supervisor)"
-            sudo supervisorctl restart converza-worker:* \
-              || echo "  WARNING: workers not configured yet — run one-time setup from deploy/DEPLOY.md"
+            sudo supervisorctl restart converza-worker:* \\
+              || echo "  WARNING: workers not configured yet — see deploy/DEPLOY.md"
 
-            echo "==> Deploy complete"
+            echo "==> Deploy complete: \$(git log -1 --format='%h %s')"
           EOF
