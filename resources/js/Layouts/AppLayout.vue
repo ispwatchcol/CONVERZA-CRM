@@ -54,11 +54,17 @@ const themeIcon = computed(() => {
 });
 
 // ─── Support WhatsApp ─────────────────────────────────────────────────────────
-// Soporte del SaaS: número que ven los admins de los tenants cuando necesitan
-// ayuda con Converza. Saluda y se identifica para que sepamos quién escribe.
+// Soporte del SaaS: número de Axel que ven los admins de tenants cuando
+// necesitan ayuda con Converza. El saludo se arma dinámicamente con el nombre
+// del user y del workspace para que sepamos al toque quién escribe.
 const SUPPORT_PHONE = '573125759381'; // +57 312 575 9381
-const SUPPORT_GREETING = '¡Hola! Soy admin de un workspace en Converza CRM y necesito ayuda con:';
-const SUPPORT_WHATSAPP = `https://wa.me/${SUPPORT_PHONE}?text=${encodeURIComponent(SUPPORT_GREETING)}`;
+
+const SUPPORT_WHATSAPP = computed(() => {
+    const userName = authUser.value?.name?.split(' ')[0] || 'Hola';
+    const tenantName = page.props.tenant?.name || 'mi workspace';
+    const greeting = `¡Hola! Soy ${userName} del workspace "${tenantName}" en Converza CRM y necesito ayuda con:`;
+    return `https://wa.me/${SUPPORT_PHONE}?text=${encodeURIComponent(greeting)}`;
+});
 
 // ─── WhatsApp API status ──────────────────────────────────────────────────────
 const whatsappConnected = computed(() => page.props.whatsappStatus?.connected === true);
