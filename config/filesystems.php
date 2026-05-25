@@ -60,7 +60,26 @@ return [
             'report' => false,
         ],
 
+        // Supabase Storage (S3-compatible). Requiere bucket público para servir URLs directas.
+        // Endpoint: https://<project-ref>.supabase.co/storage/v1/s3
+        'supabase' => [
+            'driver' => 's3',
+            'key' => env('SUPABASE_STORAGE_KEY'),
+            'secret' => env('SUPABASE_STORAGE_SECRET'),
+            'region' => env('SUPABASE_STORAGE_REGION', 'us-east-1'),
+            'bucket' => env('SUPABASE_STORAGE_BUCKET', 'converza-media'),
+            'url' => env('SUPABASE_STORAGE_URL'),
+            'endpoint' => env('SUPABASE_STORAGE_ENDPOINT'),
+            'use_path_style_endpoint' => true,
+            'throw' => false,
+            'report' => false,
+        ],
+
     ],
+
+    // Disco usado para guardar medios de WhatsApp (imágenes, audios).
+    // Opciones: 'public' (disco local) | 'supabase' | 's3'
+    'media_disk' => env('MEDIA_DISK', 'public'),
 
     /*
     |--------------------------------------------------------------------------
