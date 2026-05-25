@@ -54,7 +54,11 @@ const themeIcon = computed(() => {
 });
 
 // ─── Support WhatsApp ─────────────────────────────────────────────────────────
-const SUPPORT_WHATSAPP = 'https://wa.me/573001234567'; // ← replace number here
+// Soporte del SaaS: número que ven los admins de los tenants cuando necesitan
+// ayuda con Converza. Saluda y se identifica para que sepamos quién escribe.
+const SUPPORT_PHONE = '573125759381'; // +57 312 575 9381
+const SUPPORT_GREETING = '¡Hola! Soy admin de un workspace en Converza CRM y necesito ayuda con:';
+const SUPPORT_WHATSAPP = `https://wa.me/${SUPPORT_PHONE}?text=${encodeURIComponent(SUPPORT_GREETING)}`;
 
 // ─── WhatsApp API status ──────────────────────────────────────────────────────
 const whatsappConnected = computed(() => page.props.whatsappStatus?.connected === true);
@@ -346,8 +350,9 @@ onUnmounted(() => document.removeEventListener('keydown', handleEsc));
             </main>
         </div>
 
-        <!-- ── Floating WhatsApp Support Button ─────────────────────────────── -->
+        <!-- ── Floating WhatsApp Support Button (oculto para superadmins del SaaS) ── -->
         <a
+            v-if="!isSuperadmin"
             :href="SUPPORT_WHATSAPP"
             target="_blank"
             rel="noopener noreferrer"
