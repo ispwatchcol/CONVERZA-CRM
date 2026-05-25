@@ -15,6 +15,7 @@ use App\Http\Controllers\MetricsController;
 use App\Http\Controllers\SettingsController;
 use App\Http\Controllers\MediaController;
 use App\Http\Controllers\WhatsAppController;
+use App\Http\Controllers\ManualController;
 
 // ── Auth (guest only) ────────────────────────────────────────────────────────
 Route::middleware('guest')->group(function () {
@@ -108,6 +109,9 @@ Route::middleware('auth')->group(function () {
 
     // Metrics
     Route::get('/metrics', [MetricsController::class, 'index'])->name('metrics.index');
+
+    // Manual de Usuario
+    Route::get('/manual', [ManualController::class, 'index'])->name('manual.index');
 
     // Settings
     Route::get('/settings', [SettingsController::class, 'index'])->name('settings.index');
