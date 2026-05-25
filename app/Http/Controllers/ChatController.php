@@ -10,6 +10,8 @@ use App\Models\StaffMember;
 use App\Services\Ispwatch\IspwatchRepository;
 use App\Services\WhatsAppService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Inertia\Inertia;
 
@@ -211,6 +213,99 @@ class ChatController extends Controller
         }
 
         return back()->withErrors(['message' => 'Error al enviar: ' . ($result['error'] ?? 'Error desconocido')]);
+    }
+
+    /**
+     * Envía una imagen o audio al cliente vía WhatsApp Cloud API.
+     * Funciona dentro de la ventana de 24h sin costo adicional por mensaje.
+     */
+    public function sendMedia(Request $request)
+    {
+        $tenant   = app('tenant');
+        $tenantId = $tenant->id;
+
+        abort_if(! $request->user()->is_superadmin, 403);
+
+        $request->validate([
+            'phone'           => 'required|string',
+            // Imagen: jpeg/png/webp hasta 5 MB. Audio: ogg/mp3/m4a/aac hasta 16 MB.
+            'file'            => 'required|file|max:16384|mimes:jpeg,jpg,png,webp,ogg,oga,mp3,m4a,aac,amr',
+            'caption'         => 'nullable|string|max:1024',
+            'conversation_id' => [
+                'nullable', 'integer',
+                Rule::exists('conversations', 'id')->where('tenant_id', $tenantId),
+            ],
+        ]);
+
+        $phone     = Contact::normalizePhone($request->input('phone'));
+        $uploaded  = $request->file('file');
+        $mimeType  = $uploaded->getMimeType();
+        $origName  = $uploaded->getClientOriginalName();
+        $caption   = $request->input('caption');
+        $type      = str_starts_with($mimeType, 'image/') ? 'image' : 'audio';
+        $content   = file_get_contents($uploaded->getRealPath());
+
+        $contact = Contact::firstOrCreate(
+            ['phone' => $phone, 'tenant_id' => $tenantId],
+            ['phone' => $phone, 'tenant_id' => $tenantId],
+        );
+
+        $conversation = null;
+        if ($request->conversation_id) {
+            $conversation = Conversation::where('tenant_id', $tenantId)->find($request->conversation_id);
+        }
+        if (! $conversation) {
+            $conversation = Conversation::firstOrCreate(
+                ['contact_id' => $contact->id, 'status' => 'open', 'tenant_id' => $tenantId],
+                ['contact_id' => $contact->id, 'tenant_id' => $tenantId],
+            );
+        }
+        if ($conversation->status === 'closed') {
+            $conversation->update(['status' => 'open']);
+        }
+
+        // Subir el archivo a WhatsApp para obtener un media_id
+        $waMediaId = $this->whatsappService->uploadMedia($content, $origName, $mimeType);
+
+        // En modo mock (sin credenciales), generamos un ID ficticio
+        if (! $waMediaId && empty(config('services.whatsapp.url'))) {
+            $waMediaId = 'mock-' . Str::uuid();
+        }
+
+        if (! $waMediaId) {
+            return back()->withErrors(['file' => 'Error al subir el archivo a WhatsApp.']);
+        }
+
+        $result = $this->whatsappService->sendMedia($phone, $type, $waMediaId, $caption);
+
+        if (! $result['success']) {
+            return back()->withErrors(['file' => 'Error al enviar: ' . ($result['error'] ?? 'Error desconocido')]);
+        }
+
+        // Guardar el archivo en el disco configurado (local o Supabase)
+        $mediaDisk = config('filesystems.media_disk', 'public');
+        $ext       = $uploaded->getClientOriginalExtension();
+        $storedName = Str::uuid() . ($ext ? '.' . $ext : '');
+        $path       = 'whatsapp-media/' . $storedName;
+        Storage::disk($mediaDisk)->put($path, $content);
+
+        Message::create([
+            'tenant_id'       => $tenantId,
+            'conversation_id' => $conversation->id,
+            'contact_id'      => $contact->id,
+            'body'            => $caption ?? ($type === 'image' ? '[Imagen]' : '[Audio]'),
+            'status'          => 'sent',
+            'type'            => $type,
+            'media_path'      => $path,
+            'media_mime'      => $mimeType,
+            'media_filename'  => $origName,
+            'caption'         => $caption,
+            'wa_message_id'   => $result['data']['messages'][0]['id'] ?? null,
+        ]);
+
+        $conversation->touch();
+
+        return back()->with('success', ($type === 'image' ? 'Imagen' : 'Audio') . ' enviado.');
     }
 
     /**

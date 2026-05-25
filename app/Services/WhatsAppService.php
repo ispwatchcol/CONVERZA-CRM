@@ -139,6 +139,78 @@ class WhatsAppService
     }
 
     /**
+     * Upload a file to WhatsApp Cloud API and return the media_id.
+     * Needed before calling sendMedia().
+     */
+    public function uploadMedia(string $fileContent, string $filename, string $mimeType): ?string
+    {
+        if (empty($this->token) || empty($this->baseUrl)) {
+            return null;
+        }
+
+        $graphRoot = preg_replace('#/[^/]+$#', '', rtrim($this->baseUrl, '/'));
+
+        try {
+            $response = Http::withToken($this->token)
+                ->attach('file', $fileContent, $filename, ['Content-Type' => $mimeType])
+                ->post($graphRoot . '/media', [
+                    'messaging_product' => 'whatsapp',
+                ]);
+
+            if ($response->successful()) {
+                return $response->json('id');
+            }
+
+            Log::error('WhatsApp media upload failed', [
+                'status' => $response->status(),
+                'body'   => $response->body(),
+            ]);
+            return null;
+        } catch (\Throwable $e) {
+            Log::error('WhatsApp uploadMedia exception: ' . $e->getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Send an image or audio to a WhatsApp contact using a previously uploaded media_id.
+     *
+     * @param string $type 'image' | 'audio' | 'document'
+     */
+    public function sendMedia(string $to, string $type, string $mediaId, ?string $caption = null): array
+    {
+        if (empty($this->baseUrl)) {
+            Log::info("WhatsApp Mock sendMedia: To $to, Type: $type, MediaId: $mediaId");
+            return ['success' => true, 'mock' => true];
+        }
+
+        $mediaPayload = ['id' => $mediaId];
+        if ($caption && in_array($type, ['image', 'video', 'document'])) {
+            $mediaPayload['caption'] = $caption;
+        }
+
+        try {
+            $response = Http::withToken($this->token)
+                ->post($this->baseUrl . '/messages', [
+                    'messaging_product' => 'whatsapp',
+                    'to'                => $to,
+                    'type'              => $type,
+                    $type               => $mediaPayload,
+                ]);
+
+            if ($response->successful()) {
+                return ['success' => true, 'data' => $response->json()];
+            }
+
+            Log::error('WhatsApp sendMedia Error: ' . $response->body());
+            return ['success' => false, 'error' => $response->body()];
+        } catch (\Exception $e) {
+            Log::error('WhatsApp sendMedia Exception: ' . $e->getMessage());
+            return ['success' => false, 'error' => $e->getMessage()];
+        }
+    }
+
+    /**
      * Send a WhatsApp message.
      *
      * @param string $to The phone number to send to.

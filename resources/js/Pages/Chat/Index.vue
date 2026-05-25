@@ -28,6 +28,12 @@ const mobileShowChat = ref(false);
 
 const form = useForm({ phone: '', message: '', conversation_id: null });
 const newChatForm = useForm({ phone: '', message: '' });
+const mediaForm = useForm({ phone: '', file: null, caption: '', conversation_id: null });
+
+const fileInputRef = ref(null);
+const selectedFile = ref(null);
+const filePreviewUrl = ref(null);
+const showAttachMenu = ref(false);
 
 onMounted(() => {
     if (props.activePhone) {
@@ -40,6 +46,7 @@ onMounted(() => {
 watch(() => props.activeConversationId, (val) => {
     form.conversation_id = val;
     form.phone = props.activePhone || '';
+    clearSelectedFile();
     scrollToBottom();
 });
 
@@ -72,6 +79,54 @@ function useQuickReply(qr) {
     form.message = qr.body;
     showQuickReplies.value = false;
 }
+
+// ── Adjuntar medios (imagen / audio) ─────────────────────────────────────────
+function openFileInput(accept) {
+    showAttachMenu.value = false;
+    if (fileInputRef.value) {
+        fileInputRef.value.accept = accept;
+        fileInputRef.value.click();
+    }
+}
+
+function onFileSelected(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    selectedFile.value = file;
+    if (file.type.startsWith('image/')) {
+        filePreviewUrl.value = URL.createObjectURL(file);
+    } else {
+        filePreviewUrl.value = null;
+    }
+    mediaForm.phone = props.activePhone || '';
+    mediaForm.conversation_id = props.activeConversationId;
+    // Reset the input so the same file can be re-selected after clearing
+    event.target.value = '';
+}
+
+function clearSelectedFile() {
+    if (filePreviewUrl.value) URL.revokeObjectURL(filePreviewUrl.value);
+    selectedFile.value = null;
+    filePreviewUrl.value = null;
+    mediaForm.reset();
+}
+
+function submitMedia() {
+    if (!selectedFile.value) return;
+    mediaForm.file = selectedFile.value;
+    mediaForm.phone = props.activePhone || '';
+    mediaForm.conversation_id = props.activeConversationId;
+    mediaForm.post(route('chat.send-media'), {
+        forceFormData: true,
+        onSuccess: () => { clearSelectedFile(); scrollToBottom(); },
+        preserveScroll: true,
+    });
+}
+
+function isAudioFile(file) {
+    return file?.type?.startsWith('audio/');
+}
+// ─────────────────────────────────────────────────────────────────────────────
 
 function formatDate(dateString) {
     if (!dateString) return '';
@@ -706,7 +761,60 @@ onUnmounted(() => window.removeEventListener('resize', handleResize));
 
                     <!-- Input Area -->
                     <div v-else class="bg-[#f0f2f5] p-3 z-10 shrink-0">
+
+                        <!-- Vista previa del archivo seleccionado -->
+                        <div v-if="selectedFile" class="mb-2 bg-white rounded-xl border border-gray-200 shadow-sm p-3 flex items-center gap-3">
+                            <!-- Preview imagen -->
+                            <img v-if="filePreviewUrl" :src="filePreviewUrl" class="w-14 h-14 rounded-lg object-cover shrink-0" />
+                            <!-- Ícono audio -->
+                            <div v-else class="w-14 h-14 rounded-lg bg-accent/10 flex items-center justify-center shrink-0">
+                                <svg class="w-7 h-7 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z"/></svg>
+                            </div>
+                            <div class="flex-1 min-w-0">
+                                <p class="text-sm font-medium text-gray-900 truncate">{{ selectedFile.name }}</p>
+                                <p class="text-xs text-gray-500">{{ isAudioFile(selectedFile) ? 'Audio' : 'Imagen' }} · {{ (selectedFile.size / 1024).toFixed(0) }} KB</p>
+                                <!-- Caption solo para imágenes -->
+                                <input v-if="!isAudioFile(selectedFile)" v-model="mediaForm.caption" type="text" placeholder="Añadir descripción (opcional)" class="mt-1 w-full text-xs border-0 border-b border-gray-200 bg-transparent focus:ring-0 focus:border-accent px-0 py-0.5" />
+                            </div>
+                            <div class="flex items-center gap-1 shrink-0">
+                                <button type="button" @click="clearSelectedFile" class="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition">
+                                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+                                </button>
+                                <button type="button" @click="submitMedia" :disabled="mediaForm.processing" class="p-2 bg-accent text-white rounded-lg hover:bg-accent-hover disabled:opacity-50 transition">
+                                    <svg v-if="!mediaForm.processing" class="w-4 h-4 rotate-90" fill="currentColor" viewBox="0 0 20 20"><path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z"/></svg>
+                                    <svg v-else class="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+                                </button>
+                            </div>
+                        </div>
+
                         <form @submit.prevent="submit" class="flex items-end space-x-2">
+                            <!-- Hidden file input -->
+                            <input ref="fileInputRef" type="file" class="hidden" @change="onFileSelected" />
+
+                            <!-- Attach menu (solo superadmin) -->
+                            <div v-if="$page.props.auth.is_superadmin" class="relative">
+                                <Teleport to="body">
+                                    <div v-if="showAttachMenu" class="fixed inset-0 z-[19]" @click="showAttachMenu = false"></div>
+                                </Teleport>
+                                <button type="button" @click="showAttachMenu = !showAttachMenu"
+                                        class="p-2.5 text-gray-500 hover:text-accent transition rounded-lg hover:bg-white"
+                                        title="Adjuntar archivo">
+                                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M18.375 12.739l-7.693 7.693a4.5 4.5 0 01-6.364-6.364l10.94-10.94A3 3 0 1119.5 7.372L8.552 18.32m.009-.01l-.01.01m5.699-9.941l-7.81 7.81a1.5 1.5 0 002.112 2.13"/></svg>
+                                </button>
+                                <div v-if="showAttachMenu" class="absolute bottom-12 left-0 w-44 bg-white rounded-xl shadow-xl border border-gray-200 py-1 z-20 animate-scale-in">
+                                    <button type="button" @click="openFileInput('image/jpeg,image/jpg,image/png,image/webp')"
+                                            class="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition">
+                                        <svg class="w-4 h-4 text-blue-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z"/></svg>
+                                        Imagen
+                                    </button>
+                                    <button type="button" @click="openFileInput('audio/ogg,audio/mpeg,audio/mp4,audio/aac,audio/amr,audio/*')"
+                                            class="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition">
+                                        <svg class="w-4 h-4 text-green-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z"/></svg>
+                                        Audio
+                                    </button>
+                                </div>
+                            </div>
+
                             <!-- Quick replies button -->
                             <div class="relative">
                                 <button type="button" @click="showQuickReplies = !showQuickReplies" class="p-2.5 text-gray-500 hover:text-accent transition rounded-lg hover:bg-white">
