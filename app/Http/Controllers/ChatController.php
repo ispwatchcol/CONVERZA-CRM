@@ -285,7 +285,21 @@ class ChatController extends Controller
         $ext       = $uploaded->getClientOriginalExtension();
         $storedName = Str::uuid() . ($ext ? '.' . $ext : '');
         $path       = 'whatsapp-media/' . $storedName;
-        Storage::disk($mediaDisk)->put($path, $content);
+
+        // Intentar disco remoto (Supabase/S3) si está configurado
+        if ($mediaDisk !== 'public') {
+            try {
+                Storage::disk($mediaDisk)->put($path, $content);
+            } catch (\Throwable $e) {
+                \Log::warning('ChatController sendMedia: remote disk save failed', [
+                    'disk'  => $mediaDisk,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        // Siempre guardar copia local como fallback
+        Storage::disk('public')->put($path, $content);
 
         Message::create([
             'tenant_id'       => $tenantId,
