@@ -153,7 +153,14 @@ class ProcessIncomingWhatsAppMessage implements ShouldQueue
         $attributes['media_filename'] = $mediaPayload['filename'] ?? null;
         $attributes['body']           = $caption ?? $this->placeholderForType($type);
 
-        if ($mediaId) {
+        // Tipos de media que se descargan y almacenan en disco.
+        // Configurable vía .env MEDIA_DOWNLOAD_TYPES (default: image,audio).
+        // Videos y documentos pueden pesar hasta 16 MB y saturar el
+        // almacenamiento rápidamente. Para los no descargados solo guardamos
+        // metadata (caption, filename, mime) y mostramos un placeholder.
+        $downloadableTypes = config('media.download_types', ['image', 'audio']);
+
+        if ($mediaId && in_array($type, $downloadableTypes, true)) {
             $downloaded = $whatsapp->downloadMedia($mediaId);
             if ($downloaded) {
                 $attributes['media_path']     = $downloaded['path'];
