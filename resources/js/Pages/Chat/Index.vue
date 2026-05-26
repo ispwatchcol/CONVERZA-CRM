@@ -756,8 +756,6 @@ onUnmounted(() => window.removeEventListener('resize', handleResize));
                                     <audio
                                         v-if="msg.media_url"
                                         :id="'audio-' + msg.id"
-                                        :src="msg.media_url"
-                                        :type="msg.media_mime || 'audio/ogg'"
                                         preload="metadata"
                                         class="hidden"
                                         @play="onAudioPlay(msg.id)"
@@ -766,7 +764,9 @@ onUnmounted(() => window.removeEventListener('resize', handleResize));
                                         @error="onAudioError(msg.id)"
                                         @timeupdate="onAudioTimeUpdate(msg.id)"
                                         @loadedmetadata="onAudioMetadata(msg.id)"
-                                    />
+                                    >
+                                        <source :src="msg.media_url" :type="msg.media_mime || 'audio/ogg'" />
+                                    </audio>
                                     <div class="flex items-center gap-2.5 px-3 py-2.5 min-w-[220px]">
                                         <!-- Play / Pause button -->
                                         <button
@@ -900,8 +900,8 @@ onUnmounted(() => window.removeEventListener('resize', handleResize));
                             <!-- Hidden file input -->
                             <input ref="fileInputRef" type="file" class="hidden" @change="onFileSelected" />
 
-                            <!-- Attach menu (solo superadmin) -->
-                            <div v-if="$page.props.auth.is_superadmin" class="relative">
+                            <!-- Attach menu -->
+                            <div class="relative">
                                 <Teleport to="body">
                                     <div v-if="showAttachMenu" class="fixed inset-0 z-[19]" @click="showAttachMenu = false"></div>
                                 </Teleport>

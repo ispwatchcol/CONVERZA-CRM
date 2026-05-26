@@ -224,8 +224,6 @@ class ChatController extends Controller
         $tenant   = app('tenant');
         $tenantId = $tenant->id;
 
-        abort_if(! $request->user()->is_superadmin, 403);
-
         $request->validate([
             'phone'           => 'required|string',
             // Imagen: jpeg/png/webp hasta 5 MB. Audio: ogg/mp3/m4a/aac hasta 16 MB.
