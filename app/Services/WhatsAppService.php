@@ -104,6 +104,19 @@ class WhatsAppService
 
             $mediaDisk = config('filesystems.media_disk', 'public');
             $content = $binary->body();
+
+            // Comprimir imágenes para ahorrar espacio en disco
+            if (str_starts_with($mime, 'image/')) {
+                $content = $this->compressImage($content, $mime);
+                // After compression images are always JPEG
+                if ($content !== $binary->body()) {
+                    $mime = 'image/jpeg';
+                    $ext = 'jpg';
+                    $filename = $mediaId . '.jpg';
+                    $path = 'whatsapp-media/' . $filename;
+                }
+            }
+
             $savedRemote = false;
 
             // Intentar guardar en el disco configurado (puede ser Supabase/S3)
@@ -158,6 +171,92 @@ class WhatsAppService
             'application/pdf' => 'pdf',
             default => null,
         };
+    }
+
+    /**
+     * Comprime una imagen usando GD para reducir su tamaño en disco.
+     * Si GD no está disponible o falla, retorna el contenido original.
+     */
+    private function compressImage(string $content, string $mime): string
+    {
+        if (! config('media.compress_images', true)) {
+            return $content;
+        }
+
+        if (! extension_loaded('gd')) {
+            Log::info('GD extension not available, skipping image compression');
+            return $content;
+        }
+
+        try {
+            $image = @imagecreatefromstring($content);
+            if (! $image) {
+                return $content;
+            }
+
+            $origWidth  = imagesx($image);
+            $origHeight = imagesy($image);
+            $maxWidth   = config('media.max_width', 1200);
+            $quality    = config('media.jpeg_quality', 75);
+
+            // Redimensionar si excede el ancho máximo
+            if ($origWidth > $maxWidth) {
+                $ratio    = $maxWidth / $origWidth;
+                $newWidth  = $maxWidth;
+                $newHeight = (int) round($origHeight * $ratio);
+
+                $resized = imagecreatetruecolor($newWidth, $newHeight);
+
+                // Fondo blanco para PNGs con transparencia
+                $white = imagecolorallocate($resized, 255, 255, 255);
+                imagefill($resized, 0, 0, $white);
+
+                imagecopyresampled(
+                    $resized, $image,
+                    0, 0, 0, 0,
+                    $newWidth, $newHeight,
+                    $origWidth, $origHeight,
+                );
+
+                imagedestroy($image);
+                $image = $resized;
+            } else {
+                // Even without resizing, we still need white background for PNGs
+                $canvas = imagecreatetruecolor($origWidth, $origHeight);
+                $white  = imagecolorallocate($canvas, 255, 255, 255);
+                imagefill($canvas, 0, 0, $white);
+                imagecopy($canvas, $image, 0, 0, 0, 0, $origWidth, $origHeight);
+                imagedestroy($image);
+                $image = $canvas;
+            }
+
+            // Guardar como JPEG comprimido
+            ob_start();
+            imagejpeg($image, null, $quality);
+            $compressed = ob_get_clean();
+            imagedestroy($image);
+
+            if (! $compressed || strlen($compressed) === 0) {
+                return $content;
+            }
+
+            $saved = strlen($content) - strlen($compressed);
+            if ($saved > 0) {
+                Log::info('Image compressed', [
+                    'original_kb'   => round(strlen($content) / 1024, 1),
+                    'compressed_kb' => round(strlen($compressed) / 1024, 1),
+                    'saved_kb'      => round($saved / 1024, 1),
+                ]);
+            }
+
+            // Solo usar la comprimida si realmente es más pequeña
+            return strlen($compressed) < strlen($content) ? $compressed : $content;
+        } catch (\Throwable $e) {
+            Log::warning('Image compression failed, using original', [
+                'error' => $e->getMessage(),
+            ]);
+            return $content;
+        }
     }
 
     /**
