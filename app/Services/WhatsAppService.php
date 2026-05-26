@@ -103,7 +103,27 @@ class WhatsAppService
             $path = 'whatsapp-media/' . $filename;
 
             $mediaDisk = config('filesystems.media_disk', 'public');
-            Storage::disk($mediaDisk)->put($path, $binary->body());
+            $content = $binary->body();
+            $savedRemote = false;
+
+            // Intentar guardar en el disco configurado (puede ser Supabase/S3)
+            if ($mediaDisk !== 'public') {
+                try {
+                    Storage::disk($mediaDisk)->put($path, $content);
+                    $savedRemote = true;
+                } catch (\Throwable $e) {
+                    Log::warning('WhatsApp downloadMedia: remote disk save failed, using local fallback', [
+                        'media_id' => $mediaId,
+                        'disk'     => $mediaDisk,
+                        'error'    => $e->getMessage(),
+                    ]);
+                }
+            }
+
+            // Siempre guardar copia local como fallback para que el
+            // MediaController pueda servir el archivo aunque el disco
+            // remoto falle temporalmente.
+            Storage::disk('public')->put($path, $content);
 
             return [
                 'path' => $path,

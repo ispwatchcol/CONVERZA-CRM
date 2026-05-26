@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 
 class MediaController extends Controller
@@ -10,27 +11,43 @@ class MediaController extends Controller
     {
         $mediaDisk = config('filesystems.media_disk', 'public');
 
-        // Para discos remotos (Supabase, S3): redirigir a la URL pública del archivo.
-        // Si el archivo no está en el disco configurado, caemos al disco local como fallback
-        // para mantener compatibilidad con archivos anteriores al cambio de disco.
+        // ── 1. Intentar disco remoto (Supabase / S3) ────────────────────────
+        // Envuelto en try-catch para que un error de conexión con Supabase
+        // no tire 500 y permita caer al fallback local.
         if ($mediaDisk !== 'public') {
-            if (Storage::disk($mediaDisk)->exists($path)) {
-                return redirect(Storage::disk($mediaDisk)->url($path));
+            try {
+                if (Storage::disk($mediaDisk)->exists($path)) {
+                    return redirect(Storage::disk($mediaDisk)->url($path));
+                }
+            } catch (\Throwable $e) {
+                Log::warning('MediaController: remote disk check failed, falling back to local', [
+                    'disk'  => $mediaDisk,
+                    'path'  => $path,
+                    'error' => $e->getMessage(),
+                ]);
             }
-            // Fallback: intentar servir desde disco local si el archivo fue subido antes del cambio
+            // Fallback: intentar servir desde disco local si el archivo fue
+            // subido antes del cambio de disco o si el disco remoto falló.
         }
 
-        // Disco local — prevenir directory traversal y servir el archivo
-        $base = realpath(Storage::disk('public')->path(''));
-        $full = realpath(Storage::disk('public')->path($path));
+        // ── 2. Disco local (public) ─────────────────────────────────────────
+        $publicDisk = Storage::disk('public');
+
+        // Verificar existencia antes de intentar realpath (evita excepciones)
+        if (! $publicDisk->exists($path)) {
+            abort(404, 'Media file not found');
+        }
+
+        $base = realpath($publicDisk->path(''));
+        $full = realpath($publicDisk->path($path));
 
         if (! $full || ! str_starts_with($full, $base) || ! is_file($full)) {
-            abort(404);
+            abort(404, 'Media file not found');
         }
 
         // Explicit Content-Type mapping prevents servers with outdated libmagic from
         // serving audio/video with wrong MIME (e.g. application/octet-stream) which
-        // causes browsers to refuse playback. BinaryFileResponse handles Range requests.
+        // causes browsers to refuse playback.
         $ext = strtolower(pathinfo($full, PATHINFO_EXTENSION));
         $mimeByExt = [
             'ogg'  => 'audio/ogg',
