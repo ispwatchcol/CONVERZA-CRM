@@ -28,7 +28,28 @@ class MediaController extends Controller
             abort(404);
         }
 
-        // BinaryFileResponse handles Range requests correctly (needed for audio/video seeking)
-        return response()->file($full);
+        // Explicit Content-Type mapping prevents servers with outdated libmagic from
+        // serving audio/video with wrong MIME (e.g. application/octet-stream) which
+        // causes browsers to refuse playback. BinaryFileResponse handles Range requests.
+        $ext = strtolower(pathinfo($full, PATHINFO_EXTENSION));
+        $mimeByExt = [
+            'ogg'  => 'audio/ogg',
+            'oga'  => 'audio/ogg',
+            'mp3'  => 'audio/mpeg',
+            'aac'  => 'audio/aac',
+            'amr'  => 'audio/amr',
+            'm4a'  => 'audio/mp4',
+            'jpg'  => 'image/jpeg',
+            'jpeg' => 'image/jpeg',
+            'png'  => 'image/png',
+            'webp' => 'image/webp',
+            'gif'  => 'image/gif',
+            'mp4'  => 'video/mp4',
+            '3gp'  => 'video/3gpp',
+            'pdf'  => 'application/pdf',
+        ];
+        $headers = isset($mimeByExt[$ext]) ? ['Content-Type' => $mimeByExt[$ext]] : [];
+
+        return response()->file($full, $headers);
     }
 }
