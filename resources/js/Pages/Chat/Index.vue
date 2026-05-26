@@ -33,7 +33,6 @@ const mediaForm = useForm({ phone: '', file: null, caption: '', conversation_id:
 const fileInputRef = ref(null);
 const selectedFile = ref(null);
 const filePreviewUrl = ref(null);
-const showAttachMenu = ref(false);
 
 onMounted(() => {
     if (props.activePhone) {
@@ -82,7 +81,6 @@ function useQuickReply(qr) {
 
 // ── Adjuntar medios (imagen / audio) ─────────────────────────────────────────
 function openFileInput(accept) {
-    showAttachMenu.value = false;
     if (fileInputRef.value) {
         fileInputRef.value.accept = accept;
         fileInputRef.value.click();
@@ -125,6 +123,16 @@ function submitMedia() {
 
 function isAudioFile(file) {
     return file?.type?.startsWith('audio/');
+}
+
+// Normaliza el MIME para el atributo type del <source>.
+// WhatsApp envía p.ej. "audio/ogg; codecs=opus" que algunos navegadores
+// no reconocen correctamente en el atributo type.
+function normalizeAudioMime(mime) {
+    if (!mime) return 'audio/ogg';
+    // Quitar parámetros (codecs=opus, etc.)
+    const base = mime.split(';')[0].trim();
+    return base || 'audio/ogg';
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -281,12 +289,22 @@ function toggleAudio(id) {
     }
 }
 
-function onAudioPlay(id)        { audioState(id).playing = true; }
+function onAudioPlay(id)        { audioState(id).playing = true; audioState(id).error = false; }
 function onAudioPause(id)       { audioState(id).playing = false; }
 function onAudioEnded(id)       { audioState(id).playing = false; audioState(id).currentTime = 0; }
-function onAudioError(id)       { audioState(id).error = true; }
+function onAudioError(id)       {
+    const el = document.getElementById('audio-' + id);
+    // Solo marcar error si realmente no se puede reproducir
+    // (ignorar errores de precarga de metadatos cuando la fuente aún no cargó)
+    if (el && el.networkState === HTMLMediaElement.NETWORK_NO_SOURCE) {
+        audioState(id).error = true;
+    } else if (el && el.error) {
+        audioState(id).error = true;
+        console.warn(`Audio ${id} error:`, el.error.code, el.error.message);
+    }
+}
 function onAudioTimeUpdate(id)  { const el = document.getElementById('audio-' + id); if (el) audioState(id).currentTime = el.currentTime; }
-function onAudioMetadata(id)    { const el = document.getElementById('audio-' + id); if (el) audioState(id).duration = el.duration; }
+function onAudioMetadata(id)    { const el = document.getElementById('audio-' + id); if (el) { audioState(id).duration = el.duration; audioState(id).error = false; } }
 
 function audioProgress(id) {
     const s = audioState(id);
@@ -756,6 +774,7 @@ onUnmounted(() => window.removeEventListener('resize', handleResize));
                                     <audio
                                         v-if="msg.media_url"
                                         :id="'audio-' + msg.id"
+                                        :src="msg.media_url"
                                         preload="metadata"
                                         class="hidden"
                                         @play="onAudioPlay(msg.id)"
@@ -765,7 +784,7 @@ onUnmounted(() => window.removeEventListener('resize', handleResize));
                                         @timeupdate="onAudioTimeUpdate(msg.id)"
                                         @loadedmetadata="onAudioMetadata(msg.id)"
                                     >
-                                        <source :src="msg.media_url" :type="msg.media_mime || 'audio/ogg'" />
+                                        <source :src="msg.media_url" :type="normalizeAudioMime(msg.media_mime)" />
                                     </audio>
                                     <div class="flex items-center gap-2.5 px-3 py-2.5 min-w-[220px]">
                                         <!-- Play / Pause button -->
@@ -778,7 +797,13 @@ onUnmounted(() => window.removeEventListener('resize', handleResize));
                                             <svg v-if="!audioState(msg.id).playing" class="w-5 h-5 text-white ml-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
                                             <svg v-else class="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
                                         </button>
-                                        <!-- Error / unavailable icon -->
+                                        <!-- Error: fallback download link -->
+                                        <a v-else-if="msg.media_url" :href="msg.media_url" target="_blank" rel="noopener noreferrer"
+                                           class="w-10 h-10 rounded-full flex items-center justify-center shrink-0 bg-gray-300 hover:bg-gray-400 transition"
+                                           title="Descargar audio">
+                                            <svg class="w-5 h-5 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3"/></svg>
+                                        </a>
+                                        <!-- No media available -->
                                         <div v-else class="w-10 h-10 rounded-full flex items-center justify-center shrink-0 bg-gray-300">
                                             <svg class="w-5 h-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/></svg>
                                         </div>
@@ -793,14 +818,21 @@ onUnmounted(() => window.removeEventListener('resize', handleResize));
                                                 />
                                             </div>
                                             <p class="text-[10px] mt-1" :class="msg.status === 'sent' ? 'text-green-700' : 'text-gray-500'">
-                                                <span v-if="audioState(msg.id).error">No disponible</span>
+                                                <span v-if="audioState(msg.id).error && msg.media_url">
+                                                    <a :href="msg.media_url" target="_blank" class="underline hover:text-accent">Descargar audio</a>
+                                                </span>
+                                                <span v-else-if="audioState(msg.id).error">No disponible</span>
                                                 <span v-else-if="audioState(msg.id).currentTime">{{ fmtAudioTime(audioState(msg.id).currentTime) }} / {{ fmtAudioTime(audioState(msg.id).duration) }}</span>
                                                 <span v-else>{{ fmtAudioTime(audioState(msg.id).duration) || '...' }}</span>
                                             </p>
                                         </div>
 
-                                        <!-- Mic icon -->
-                                        <svg class="w-4 h-4 shrink-0" :class="msg.status === 'sent' ? 'text-green-600' : 'text-gray-400'" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z"/></svg>
+                                        <!-- Mic icon / Download icon when error -->
+                                        <a v-if="audioState(msg.id).error && msg.media_url" :href="msg.media_url" target="_blank" rel="noopener noreferrer"
+                                           class="shrink-0 p-1 rounded-full hover:bg-black/5 transition" title="Descargar">
+                                            <svg class="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3"/></svg>
+                                        </a>
+                                        <svg v-else class="w-4 h-4 shrink-0" :class="msg.status === 'sent' ? 'text-green-600' : 'text-gray-400'" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z"/></svg>
                                     </div>
                                 </template>
 
@@ -900,34 +932,27 @@ onUnmounted(() => window.removeEventListener('resize', handleResize));
                             <!-- Hidden file input -->
                             <input ref="fileInputRef" type="file" class="hidden" @change="onFileSelected" />
 
-                            <!-- Attach menu -->
-                            <div class="relative">
-                                <Teleport to="body">
-                                    <div v-if="showAttachMenu" class="fixed inset-0 z-[19]" @click="showAttachMenu = false"></div>
-                                </Teleport>
-                                <button type="button" @click="showAttachMenu = !showAttachMenu"
-                                        class="p-2.5 text-gray-500 hover:text-accent transition rounded-lg hover:bg-white"
-                                        title="Adjuntar archivo">
-                                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M18.375 12.739l-7.693 7.693a4.5 4.5 0 01-6.364-6.364l10.94-10.94A3 3 0 1119.5 7.372L8.552 18.32m.009-.01l-.01.01m5.699-9.941l-7.81 7.81a1.5 1.5 0 002.112 2.13"/></svg>
-                                </button>
-                                <div v-if="showAttachMenu" class="absolute bottom-12 left-0 w-44 bg-white rounded-xl shadow-xl border border-gray-200 py-1 z-20 animate-scale-in">
-                                    <button type="button" @click="openFileInput('image/jpeg,image/jpg,image/png,image/webp')"
-                                            class="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition">
-                                        <svg class="w-4 h-4 text-blue-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z"/></svg>
-                                        Imagen
-                                    </button>
-                                    <button type="button" @click="openFileInput('audio/ogg,audio/mpeg,audio/mp4,audio/aac,audio/amr,audio/*')"
-                                            class="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition">
-                                        <svg class="w-4 h-4 text-green-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z"/></svg>
-                                        Audio
-                                    </button>
-                                </div>
-                            </div>
+                            <!-- Botón Imagen (directo, sin dropdown) -->
+                            <button type="button" @click="openFileInput('image/jpeg,image/jpg,image/png,image/webp')"
+                                    class="p-2.5 text-gray-500 hover:text-blue-500 transition rounded-lg hover:bg-blue-50 group relative"
+                                    title="Enviar imagen">
+                                <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z"/></svg>
+                                <span class="absolute -top-8 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-[10px] px-2 py-0.5 rounded-md whitespace-nowrap opacity-0 group-hover:opacity-100 transition pointer-events-none">Imagen</span>
+                            </button>
+
+                            <!-- Botón Audio (directo, sin dropdown) -->
+                            <button type="button" @click="openFileInput('audio/ogg,audio/mpeg,audio/mp4,audio/aac,audio/amr,audio/*')"
+                                    class="p-2.5 text-gray-500 hover:text-green-500 transition rounded-lg hover:bg-green-50 group relative"
+                                    title="Enviar audio">
+                                <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z"/></svg>
+                                <span class="absolute -top-8 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-[10px] px-2 py-0.5 rounded-md whitespace-nowrap opacity-0 group-hover:opacity-100 transition pointer-events-none">Audio</span>
+                            </button>
 
                             <!-- Quick replies button -->
                             <div class="relative">
-                                <button type="button" @click="showQuickReplies = !showQuickReplies" class="p-2.5 text-gray-500 hover:text-accent transition rounded-lg hover:bg-white">
+                                <button type="button" @click="showQuickReplies = !showQuickReplies" class="p-2.5 text-gray-500 hover:text-accent transition rounded-lg hover:bg-white group relative">
                                     <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" /></svg>
+                                    <span class="absolute -top-8 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-[10px] px-2 py-0.5 rounded-md whitespace-nowrap opacity-0 group-hover:opacity-100 transition pointer-events-none">Respuestas rápidas</span>
                                 </button>
                                 <!-- Backdrop para cerrar al hacer click fuera -->
                                 <Teleport to="body">

@@ -35,10 +35,13 @@ class MediaController extends Controller
         $mimeByExt = [
             'ogg'  => 'audio/ogg',
             'oga'  => 'audio/ogg',
+            'opus' => 'audio/ogg',
             'mp3'  => 'audio/mpeg',
             'aac'  => 'audio/aac',
             'amr'  => 'audio/amr',
             'm4a'  => 'audio/mp4',
+            'weba' => 'audio/webm',
+            'webm' => 'audio/webm',
             'jpg'  => 'image/jpeg',
             'jpeg' => 'image/jpeg',
             'png'  => 'image/png',
@@ -50,6 +53,11 @@ class MediaController extends Controller
         ];
         $headers = isset($mimeByExt[$ext]) ? ['Content-Type' => $mimeByExt[$ext]] : [];
 
+        // Cache media files for 1 hour to avoid re-fetching on every play
+        $headers['Cache-Control'] = 'private, max-age=3600';
+
+        // BinaryFileResponse handles Range requests automatically, which
+        // is required for audio seeking and playback in browsers.
         return response()->file($full, $headers);
     }
 }

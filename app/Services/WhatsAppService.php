@@ -102,7 +102,8 @@ class WhatsAppService
             $filename = $mediaId . ($ext ? '.' . $ext : '');
             $path = 'whatsapp-media/' . $filename;
 
-            Storage::disk('public')->put($path, $binary->body());
+            $mediaDisk = config('filesystems.media_disk', 'public');
+            Storage::disk($mediaDisk)->put($path, $binary->body());
 
             return [
                 'path' => $path,
@@ -133,6 +134,7 @@ class WhatsAppService
             'audio/amr' => 'amr',
             'audio/aac' => 'aac',
             'audio/mp4' => 'm4a',
+            'audio/webm' => 'weba',
             'application/pdf' => 'pdf',
             default => null,
         };
