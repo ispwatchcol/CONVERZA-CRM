@@ -27,7 +27,13 @@ class ProcessIncomingWhatsAppMessage implements ShouldQueue
 
     public function handle(WhatsAppService $whatsapp): void
     {
-        $this->resolveTenant();
+        $tenant = $this->resolveTenant();
+
+        // Aseguramos que las descargas de media usen las credenciales del tenant
+        // dueño del phone_number_id que recibió el mensaje, no las del .env.
+        if ($tenant) {
+            $whatsapp = $whatsapp->forTenant($tenant);
+        }
 
         $phone       = $this->normalizePhone($this->message['from'] ?? '');
         $waMessageId = $this->message['id'] ?? null;
@@ -175,10 +181,13 @@ class ProcessIncomingWhatsAppMessage implements ShouldQueue
         }
     }
 
-    private function resolveTenant(): void
+    private function resolveTenant(): ?Tenant
     {
         if (app()->bound('tenant')) {
-            return;
+            $bound = app('tenant');
+            if ($bound instanceof Tenant) {
+                return $bound;
+            }
         }
 
         $tenant = $this->tenantId
@@ -188,6 +197,8 @@ class ProcessIncomingWhatsAppMessage implements ShouldQueue
         if ($tenant) {
             app()->instance('tenant', $tenant);
         }
+
+        return $tenant;
     }
 
     private function normalizePhone(string $phone): string
