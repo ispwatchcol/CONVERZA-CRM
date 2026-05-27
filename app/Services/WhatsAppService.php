@@ -2,6 +2,8 @@
 
 namespace App\Services;
 
+use App\Models\Tenant;
+use Illuminate\Contracts\Encryption\DecryptException;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -10,30 +12,45 @@ use Illuminate\Support\Str;
 
 class WhatsAppService
 {
-    protected string $baseUrl;
-    protected string $token;
+    /**
+     * Tenant override. If null, credentials are read from the tenant bound
+     * in the service container (set by ResolveTenant middleware or jobs),
+     * falling back to the .env config for the legacy default tenant.
+     */
+    protected ?Tenant $tenant = null;
 
-    public function __construct()
+    /**
+     * Return a service instance scoped to the given tenant. Use in jobs or
+     * background workers where the request-scoped container binding may not
+     * be available.
+     */
+    public function forTenant(?Tenant $tenant): self
     {
-        $this->baseUrl = (string) config('services.whatsapp.url', '');
-        $this->token = (string) config('services.whatsapp.token', '');
+        $clone = clone $this;
+        $clone->tenant = $tenant;
+        return $clone;
     }
 
     /**
      * Check if the WhatsApp Cloud API is reachable with current credentials.
-     * Cached for 60s to avoid hitting Graph API on every page load.
+     * Cached for 60s per tenant to avoid hitting Graph API on every page load.
      */
     public function checkConnection(): array
     {
-        if (empty($this->baseUrl) || empty($this->token)) {
+        $baseUrl = $this->baseUrl();
+        $token   = $this->token();
+
+        if (empty($baseUrl) || empty($token)) {
             return ['connected' => false, 'reason' => 'not_configured'];
         }
 
-        return Cache::remember('whatsapp.connection_status', 60, function () {
+        $cacheKey = 'whatsapp.connection_status.' . ($this->resolveTenant()?->id ?? 'env');
+
+        return Cache::remember($cacheKey, 60, function () use ($baseUrl, $token) {
             try {
-                $response = Http::withToken($this->token)
+                $response = Http::withToken($token)
                     ->timeout(5)
-                    ->get($this->baseUrl);
+                    ->get($baseUrl);
 
                 if ($response->successful()) {
                     return ['connected' => true, 'reason' => 'ok'];
@@ -52,22 +69,112 @@ class WhatsAppService
     }
 
     /**
+     * Tenant used to resolve credentials: explicit override first, then the
+     * container binding, then null (forces .env fallback).
+     */
+    protected function resolveTenant(): ?Tenant
+    {
+        if ($this->tenant) {
+            return $this->tenant;
+        }
+
+        if (app()->bound('tenant')) {
+            $bound = app('tenant');
+            if ($bound instanceof Tenant) {
+                return $bound;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Base URL for the Cloud API: https://graph.facebook.com/{vN}/{phone_number_id}
+     *
+     * Solo el tenant "default" (slug='default', el dueño del SaaS) puede caer al
+     * WHATSAPP_API_URL del .env. Cualquier otro tenant DEBE tener sus propias
+     * credenciales en BD; si no, devolvemos cadena vacía y el servicio queda
+     * en estado "no configurado" (los envíos retornan mock y la UI lo refleja).
+     */
+    protected function baseUrl(): string
+    {
+        $tenant = $this->resolveTenant();
+
+        if ($tenant && filled($tenant->wa_phone_number_id)) {
+            $version = config('services.whatsapp.graph_version', 'v20.0');
+            return "https://graph.facebook.com/{$version}/{$tenant->wa_phone_number_id}";
+        }
+
+        if ($this->canUseEnvFallback($tenant)) {
+            return (string) config('services.whatsapp.url', '');
+        }
+
+        return '';
+    }
+
+    /**
+     * Access token del tenant. Mismas reglas que baseUrl: el .env solo aplica
+     * al tenant "default". Si el token cifrado del tenant no se puede descifrar
+     * (APP_KEY cambió, texto plano viejo), devolvemos '' y logueamos.
+     */
+    protected function token(): string
+    {
+        $tenant = $this->resolveTenant();
+
+        if ($tenant && filled($tenant->getRawOriginal('wa_access_token'))) {
+            try {
+                $token = (string) $tenant->wa_access_token;
+                if ($token !== '') {
+                    return $token;
+                }
+            } catch (DecryptException $e) {
+                Log::warning('WhatsAppService: cannot decrypt tenant access token', [
+                    'tenant_id' => $tenant->id,
+                ]);
+                return '';
+            }
+        }
+
+        if ($this->canUseEnvFallback($tenant)) {
+            return (string) config('services.whatsapp.token', '');
+        }
+
+        return '';
+    }
+
+    /**
+     * El .env (WHATSAPP_API_URL / WHATSAPP_API_TOKEN) es la config del dueño
+     * del SaaS — solo aplica al tenant "default". Si no hay tenant bound
+     * (CLI / comandos artisan sin contexto) también se permite, por compat.
+     */
+    private function canUseEnvFallback(?Tenant $tenant): bool
+    {
+        if ($tenant === null) {
+            return true;
+        }
+        return $tenant->slug === 'default';
+    }
+
+    /**
      * Download a media file from WhatsApp Cloud API and store it on the public disk.
      *
      * Returns ['path' => 'whatsapp-media/xxx.ext', 'mime' => '...', 'filename' => '...'] or null on failure.
      */
     public function downloadMedia(string $mediaId): ?array
     {
-        if (empty($this->token) || empty($this->baseUrl)) {
+        $baseUrl = $this->baseUrl();
+        $token   = $this->token();
+
+        if (empty($token) || empty($baseUrl)) {
             return null;
         }
 
         // baseUrl looks like https://graph.facebook.com/v18.0/{phone-number-id}
         // for media we need https://graph.facebook.com/v18.0/{media-id}
-        $graphRoot = preg_replace('#/[^/]+$#', '', rtrim($this->baseUrl, '/'));
+        $graphRoot = preg_replace('#/[^/]+$#', '', rtrim($baseUrl, '/'));
 
         try {
-            $meta = Http::withToken($this->token)
+            $meta = Http::withToken($token)
                 ->timeout(10)
                 ->get($graphRoot . '/' . $mediaId);
 
@@ -86,7 +193,7 @@ class WhatsAppService
                 return null;
             }
 
-            $binary = Http::withToken($this->token)
+            $binary = Http::withToken($token)
                 ->timeout(20)
                 ->get($url);
 
@@ -265,14 +372,17 @@ class WhatsAppService
      */
     public function uploadMedia(string $fileContent, string $filename, string $mimeType): ?string
     {
-        if (empty($this->token) || empty($this->baseUrl)) {
+        $baseUrl = $this->baseUrl();
+        $token   = $this->token();
+
+        if (empty($token) || empty($baseUrl)) {
             return null;
         }
 
-        $graphRoot = preg_replace('#/[^/]+$#', '', rtrim($this->baseUrl, '/'));
+        $graphRoot = preg_replace('#/[^/]+$#', '', rtrim($baseUrl, '/'));
 
         try {
-            $response = Http::withToken($this->token)
+            $response = Http::withToken($token)
                 ->attach('file', $fileContent, $filename, ['Content-Type' => $mimeType])
                 ->post($graphRoot . '/media', [
                     'messaging_product' => 'whatsapp',
@@ -300,7 +410,10 @@ class WhatsAppService
      */
     public function sendMedia(string $to, string $type, string $mediaId, ?string $caption = null): array
     {
-        if (empty($this->baseUrl)) {
+        $baseUrl = $this->baseUrl();
+        $token   = $this->token();
+
+        if (empty($baseUrl)) {
             Log::info("WhatsApp Mock sendMedia: To $to, Type: $type, MediaId: $mediaId");
             return ['success' => true, 'mock' => true];
         }
@@ -311,8 +424,8 @@ class WhatsAppService
         }
 
         try {
-            $response = Http::withToken($this->token)
-                ->post($this->baseUrl . '/messages', [
+            $response = Http::withToken($token)
+                ->post($baseUrl . '/messages', [
                     'messaging_product' => 'whatsapp',
                     'to'                => $to,
                     'type'              => $type,
@@ -340,15 +453,18 @@ class WhatsAppService
      */
     public function sendMessage(string $to, string $message): array
     {
+        $baseUrl = $this->baseUrl();
+        $token   = $this->token();
+
         // For now, if no config is present, we log and return success mock
-        if (empty($this->baseUrl)) {
+        if (empty($baseUrl)) {
             Log::info("WhatsApp Mock Send: To $to, Message: $message");
             return ['success' => true, 'mock' => true];
         }
 
         try {
-            $response = Http::withToken($this->token)
-                ->post($this->baseUrl . '/messages', [ // Assuming standard endpoint, adjustable
+            $response = Http::withToken($token)
+                ->post($baseUrl . '/messages', [ // Assuming standard endpoint, adjustable
                     'messaging_product' => 'whatsapp',
                     'to' => $to,
                     'type' => 'text',

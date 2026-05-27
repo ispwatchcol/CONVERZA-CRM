@@ -43,11 +43,18 @@ class SettingsController extends Controller
         $tenant = app('tenant');
 
         $data = $request->validate([
-            'wa_phone_number_id'     => ['nullable', 'string', 'max:64'],
+            // Único entre tenants: el webhook enruta por phone_number_id, dos
+            // tenants con el mismo ID generarían colisiones de mensajes.
+            'wa_phone_number_id'     => [
+                'nullable', 'string', 'max:64',
+                Rule::unique('tenants', 'wa_phone_number_id')->ignore($tenant->id),
+            ],
             'wa_business_account_id' => ['nullable', 'string', 'max:64'],
             'wa_verify_token'        => ['nullable', 'string', 'max:120'],
             'wa_access_token'        => ['nullable', 'string'],
             'wa_app_secret'          => ['nullable', 'string'],
+        ], [
+            'wa_phone_number_id.unique' => 'Este Phone Number ID ya está en uso por otro tenant.',
         ]);
 
         // Tokens en blanco = "no tocar el que ya está guardado".
