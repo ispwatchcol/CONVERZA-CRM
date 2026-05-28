@@ -90,6 +90,7 @@ class ChatController extends Controller
         if ($activeConversation) {
             $activeChat = Message::where('conversation_id', $activeConversation->id)
                 ->where('tenant_id', $tenantId)
+                ->with('sender:id,name')
                 ->orderBy('created_at')
                 ->get()
                 ->map(fn (Message $msg) => [
@@ -101,6 +102,7 @@ class ChatController extends Controller
                     'media_url'      => $msg->media_path ? route('media.serve', ['path' => $msg->media_path]) : null,
                     'media_mime'     => $msg->media_mime,
                     'media_filename' => $msg->media_filename,
+                    'sender_name'    => $msg->sender?->name,
                     'created_at'     => $msg->created_at->toIso8601String(),
                 ])
                 ->all();
@@ -204,6 +206,7 @@ class ChatController extends Controller
                 'contact_id'      => $contact->id,
                 'body'            => $messageContent,
                 'status'          => 'sent',
+                'sent_by_user_id' => $request->user()->id,
                 'wa_message_id'   => $result['data']['messages'][0]['id'] ?? null,
             ]);
 
@@ -312,6 +315,7 @@ class ChatController extends Controller
             'media_mime'      => $mimeType,
             'media_filename'  => $origName,
             'caption'         => $caption,
+            'sent_by_user_id' => $request->user()->id,
             'wa_message_id'   => $result['data']['messages'][0]['id'] ?? null,
         ]);
 
@@ -335,9 +339,47 @@ class ChatController extends Controller
             ],
         ]);
 
-        $conversation->update(['assigned_to' => $validated['staff_member_id'] ?? null]);
+        $newStaffId = $validated['staff_member_id'] ?? null;
+        $previousStaffId = $conversation->assigned_to;
 
-        return back()->with('success', $validated['staff_member_id'] ? 'Conversación asignada.' : 'Asignación quitada.');
+        // Sin cambios reales: no registramos nada.
+        if ($newStaffId === $previousStaffId) {
+            return back();
+        }
+
+        $conversation->update(['assigned_to' => $newStaffId]);
+
+        // Registrar la transferencia como mensaje de sistema dentro del chat,
+        // para que quede el rastro de quién pasó la conversación a quién.
+        $actorName = $request->user()->name;
+        $previousName = $previousStaffId
+            ? StaffMember::with('user:id,name')->find($previousStaffId)?->user?->name
+            : null;
+        $newName = $newStaffId
+            ? StaffMember::with('user:id,name')->find($newStaffId)?->user?->name
+            : null;
+
+        if ($newStaffId === null) {
+            $body = "🔄 {$actorName} quitó la asignación de " . ($previousName ?? 'la conversación') . '.';
+        } elseif ($previousName) {
+            $body = "🔄 {$actorName} transfirió la conversación de {$previousName} a {$newName}.";
+        } else {
+            $body = "🔄 {$actorName} asignó la conversación a {$newName}.";
+        }
+
+        Message::create([
+            'tenant_id'       => $tenantId,
+            'conversation_id' => $conversation->id,
+            'contact_id'      => $conversation->contact_id,
+            'body'            => $body,
+            'status'          => 'sent',
+            'type'            => 'system',
+            'sent_by_user_id' => $request->user()->id,
+        ]);
+
+        $conversation->touch();
+
+        return back()->with('success', $newStaffId ? 'Conversación asignada.' : 'Asignación quitada.');
     }
 
     /**

@@ -669,10 +669,18 @@ onUnmounted(() => window.removeEventListener('resize', handleResize));
 
                     <!-- Messages -->
                     <div ref="messagesContainer" class="flex-1 overflow-y-auto p-4 space-y-2 z-0 relative">
-                        <div v-for="msg in activeChat" :key="msg.id" class="flex animate-fade-in" :class="{ 'justify-end': msg.status === 'sent' }">
+                        <div v-for="msg in activeChat" :key="msg.id" class="flex animate-fade-in"
+                             :class="{ 'justify-end': msg.status === 'sent' && msg.type !== 'system', 'justify-center': msg.type === 'system' }">
+
+                            <!-- ─── Sistema (transferencias / eventos) ──────────────── -->
+                            <div v-if="msg.type === 'system'" class="max-w-[85%] my-1">
+                                <div class="inline-block rounded-lg bg-black/5 px-3 py-1 text-[11px] text-gray-500 text-center">
+                                    {{ msg.body }}
+                                </div>
+                            </div>
 
                             <!-- ─── Sticker (badge mínimo, no se descarga) ──────────── -->
-                            <div v-if="msg.type === 'sticker'" class="max-w-[75%] flex flex-col" :class="msg.status === 'sent' ? 'items-end' : 'items-start'">
+                            <div v-else-if="msg.type === 'sticker'" class="max-w-[75%] flex flex-col" :class="msg.status === 'sent' ? 'items-end' : 'items-start'">
                                 <div class="inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 shadow-sm text-xs text-gray-500 italic"
                                      :class="msg.status === 'sent' ? 'bg-[#d9fdd3]' : 'bg-white'">
                                     <span>🎭</span><span>Sticker</span>
@@ -689,6 +697,9 @@ onUnmounted(() => window.removeEventListener('resize', handleResize));
                                 class="max-w-[75%] rounded-2xl shadow-sm overflow-hidden"
                                 :class="msg.status === 'sent' ? 'bg-[#d9fdd3] rounded-tr-sm' : 'bg-white rounded-tl-sm'"
                             >
+                                <p v-if="msg.status === 'sent' && msg.sender_name" class="px-3 pt-1.5 text-[11px] font-semibold text-emerald-600">
+                                    {{ msg.sender_name }}
+                                </p>
                                 <!-- Imagen disponible y sin error de carga -->
                                 <div v-if="msg.media_url && !imgErrors[msg.id]" class="relative p-1">
                                     <a :href="msg.media_url" target="_blank" rel="noopener noreferrer" class="block">
@@ -732,6 +743,9 @@ onUnmounted(() => window.removeEventListener('resize', handleResize));
                                 class="max-w-[75%] rounded-2xl shadow-sm overflow-hidden"
                                 :class="msg.status === 'sent' ? 'bg-[#d9fdd3] rounded-tr-sm' : 'bg-white rounded-tl-sm'"
                             >
+                                <p v-if="msg.status === 'sent' && msg.sender_name" class="px-3 pt-1.5 text-[11px] font-semibold text-emerald-600">
+                                    {{ msg.sender_name }}
+                                </p>
                                 <a
                                     v-if="msg.media_url"
                                     :href="msg.media_url"
@@ -769,6 +783,11 @@ onUnmounted(() => window.removeEventListener('resize', handleResize));
                                 class="max-w-[75%] rounded-2xl shadow-sm overflow-hidden"
                                 :class="msg.status === 'sent' ? 'bg-[#d9fdd3] rounded-tr-sm' : 'bg-white rounded-tl-sm'"
                             >
+                                <!-- Nombre del asesor que envió (solo mensajes salientes) -->
+                                <p v-if="msg.status === 'sent' && msg.sender_name" class="px-4 pt-1.5 text-[11px] font-semibold text-emerald-600">
+                                    {{ msg.sender_name }}
+                                </p>
+
                                 <template v-if="msg.type === 'audio'">
                                     <!-- Hidden native audio element -->
                                     <audio
