@@ -67,6 +67,12 @@ class TemplateController extends Controller
 
         $validated = $this->validateData($request, $tenantId);
 
+        // `variable_examples` no es columna de BD: son las muestras que Meta EXIGE
+        // para cada {{n}} del body (ej. {{1}} => "Jhon"). Se mandan a Meta pero no
+        // se persisten localmente, así que se sacan del array antes de crear.
+        $examples = $this->normalizeExamples($validated['variable_examples'] ?? []);
+        unset($validated['variable_examples']);
+
         // 1) Guardar SIEMPRE primero el registro local (pending, sin meta_id).
         //    Si este insert falla, Meta nunca se llama → no quedan plantillas huérfanas
         //    en Meta que después bloqueen reintentos por nombre duplicado.
@@ -82,8 +88,19 @@ class TemplateController extends Controller
             return back()->with('success', 'Plantilla guardada localmente. Configura WhatsApp (Business Account ID + token) en Configuración para enviarla a revisión de Meta.');
         }
 
-        // 3) Enviar a revisión a Meta (crear vía Graph API = revisión automática).
-        $result = $this->submitTemplateToMeta($tenant, $validated);
+        // 3) Meta EXIGE una muestra por cada variable {{n}} del body o rechaza.
+        //    Validamos antes de llamar a Meta y revertimos el borrador local para
+        //    poder reintentar sin chocar por nombre duplicado.
+        $missing = $this->missingVariableExamples($validated['body'], $examples);
+        if ($missing) {
+            $template->delete();
+            return back()->withErrors([
+                'meta' => 'Faltan muestras para las variables: ' . implode(', ', array_map(fn ($n) => "{{{$n}}}", $missing)) . '. Meta exige un valor de ejemplo por cada variable.',
+            ]);
+        }
+
+        // 4) Enviar a revisión a Meta (crear vía Graph API = revisión automática).
+        $result = $this->submitTemplateToMeta($tenant, $validated, $examples);
 
         if (! $result['ok']) {
             // Revertir el borrador local para poder reintentar sin chocar por nombre
@@ -92,7 +109,7 @@ class TemplateController extends Controller
             return back()->withErrors(['meta' => $result['error']]);
         }
 
-        // 4) Persistir el meta_id y el estado real que devolvió Meta.
+        // 5) Persistir el meta_id y el estado real que devolvió Meta.
         $template->update([
             'meta_id'        => $result['meta_id'],
             'status'         => $result['status'],
@@ -115,6 +132,7 @@ class TemplateController extends Controller
         }
 
         $validated = $this->validateData($request, $template->tenant_id, ignoreId: $template->id);
+        unset($validated['variable_examples']); // no es columna; solo se usa al enviar a Meta
 
         $template->update($validated);
 
@@ -236,9 +254,10 @@ class TemplateController extends Controller
      *
      * @param  \App\Models\Tenant  $tenant
      * @param  array<string, mixed>  $data  Datos ya validados (name, category, language, body).
+     * @param  array<int, string>  $examples  Muestra por número de variable ({{1}} => valor).
      * @return array{ok: bool, meta_id?: string, status?: string, error?: string}
      */
-    private function submitTemplateToMeta($tenant, array $data): array
+    private function submitTemplateToMeta($tenant, array $data, array $examples = []): array
     {
         try {
             $accessToken = $tenant->wa_access_token; // dispara cast 'encrypted'
@@ -253,7 +272,7 @@ class TemplateController extends Controller
             'name'       => $data['name'],
             'language'   => $data['language'],
             'category'   => strtoupper($data['category']),
-            'components' => $this->buildMetaComponents($data),
+            'components' => $this->buildMetaComponents($data, $examples),
         ];
 
         try {
@@ -285,9 +304,10 @@ class TemplateController extends Controller
      * El header/footer/botón se mandan como estáticos (sin variables).
      *
      * @param  array<string, mixed>  $data  name, body, header_text, footer_text, button_text, button_url
+     * @param  array<int, string>  $examples  Muestra real por número de variable ({{1}} => valor).
      * @return array<int, array<string, mixed>>
      */
-    private function buildMetaComponents(array $data): array
+    private function buildMetaComponents(array $data, array $examples = []): array
     {
         $components = [];
 
@@ -305,11 +325,15 @@ class TemplateController extends Controller
         $varCount = $matches[1] ? max(array_map('intval', $matches[1])) : 0;
 
         if ($varCount > 0) {
-            $examples = [];
+            // Meta espera las muestras EN ORDEN ({{1}}, {{2}}, …). Usamos el valor
+            // real que escribió el usuario; si por alguna razón viene vacío, caemos
+            // a un placeholder para no romper el envío.
+            $bodyExamples = [];
             for ($i = 1; $i <= $varCount; $i++) {
-                $examples[] = 'Ejemplo ' . $i;
+                $value = trim((string) ($examples[$i] ?? ''));
+                $bodyExamples[] = $value !== '' ? $value : 'Ejemplo ' . $i;
             }
-            $body['example'] = ['body_text' => [$examples]];
+            $body['example'] = ['body_text' => [$bodyExamples]];
         }
 
         $components[] = $body;
@@ -366,6 +390,9 @@ class TemplateController extends Controller
             'button_text' => ['nullable', 'string', 'max:25', 'required_with:button_url'],
             'button_url'  => ['nullable', 'url', 'max:2000', 'required_with:button_text'],
             'team_label'  => ['nullable', 'string', 'max:60'],
+            // Muestras por variable {{n}}: objeto { "1": "Jhon", "2": "$2541", … }.
+            'variable_examples'   => ['nullable', 'array'],
+            'variable_examples.*' => ['nullable', 'string', 'max:1024'],
         ], [
             'name.regex'           => 'El nombre solo puede tener minúsculas, números y guión bajo (formato Meta).',
             'name.unique'          => 'Ya existe una plantilla con este nombre en el mismo idioma.',
@@ -377,6 +404,43 @@ class TemplateController extends Controller
             'button_url.required_with'  => 'Si pones un texto de botón, necesita un enlace (URL).',
             'button_url.url'       => 'El enlace del botón debe ser una URL válida (https://…).',
         ]);
+    }
+
+    /**
+     * Normaliza las muestras de variables a un mapa { numeroVariable => valor }.
+     * El frontend manda un objeto con claves string ("1", "2", …); aquí las
+     * pasamos a int y descartamos vacíos para no enviar muestras en blanco a Meta.
+     *
+     * @param  array<int|string, mixed>  $raw
+     * @return array<int, string>
+     */
+    private function normalizeExamples(array $raw): array
+    {
+        $out = [];
+        foreach ($raw as $key => $value) {
+            $n = (int) $key;
+            $value = trim((string) $value);
+            if ($n > 0 && $value !== '') {
+                $out[$n] = $value;
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * Devuelve los números de variable {{n}} del body que NO tienen muestra.
+     * Meta rechaza la plantilla si falta alguna, así que avisamos antes de enviar.
+     *
+     * @param  array<int, string>  $examples
+     * @return array<int, int>
+     */
+    private function missingVariableExamples(string $body, array $examples): array
+    {
+        preg_match_all('/\{\{(\d+)\}\}/', $body, $matches);
+        $vars = array_unique(array_map('intval', $matches[1] ?? []));
+        sort($vars);
+
+        return array_values(array_filter($vars, fn ($n) => ! isset($examples[$n])));
     }
 
     /**
