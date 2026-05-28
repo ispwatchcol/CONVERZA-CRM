@@ -75,7 +75,19 @@
       "Bash(php -l app/Services/WhatsAppService.php)",
       "Bash(php -l app/Http/Controllers/WhatsAppController.php)",
       "Bash(php -l app/Jobs/ProcessIncomingWhatsAppMessage.php)",
-      "Bash(php -l database/migrations/2026_05_27_000001_add_wa_indices_to_tenants.php)"
+      "Bash(php -l database/migrations/2026_05_27_000001_add_wa_indices_to_tenants.php)",
+      "Read(//c/Users/User/Desktop/GITHUB/ISPWatch/app/Models/**)",
+      "Read(//c/Users/User/Desktop/GITHUB/ISPWatch/app/**)",
+      "Bash(php -l app/Models/PaymentReminderLog.php)",
+      "Bash(php -l app/Console/Commands/SendPaymentReminders.php)",
+      "Bash(php -l database/migrations/2026_05_28_000001_create_payment_reminder_logs_table.php)",
+      "Bash(php -l config/services.php)",
+      "Bash(php -l routes/console.php)",
+      "Bash(php -l app/Models/Template.php)",
+      "Bash(php -l database/migrations/2026_05_28_000002_add_header_footer_button_to_templates.php)",
+      "Bash(DB_SEARCH_PATH=converza_dev php artisan migrate:status)",
+      "Bash(DB_SEARCH_PATH=converza_dev php artisan migrate --force)",
+      "PowerShell(php -l app\\\\Http\\\\Controllers\\\\TemplateController.php)"
     ],
     "additionalDirectories": [
       "C:\\Users\\User\\Desktop\\GITHUB\\ISPWatch-CRM-Whastapp",

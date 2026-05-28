@@ -23,6 +23,7 @@ class Message extends Model
         'media_mime',
         'media_filename',
         'caption',
+        'sent_by_user_id',
     ];
 
     public function conversation(): BelongsTo
@@ -33,5 +34,14 @@ class Message extends Model
     public function contact(): BelongsTo
     {
         return $this->belongsTo(Contact::class);
+    }
+
+    /**
+     * Asesor (usuario) que envió un mensaje saliente. Null en mensajes
+     * entrantes del cliente o automáticos (plantillas / recordatorios).
+     */
+    public function sender(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'sent_by_user_id');
     }
 }

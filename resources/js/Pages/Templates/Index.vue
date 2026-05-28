@@ -1,7 +1,7 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
 import { useForm, router, Head, Link } from '@inertiajs/vue3';
-import { ref, computed } from 'vue';
+import { ref, computed, watch } from 'vue';
 
 const props = defineProps({
     templates: { type: Array, default: () => [] },
@@ -55,15 +55,48 @@ const form = useForm({
     button_text: '',
     button_url: '',
     team_label: '',
+    // Muestras por variable: { 1: 'Jhon', 2: '$2541', 3: 'url.com' } — Meta las exige.
+    variable_examples: {},
 });
 
 const bodyChars = computed(() => (form.body || '').length);
 const bodyOverflow = computed(() => bodyChars.value > 1024);
 
-// Detecta variables {{1}}, {{2}}, etc. en el body
-const detectedVariables = computed(() => {
-    const matches = (form.body || '').match(/\{\{\s*\d+\s*\}\}/g) || [];
-    return [...new Set(matches)].sort();
+// Números de variable {{1}}, {{2}}… presentes en el body, únicos y ordenados.
+const variableNumbers = computed(() => {
+    const nums = [...(form.body || '').matchAll(/\{\{\s*(\d+)\s*\}\}/g)].map(m => parseInt(m[1], 10));
+    return [...new Set(nums)].sort((a, b) => a - b);
+});
+
+// Mantiene form.variable_examples alineado con las variables del body:
+// agrega las nuevas (vacías) y descarta las que ya no existen.
+watch(variableNumbers, (nums) => {
+    const next = {};
+    nums.forEach((n) => { next[n] = form.variable_examples?.[n] ?? ''; });
+    form.variable_examples = next;
+});
+
+// ¿Falta alguna muestra? Solo bloquea cuando hay que enviar a Meta.
+const examplesIncomplete = computed(() =>
+    variableNumbers.value.some(n => !String(form.variable_examples[n] ?? '').trim())
+);
+
+// Las muestras solo son obligatorias al crear y enviar a revisión de Meta.
+const needsExamples = computed(() =>
+    !editing.value && props.metaConfigured && examplesIncomplete.value
+);
+
+// Etiqueta "{{n}}" como string — se construye en JS para no confundir al
+// compilador de Vue, que interpreta los {{ }} literales como interpolación.
+const varLabel = (n) => '{' + '{' + n + '}' + '}';
+
+// Sustituye cada {{n}} por su muestra para una vista previa del mensaje final.
+const examplePreview = computed(() => {
+    if (!form.body) return '';
+    return form.body.replace(/\{\{\s*(\d+)\s*\}\}/g, (_, n) => {
+        const val = String(form.variable_examples[parseInt(n, 10)] ?? '').trim();
+        return val || `{{${n}}}`;
+    });
 });
 
 function openCreate() {
@@ -85,6 +118,7 @@ function openEdit(t) {
     form.button_text = t.button_text || '';
     form.button_url = t.button_url || '';
     form.team_label = t.team_label || '';
+    form.variable_examples = {}; // el watch las repuebla según las {{n}} del body
     showModal.value = true;
     showDetail.value = false;
 }
@@ -491,13 +525,30 @@ const placeholderExample = 'Hola {{1}}, tu factura {{2}} está vencida. Paga aho
                                 <p v-else class="text-[10px] text-gray-400 mt-1">Usa <code class="font-mono">{{ varExample }}</code> para variables que se reemplazan al enviar.</p>
                             </div>
 
-                            <!-- Detección automática de variables -->
-                            <div v-if="detectedVariables.length" class="bg-amber-50 border border-amber-100 rounded-xl p-2.5">
-                                <p class="text-[10px] text-amber-800 font-semibold uppercase tracking-wider mb-1">Variables detectadas</p>
-                                <div class="flex flex-wrap gap-1">
-                                    <span v-for="v in detectedVariables" :key="v" class="px-2 py-0.5 bg-white border border-amber-200 rounded font-mono text-[11px] text-amber-800">
-                                        {{ v }}
+                            <!-- Muestras de variables: Meta exige un ejemplo por cada {{n}} -->
+                            <div v-if="variableNumbers.length" class="bg-amber-50 border border-amber-100 rounded-xl p-3 space-y-2.5">
+                                <div>
+                                    <p class="text-[11px] text-amber-900 font-semibold uppercase tracking-wider">Muestras de variables</p>
+                                    <p class="text-[10px] text-amber-700 mt-0.5">
+                                        Incluye un ejemplo para cada variable para que Meta pueda revisar la plantilla.
+                                        No uses datos reales de clientes.
+                                    </p>
+                                </div>
+
+                                <div v-for="n in variableNumbers" :key="n" class="flex items-center gap-2">
+                                    <span class="shrink-0 px-2 py-1.5 bg-white border border-amber-200 rounded-lg font-mono text-[11px] text-amber-800 w-14 text-center">
+                                        {{ varLabel(n) }}
                                     </span>
+                                    <input v-model="form.variable_examples[n]" type="text" maxlength="1024"
+                                           :placeholder="'Ejemplo para ' + varLabel(n)"
+                                           class="flex-1 px-3 py-1.5 border rounded-lg text-sm bg-white focus:ring-2 focus:ring-accent/30 focus:border-accent"
+                                           :class="form.errors[`variable_examples.${n}`] ? 'border-red-400' : 'border-amber-200'">
+                                </div>
+
+                                <!-- Vista previa con las muestras sustituidas -->
+                                <div class="pt-1">
+                                    <p class="text-[10px] text-amber-700 font-medium mb-1">Así quedaría el mensaje:</p>
+                                    <p class="text-xs text-gray-700 bg-white border border-amber-100 rounded-lg p-2 whitespace-pre-wrap">{{ examplePreview }}</p>
                                 </div>
                             </div>
 
@@ -539,7 +590,9 @@ const placeholderExample = 'Hola {{1}}, tu factura {{2}} está vencida. Paga aho
 
                             <div class="flex justify-end gap-3 pt-3 border-t border-gray-50">
                                 <button type="button" @click="showModal = false" class="px-4 py-2.5 text-sm text-gray-600 hover:bg-gray-100 rounded-xl transition">Cancelar</button>
-                                <button type="submit" :disabled="form.processing || bodyOverflow" class="px-5 py-2.5 bg-accent text-white rounded-xl text-sm font-medium hover:bg-accent-hover transition disabled:opacity-50">
+                                <button type="submit" :disabled="form.processing || bodyOverflow || needsExamples"
+                                        :title="needsExamples ? 'Completa una muestra para cada variable antes de enviar a Meta' : ''"
+                                        class="px-5 py-2.5 bg-accent text-white rounded-xl text-sm font-medium hover:bg-accent-hover transition disabled:opacity-50 disabled:cursor-not-allowed">
                                     {{ form.processing ? 'Guardando…' : (editing ? 'Guardar' : (metaConfigured ? 'Enviar a revisión' : 'Guardar')) }}
                                 </button>
                             </div>
