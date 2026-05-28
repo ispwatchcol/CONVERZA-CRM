@@ -50,6 +50,10 @@ const form = useForm({
     category: 'utility',
     language: 'es_CO',
     body: '',
+    header_text: '',
+    footer_text: '',
+    button_text: '',
+    button_url: '',
     team_label: '',
 });
 
@@ -76,6 +80,10 @@ function openEdit(t) {
     form.category = t.category;
     form.language = t.language || 'es_CO';
     form.body = t.body;
+    form.header_text = t.header_text || '';
+    form.footer_text = t.footer_text || '';
+    form.button_text = t.button_text || '';
+    form.button_url = t.button_url || '';
     form.team_label = t.team_label || '';
     showModal.value = true;
     showDetail.value = false;
@@ -98,18 +106,56 @@ function deleteTemplate(t) {
     const metaMsg = t.meta_id
         ? 'Esta plantilla está sincronizada con Meta. Borrarla solo la quita del mirror local — sigue existiendo en Meta Business hasta que la elimines allá. '
         : '';
-    if (!confirm(`${metaMsg}¿Eliminar "${t.name}"?`)) return;
-    router.delete(route('templates.destroy', t.id), { preserveScroll: true });
+    askConfirm({
+        title: 'Eliminar plantilla',
+        message: `${metaMsg}¿Seguro que quieres eliminar "${t.name}"?`,
+        confirmLabel: 'Eliminar',
+        variant: 'danger',
+        onConfirm: () => router.delete(route('templates.destroy', t.id), { preserveScroll: true }),
+    });
+}
+
+// ── Diálogo de confirmación (reemplaza el confirm() nativo del navegador) ──────
+const confirmDialog = ref({
+    show: false,
+    title: '',
+    message: '',
+    confirmLabel: 'Confirmar',
+    variant: 'accent', // 'accent' | 'danger'
+    onConfirm: null,
+});
+
+function askConfirm(opts) {
+    confirmDialog.value = {
+        show: true,
+        title: opts.title ?? '¿Confirmar?',
+        message: opts.message ?? '',
+        confirmLabel: opts.confirmLabel ?? 'Confirmar',
+        variant: opts.variant ?? 'accent',
+        onConfirm: opts.onConfirm ?? null,
+    };
+}
+
+function acceptConfirm() {
+    const cb = confirmDialog.value.onConfirm;
+    confirmDialog.value.show = false;
+    if (cb) cb();
 }
 
 // ── Sync con Meta ────────────────────────────────────────────────────────────
 const syncing = ref(false);
 function syncWithMeta() {
-    if (!confirm('Se va a consultar a Meta y actualizar tu mirror local de plantillas. ¿Continuar?')) return;
-    syncing.value = true;
-    router.post(route('templates.sync'), {}, {
-        preserveScroll: true,
-        onFinish: () => { syncing.value = false; },
+    askConfirm({
+        title: 'Sincronizar con Meta',
+        message: 'Se consultará a Meta y se actualizará tu mirror local de plantillas. Tus plantillas locales no se eliminan.',
+        confirmLabel: 'Sincronizar',
+        onConfirm: () => {
+            syncing.value = true;
+            router.post(route('templates.sync'), {}, {
+                preserveScroll: true,
+                onFinish: () => { syncing.value = false; },
+            });
+        },
     });
 }
 
@@ -346,7 +392,16 @@ const placeholderExample = 'Hola {{1}}, tu factura {{2}} está vencida. Paga aho
                         <div class="mb-4">
                             <p class="text-[10px] text-gray-500 uppercase tracking-wider font-semibold mb-2">Vista previa</p>
                             <div class="bg-[#d9fdd3] rounded-2xl rounded-tl-sm p-3 max-w-sm border border-gray-100">
+                                <p v-if="selected.header_text" class="text-sm font-semibold text-gray-900 mb-1">{{ selected.header_text }}</p>
                                 <p class="text-sm text-gray-900 whitespace-pre-wrap" v-html="renderBodyWithVars(selected.body)"></p>
+                                <p v-if="selected.footer_text" class="text-[11px] text-gray-500 mt-1">{{ selected.footer_text }}</p>
+                            </div>
+                            <div v-if="selected.button_text" class="max-w-sm mt-1">
+                                <a :href="selected.button_url" target="_blank" rel="noopener"
+                                   class="flex items-center justify-center gap-1.5 bg-white border border-gray-100 rounded-2xl rounded-tl-sm py-2 text-sm text-[#027eb5] font-medium hover:bg-gray-50 transition">
+                                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"/></svg>
+                                    {{ selected.button_text }}
+                                </a>
                             </div>
                             <p class="text-[10px] text-gray-400 mt-2">Las variables resaltadas en ámbar se reemplazarán al enviar.</p>
                         </div>
@@ -417,6 +472,14 @@ const placeholderExample = 'Hola {{1}}, tu factura {{2}} está vencida. Paga aho
                             </div>
 
                             <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Encabezado <span class="text-gray-400 font-normal">(opcional, máx 60)</span></label>
+                                <input v-model="form.header_text" type="text" maxlength="60" placeholder="Ej. Recordatorio de pago"
+                                       class="w-full px-4 py-2.5 border rounded-xl text-sm focus:ring-2 focus:ring-accent/30 focus:border-accent"
+                                       :class="form.errors.header_text ? 'border-red-400' : 'border-gray-200'">
+                                <p v-if="form.errors.header_text" class="text-red-500 text-xs mt-1">{{ form.errors.header_text }}</p>
+                            </div>
+
+                            <div>
                                 <div class="flex items-center justify-between mb-1">
                                     <label class="block text-sm font-medium text-gray-700">Contenido (body) <span class="text-red-500">*</span></label>
                                     <span class="text-[10px] tabular-nums" :class="bodyOverflow ? 'text-red-500 font-semibold' : 'text-gray-400'">{{ bodyChars }} / 1024</span>
@@ -439,17 +502,84 @@ const placeholderExample = 'Hola {{1}}, tu factura {{2}} está vencida. Paga aho
                             </div>
 
                             <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Pie de página <span class="text-gray-400 font-normal">(opcional, máx 60)</span></label>
+                                <input v-model="form.footer_text" type="text" maxlength="60" placeholder="Ej. Si ya pagaste, ignora este mensaje."
+                                       class="w-full px-4 py-2.5 border rounded-xl text-sm focus:ring-2 focus:ring-accent/30 focus:border-accent"
+                                       :class="form.errors.footer_text ? 'border-red-400' : 'border-gray-200'">
+                                <p v-if="form.errors.footer_text" class="text-red-500 text-xs mt-1">{{ form.errors.footer_text }}</p>
+                            </div>
+
+                            <!-- Botón de URL (ej. link de pago) — deshabilitado por ahora -->
+                            <div class="opacity-60">
+                                <label class="block text-sm font-medium text-gray-500 mb-1">Botón de enlace <span class="text-gray-400 font-normal">(próximamente)</span></label>
+                                <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                    <input disabled type="text" placeholder="Texto del botón (ej. Pagar)"
+                                           class="sm:col-span-1 w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm bg-gray-50 cursor-not-allowed">
+                                    <input disabled type="url" placeholder="https://tu-portal.com/pagar"
+                                           class="sm:col-span-2 w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm bg-gray-50 cursor-not-allowed">
+                                </div>
+                                <p class="text-[11px] text-gray-400 mt-1">El botón con link de pago se habilitará cuando esté listo el portal de pago.</p>
+                            </div>
+
+                            <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-1">Etiqueta de equipo <span class="text-gray-400 font-normal">(opcional)</span></label>
                                 <input v-model="form.team_label" type="text" placeholder="Soporte, Cobranza..." class="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-accent/30 focus:border-accent">
                             </div>
 
+                            <!-- Error devuelto por Meta al enviar a revisión -->
+                            <div v-if="form.errors.meta" class="bg-red-50 border border-red-200 rounded-xl p-3 text-xs text-red-700">
+                                {{ form.errors.meta }}
+                            </div>
+
+                            <!-- Aviso del flujo de envío a revisión -->
+                            <p v-if="!editing" class="text-[11px]" :class="metaConfigured ? 'text-gray-500' : 'text-amber-700'">
+                                <template v-if="metaConfigured">Al guardar, la plantilla se envía a <strong>revisión de Meta</strong> y queda en estado pendiente hasta su aprobación.</template>
+                                <template v-else>WhatsApp no está configurado: la plantilla se guardará solo localmente y NO se enviará a Meta.</template>
+                            </p>
+
                             <div class="flex justify-end gap-3 pt-3 border-t border-gray-50">
                                 <button type="button" @click="showModal = false" class="px-4 py-2.5 text-sm text-gray-600 hover:bg-gray-100 rounded-xl transition">Cancelar</button>
                                 <button type="submit" :disabled="form.processing || bodyOverflow" class="px-5 py-2.5 bg-accent text-white rounded-xl text-sm font-medium hover:bg-accent-hover transition disabled:opacity-50">
-                                    {{ form.processing ? 'Guardando…' : 'Guardar' }}
+                                    {{ form.processing ? 'Guardando…' : (editing ? 'Guardar' : (metaConfigured ? 'Enviar a revisión' : 'Guardar')) }}
                                 </button>
                             </div>
                         </form>
+                    </div>
+                </div>
+            </div>
+        </Teleport>
+
+        <!-- Diálogo de confirmación -->
+        <Teleport to="body">
+            <div v-if="confirmDialog.show" class="fixed inset-0 z-[80] flex items-center justify-center p-4">
+                <div class="fixed inset-0 bg-black/50" @click="confirmDialog.show = false"></div>
+                <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-sm animate-scale-in">
+                    <div class="p-6">
+                        <div class="flex items-start gap-3">
+                            <div class="shrink-0 w-10 h-10 rounded-full flex items-center justify-center"
+                                 :class="confirmDialog.variant === 'danger' ? 'bg-red-100' : 'bg-accent/10'">
+                                <svg v-if="confirmDialog.variant === 'danger'" class="w-5 h-5 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z"/>
+                                </svg>
+                                <svg v-else class="w-5 h-5 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/>
+                                </svg>
+                            </div>
+                            <div class="min-w-0 flex-1">
+                                <h3 class="text-base font-bold text-gray-900">{{ confirmDialog.title }}</h3>
+                                <p class="text-sm text-gray-600 mt-1">{{ confirmDialog.message }}</p>
+                            </div>
+                        </div>
+                        <div class="flex justify-end gap-2 mt-5">
+                            <button @click="confirmDialog.show = false" class="px-4 py-2.5 text-sm text-gray-600 hover:bg-gray-100 rounded-xl transition">
+                                Cancelar
+                            </button>
+                            <button @click="acceptConfirm"
+                                    class="px-5 py-2.5 text-sm font-medium text-white rounded-xl transition"
+                                    :class="confirmDialog.variant === 'danger' ? 'bg-red-600 hover:bg-red-700' : 'bg-accent hover:bg-accent-hover'">
+                                {{ confirmDialog.confirmLabel }}
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>

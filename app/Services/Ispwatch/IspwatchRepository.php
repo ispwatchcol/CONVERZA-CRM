@@ -202,6 +202,77 @@ class IspwatchRepository
     }
 
     /**
+     * Clientes con facturas VENCIDAS de un tenant cuyo router tenga el envío
+     * por WhatsApp habilitado. Pensado para el batch de recordatorios.
+     *
+     * Respeta la config del router en ispwatch (tabla `billing` vía
+     * router.billing_router_id → customer_profile.router_id):
+     *   - `payment_reminder_enabled` = true   (toggle "Recordatorio de pago")
+     *   - `notification_type` ∈ {whatsapp, both}  (método de envío)
+     *   - `customer_profile.status` = true     (cliente activo)
+     *
+     * "Vencida" = `balance_due > 0`, `due_date <= hoy`, status no liquidado.
+     * NO aplica el día-del-mes de `billing.payment_reminder` a propósito: ese
+     * campo sirve para recordatorios PRE-vencimiento; aquí el filtro es la
+     * fecha de vencimiento. La idempotencia (no reenviar) la maneja Converza
+     * en `payment_reminder_logs`, porque NO podemos escribir en ispwatch.
+     *
+     * Sin caché: es un job batch y la frescura importa.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function overdueRemindersForTenant(int $ispwatchTenantId): array
+    {
+        $today = now()->toDateString();
+
+        $rows = \DB::connection('ispwatch')
+            ->table('invoices as i')
+            ->join('customer_profile as cp', 'cp.user_id', '=', 'i.customer_id')
+            ->join('users as u', 'u.id', '=', 'i.customer_id')
+            ->join('router as r', 'r.id', '=', 'cp.router_id')
+            ->join('billing as b', 'b.id', '=', 'r.billing_router_id')
+            ->where('i.tenant_id', $ispwatchTenantId)
+            ->where('i.balance_due', '>', 0)
+            ->whereNotIn('i.status', ['paid', 'void', 'cancelled'])
+            ->whereDate('i.due_date', '<=', $today)
+            ->where('b.payment_reminder_enabled', true)
+            ->whereIn('b.notification_type', ['whatsapp', 'both'])
+            ->where('cp.status', true)
+            ->orderBy('i.due_date')
+            ->get([
+                'i.id as invoice_id',
+                'i.number as invoice_number',
+                'i.total',
+                'i.balance_due',
+                'i.currency',
+                'i.due_date',
+                'i.period_start',
+                'i.status',
+                'i.customer_id as customer_user_id',
+                'u.tel as phone',
+                'u.name as user_name',
+                'cp.name as cp_name',
+                'cp.last_name as cp_last_name',
+                'b.notification_type',
+            ]);
+
+        return $rows->map(fn ($r) => [
+            'invoice_id'        => (int) $r->invoice_id,
+            'invoice_number'    => $r->invoice_number,
+            'total'             => (string) $r->total,
+            'balance_due'       => (string) $r->balance_due,
+            'currency'          => $r->currency,
+            'due_date'          => $r->due_date,
+            'period_start'      => $r->period_start,
+            'status'            => $r->status,
+            'customer_user_id'  => (int) $r->customer_user_id,
+            'phone'             => $r->phone,
+            'customer_name'     => trim(($r->cp_name ?: $r->user_name) . ' ' . ($r->cp_last_name ?? '')) ?: 'Cliente',
+            'notification_type' => $r->notification_type,
+        ])->all();
+    }
+
+    /**
      * Quita todo lo que no sea dígito y trimea el prefijo país `57` si está
      * presente, devolviendo el número en formato local de 10 dígitos.
      * Retorna null si el resultado no es un teléfono creíble (<10 dígitos).
