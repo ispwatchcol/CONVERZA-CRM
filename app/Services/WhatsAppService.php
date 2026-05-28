@@ -445,6 +445,77 @@ class WhatsAppService
     }
 
     /**
+     * Send an approved WhatsApp template message (business-initiated).
+     *
+     * Las plantillas son OBLIGATORIAS para mensajes iniciados por el negocio
+     * fuera de la ventana de 24h (ej. recordatorios de pago). El texto libre
+     * (sendMessage) solo funciona dentro de esa ventana.
+     *
+     * @param string                    $to         Número en formato internacional sin '+', ej. 573001234567.
+     * @param string                    $template   Nombre EXACTO de la plantilla aprobada en Meta.
+     * @param string                    $language   Código de idioma EXACTO de la plantilla (ej. 'es_CO', 'es').
+     * @param array<int, string>        $bodyParams Variables {{1}}, {{2}}, ... del BODY, en orden.
+     * @param array<int, array<string,mixed>> $extraComponents Componentes extra opcionales (header, buttons).
+     */
+    public function sendTemplate(
+        string $to,
+        string $template,
+        string $language,
+        array $bodyParams = [],
+        array $extraComponents = [],
+    ): array {
+        $baseUrl = $this->baseUrl();
+        $token   = $this->token();
+
+        if (empty($baseUrl)) {
+            Log::info("WhatsApp Mock sendTemplate: To $to, Template: $template ($language)", $bodyParams);
+            return ['success' => true, 'mock' => true];
+        }
+
+        $components = $extraComponents;
+
+        if ($bodyParams !== []) {
+            $components[] = [
+                'type'       => 'body',
+                'parameters' => array_map(
+                    fn (string $value) => ['type' => 'text', 'text' => $value],
+                    array_values($bodyParams),
+                ),
+            ];
+        }
+
+        $template = [
+            'name'     => $template,
+            'language' => ['code' => $language],
+        ];
+
+        if ($components !== []) {
+            $template['components'] = $components;
+        }
+
+        try {
+            $response = Http::withToken($token)
+                ->post($baseUrl . '/messages', [
+                    'messaging_product' => 'whatsapp',
+                    'recipient_type'    => 'individual',
+                    'to'                => $to,
+                    'type'              => 'template',
+                    'template'          => $template,
+                ]);
+
+            if ($response->successful()) {
+                return ['success' => true, 'data' => $response->json()];
+            }
+
+            Log::error('WhatsApp sendTemplate Error: ' . $response->body());
+            return ['success' => false, 'error' => $response->json('error.message') ?? $response->body()];
+        } catch (\Exception $e) {
+            Log::error('WhatsApp sendTemplate Exception: ' . $e->getMessage());
+            return ['success' => false, 'error' => $e->getMessage()];
+        }
+    }
+
+    /**
      * Send a WhatsApp message.
      *
      * @param string $to The phone number to send to.

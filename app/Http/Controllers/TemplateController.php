@@ -23,6 +23,12 @@ class TemplateController extends Controller
 
     public const CATEGORIES = ['marketing', 'utility', 'authentication'];
 
+    /**
+     * Botón de URL (link de pago) temporalmente deshabilitado: no se envía a Meta
+     * hasta tener listo el portal de pago. Poner en true para reactivarlo.
+     */
+    private const ENABLE_URL_BUTTON = false;
+
     public function index(Request $request)
     {
         $tenantId = app('tenant')->id;
@@ -56,20 +62,44 @@ class TemplateController extends Controller
 
     public function store(Request $request)
     {
-        $tenantId = app('tenant')->id;
+        $tenant   = app('tenant');
+        $tenantId = $tenant->id;
 
         $validated = $this->validateData($request, $tenantId);
 
-        // Status SIEMPRE arranca en 'pending' al crear local.
-        // Meta es quien decide approved/rejected vía sync.
-        Template::create([
+        // 1) Guardar SIEMPRE primero el registro local (pending, sin meta_id).
+        //    Si este insert falla, Meta nunca se llama → no quedan plantillas huérfanas
+        //    en Meta que después bloqueen reintentos por nombre duplicado.
+        $template = Template::create([
             ...$validated,
             'tenant_id' => $tenantId,
             'status'    => 'pending',
             'is_active' => true,
         ]);
 
-        return back()->with('success', 'Plantilla creada (queda en pending hasta sincronizar con Meta).');
+        // 2) Sin credenciales Meta: queda como borrador local hasta configurar WhatsApp.
+        if (! $this->isMetaConfigured()) {
+            return back()->with('success', 'Plantilla guardada localmente. Configura WhatsApp (Business Account ID + token) en Configuración para enviarla a revisión de Meta.');
+        }
+
+        // 3) Enviar a revisión a Meta (crear vía Graph API = revisión automática).
+        $result = $this->submitTemplateToMeta($tenant, $validated);
+
+        if (! $result['ok']) {
+            // Revertir el borrador local para poder reintentar sin chocar por nombre
+            // duplicado. El formulario conserva lo que escribiste (errores Inertia).
+            $template->delete();
+            return back()->withErrors(['meta' => $result['error']]);
+        }
+
+        // 4) Persistir el meta_id y el estado real que devolvió Meta.
+        $template->update([
+            'meta_id'        => $result['meta_id'],
+            'status'         => $result['status'],
+            'last_synced_at' => now(),
+        ]);
+
+        return back()->with('success', "Plantilla enviada a revisión de Meta (estado: {$result['status']}). Usa Sincronizar para actualizar el estado cuando Meta la apruebe.");
     }
 
     public function update(Request $request, Template $template)
@@ -161,7 +191,9 @@ class TemplateController extends Controller
         $updated = 0;
 
         foreach ($remoteTemplates as $remote) {
-            $body = $this->extractBodyFromComponents($remote['components'] ?? []);
+            $components = $remote['components'] ?? [];
+            $body       = $this->extractBodyFromComponents($components);
+            $extras     = $this->extractExtrasFromComponents($components);
 
             $local = Template::firstOrNew([
                 'tenant_id' => $tenant->id,
@@ -175,6 +207,10 @@ class TemplateController extends Controller
                 'category'       => strtolower($remote['category'] ?? 'utility'),
                 'language'       => $remote['language'] ?? 'es_CO',
                 'body'           => $body,
+                'header_text'    => $extras['header_text'],
+                'footer_text'    => $extras['footer_text'],
+                'button_text'    => $extras['button_text'],
+                'button_url'     => $extras['button_url'],
                 'status'         => strtolower($remote['status'] ?? 'pending'),
                 'last_synced_at' => now(),
             ]);
@@ -194,6 +230,107 @@ class TemplateController extends Controller
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Crea la plantilla en Meta vía Graph API, lo que la pone en revisión.
+     *
+     * @param  \App\Models\Tenant  $tenant
+     * @param  array<string, mixed>  $data  Datos ya validados (name, category, language, body).
+     * @return array{ok: bool, meta_id?: string, status?: string, error?: string}
+     */
+    private function submitTemplateToMeta($tenant, array $data): array
+    {
+        try {
+            $accessToken = $tenant->wa_access_token; // dispara cast 'encrypted'
+        } catch (\Illuminate\Contracts\Encryption\DecryptException) {
+            return ['ok' => false, 'error' => 'El Access Token guardado no se puede descifrar. Reemplázalo en Configuración → WhatsApp.'];
+        }
+
+        $version = config('services.whatsapp.graph_version', 'v20.0');
+        $wabaId  = $tenant->wa_business_account_id;
+
+        $payload = [
+            'name'       => $data['name'],
+            'language'   => $data['language'],
+            'category'   => strtoupper($data['category']),
+            'components' => $this->buildMetaComponents($data),
+        ];
+
+        try {
+            $response = Http::withToken($accessToken)
+                ->timeout(15)
+                ->post("https://graph.facebook.com/{$version}/{$wabaId}/message_templates", $payload);
+        } catch (\Throwable $e) {
+            return ['ok' => false, 'error' => 'No se pudo conectar a Meta: ' . $e->getMessage()];
+        }
+
+        if (! $response->successful()) {
+            // Meta devuelve un mensaje legible en error_user_msg cuando rechaza el formato.
+            $msg = $response->json('error.error_user_msg')
+                ?? $response->json('error.message')
+                ?? ('HTTP ' . $response->status());
+            return ['ok' => false, 'error' => 'Meta rechazó la creación: ' . $msg];
+        }
+
+        return [
+            'ok'      => true,
+            'meta_id' => (string) $response->json('id'),
+            'status'  => strtolower($response->json('status') ?? 'pending'),
+        ];
+    }
+
+    /**
+     * Componentes para la API de Meta: HEADER (texto) + BODY + FOOTER + BUTTONS (URL).
+     * Meta EXIGE valores de ejemplo para cada variable {{n}} del BODY o rechaza.
+     * El header/footer/botón se mandan como estáticos (sin variables).
+     *
+     * @param  array<string, mixed>  $data  name, body, header_text, footer_text, button_text, button_url
+     * @return array<int, array<string, mixed>>
+     */
+    private function buildMetaComponents(array $data): array
+    {
+        $components = [];
+
+        if (filled($data['header_text'] ?? null)) {
+            $components[] = [
+                'type'   => 'HEADER',
+                'format' => 'TEXT',
+                'text'   => $data['header_text'],
+            ];
+        }
+
+        $body = ['type' => 'BODY', 'text' => $data['body']];
+
+        preg_match_all('/\{\{(\d+)\}\}/', $data['body'], $matches);
+        $varCount = $matches[1] ? max(array_map('intval', $matches[1])) : 0;
+
+        if ($varCount > 0) {
+            $examples = [];
+            for ($i = 1; $i <= $varCount; $i++) {
+                $examples[] = 'Ejemplo ' . $i;
+            }
+            $body['example'] = ['body_text' => [$examples]];
+        }
+
+        $components[] = $body;
+
+        if (filled($data['footer_text'] ?? null)) {
+            $components[] = ['type' => 'FOOTER', 'text' => $data['footer_text']];
+        }
+
+        if (self::ENABLE_URL_BUTTON && filled($data['button_text'] ?? null) && filled($data['button_url'] ?? null)) {
+            $components[] = [
+                'type'    => 'BUTTONS',
+                'buttons' => [[
+                    'type' => 'URL',
+                    'text' => $data['button_text'],
+                    'url'  => $data['button_url'],
+                ]],
+            ];
+        }
+
+        return $components;
+    }
 
     private function authorizeTenantOwnership(Template $template): void
     {
@@ -221,14 +358,24 @@ class TemplateController extends Controller
                     ->where('language', $request->input('language', 'es_CO'))
                     ->ignore($ignoreId),
             ],
-            'category'   => ['required', Rule::in(self::CATEGORIES)],
-            'language'   => ['required', Rule::in(array_keys(self::LANGUAGES))],
-            'body'       => ['required', 'string', 'max:1024'],
-            'team_label' => ['nullable', 'string', 'max:60'],
+            'category'    => ['required', Rule::in(self::CATEGORIES)],
+            'language'    => ['required', Rule::in(array_keys(self::LANGUAGES))],
+            'body'        => ['required', 'string', 'max:1024'],
+            'header_text' => ['nullable', 'string', 'max:60'],
+            'footer_text' => ['nullable', 'string', 'max:60'],
+            'button_text' => ['nullable', 'string', 'max:25', 'required_with:button_url'],
+            'button_url'  => ['nullable', 'url', 'max:2000', 'required_with:button_text'],
+            'team_label'  => ['nullable', 'string', 'max:60'],
         ], [
-            'name.regex'  => 'El nombre solo puede tener minúsculas, números y guión bajo (formato Meta).',
-            'name.unique' => 'Ya existe una plantilla con este nombre en el mismo idioma.',
-            'body.max'    => 'El cuerpo no puede exceder 1024 caracteres (límite de Meta).',
+            'name.regex'           => 'El nombre solo puede tener minúsculas, números y guión bajo (formato Meta).',
+            'name.unique'          => 'Ya existe una plantilla con este nombre en el mismo idioma.',
+            'body.max'             => 'El cuerpo no puede exceder 1024 caracteres (límite de Meta).',
+            'header_text.max'      => 'El encabezado no puede exceder 60 caracteres (límite de Meta).',
+            'footer_text.max'      => 'El pie no puede exceder 60 caracteres (límite de Meta).',
+            'button_text.max'      => 'El texto del botón no puede exceder 25 caracteres (límite de Meta).',
+            'button_text.required_with' => 'Si pones un enlace, el botón necesita un texto.',
+            'button_url.required_with'  => 'Si pones un texto de botón, necesita un enlace (URL).',
+            'button_url.url'       => 'El enlace del botón debe ser una URL válida (https://…).',
         ]);
     }
 
@@ -246,6 +393,43 @@ class TemplateController extends Controller
             }
         }
         return '';
+    }
+
+    /**
+     * Extrae header (TEXT), footer y el primer botón URL desde los componentes
+     * que devuelve Meta, para mantener el mirror local completo.
+     *
+     * @param  array<int, array<string, mixed>>  $components
+     * @return array{header_text: ?string, footer_text: ?string, button_text: ?string, button_url: ?string}
+     */
+    private function extractExtrasFromComponents(array $components): array
+    {
+        $extras = [
+            'header_text' => null,
+            'footer_text' => null,
+            'button_text' => null,
+            'button_url'  => null,
+        ];
+
+        foreach ($components as $c) {
+            $type = strtoupper($c['type'] ?? '');
+
+            if ($type === 'HEADER' && strtoupper($c['format'] ?? '') === 'TEXT') {
+                $extras['header_text'] = $c['text'] ?? null;
+            } elseif ($type === 'FOOTER') {
+                $extras['footer_text'] = $c['text'] ?? null;
+            } elseif ($type === 'BUTTONS') {
+                foreach ($c['buttons'] ?? [] as $btn) {
+                    if (strtoupper($btn['type'] ?? '') === 'URL') {
+                        $extras['button_text'] = $btn['text'] ?? null;
+                        $extras['button_url']  = $btn['url'] ?? null;
+                        break;
+                    }
+                }
+            }
+        }
+
+        return $extras;
     }
 
     /**

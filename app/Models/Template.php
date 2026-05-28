@@ -11,6 +11,7 @@ class Template extends Model
 
     protected $fillable = [
         'tenant_id', 'name', 'category', 'language', 'body',
+        'header_text', 'footer_text', 'button_text', 'button_url',
         'status', 'meta_id', 'team_label', 'is_active', 'last_synced_at',
     ];
 
