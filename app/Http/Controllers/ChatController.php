@@ -116,31 +116,23 @@ class ChatController extends Controller
             }
         }
 
-        $quickReplies = QuickReply::where('tenant_id', $tenantId)
-            ->where('is_active', true)
-            ->orderBy('category')
-            ->orderBy('title')
-            ->get(['id', 'title', 'body', 'shortcut', 'category']);
+        // Resolución de ispwatch memoizada: una sola vez por petición aunque
+        // la consuman dos props (customer + invoices).
+        $ispwatchData = null;
+        $resolveIspwatch = function () use (&$ispwatchData, $activeConversation) {
+            if ($ispwatchData === null) {
+                $ispwatchData = $this->resolveIspwatchData(
+                    $activeConversation?->contact?->phone,
+                    $activeConversation?->contact?->name,
+                );
+            }
+            return $ispwatchData;
+        };
 
-        [$ispwatchCustomer, $ispwatchInvoices] = $this->resolveIspwatchData(
-            $activeConversation?->contact?->phone,
-            $activeConversation?->contact?->name,
-        );
-
-        $staffMembers = StaffMember::query()
-            ->where('tenant_id', $tenantId)
-            ->where('is_active', true)
-            ->with('user:id,name')
-            ->orderBy('id')
-            ->get()
-            ->map(fn (StaffMember $s) => [
-                'id'      => $s->id,
-                'name'    => $s->user?->name ?? 'Agente',
-                'initial' => mb_substr($s->user?->name ?? '?', 0, 1),
-                'is_me'   => $s->id === $myStaffMember->id,
-            ])
-            ->all();
-
+        // Las props pesadas se entregan como closures: Inertia solo las evalúa
+        // cuando se incluyen en la respuesta. En el polling cada 5s
+        // (only: conversations, activeChat) NO se ejecutan estas consultas
+        // —incluidas las de ispwatch a la BD externa—, solo en la carga completa.
         return Inertia::render('Chat/Index', [
             'conversations'        => $conversations,
             'activeChat'           => $activeChat,
@@ -149,13 +141,33 @@ class ChatController extends Controller
             'activeName'           => $activeConversation?->contact?->name ?: $activeConversation?->contact?->phone,
             'activeStatus'         => $activeConversation?->status,
             'activeAssignedTo'     => $activeAssignedTo,
-            'quickReplies'         => $quickReplies,
-            'ispwatchCustomer'     => $ispwatchCustomer,
-            'ispwatchInvoices'     => $ispwatchInvoices,
-            'staffMembers'         => $staffMembers,
             'myStaffMemberId'      => $myStaffMember->id,
             'filter'               => $filter,
-            'filterCounts'         => $this->filterCounts($tenantId, $myStaffMember->id),
+
+            'quickReplies'         => fn () => QuickReply::where('tenant_id', $tenantId)
+                ->where('is_active', true)
+                ->orderBy('category')
+                ->orderBy('title')
+                ->get(['id', 'title', 'body', 'shortcut', 'category']),
+
+            'ispwatchCustomer'     => fn () => $resolveIspwatch()[0],
+            'ispwatchInvoices'     => fn () => $resolveIspwatch()[1],
+
+            'staffMembers'         => fn () => StaffMember::query()
+                ->where('tenant_id', $tenantId)
+                ->where('is_active', true)
+                ->with('user:id,name')
+                ->orderBy('id')
+                ->get()
+                ->map(fn (StaffMember $s) => [
+                    'id'      => $s->id,
+                    'name'    => $s->user?->name ?? 'Agente',
+                    'initial' => mb_substr($s->user?->name ?? '?', 0, 1),
+                    'is_me'   => $s->id === $myStaffMember->id,
+                ])
+                ->all(),
+
+            'filterCounts'         => fn () => $this->filterCounts($tenantId, $myStaffMember->id),
         ]);
     }
 
@@ -459,14 +471,23 @@ class ChatController extends Controller
      */
     private function filterCounts(int $tenantId, int $myStaffMemberId): array
     {
-        $base = Conversation::query()->where('tenant_id', $tenantId);
+        // Una sola consulta con agregación condicional en lugar de 5 COUNT
+        // separados (clave cuando la BD es remota: 1 ida/vuelta en vez de 5).
+        $row = Conversation::query()
+            ->where('tenant_id', $tenantId)
+            ->selectRaw('COUNT(*) AS all_count')
+            ->selectRaw("COUNT(*) FILTER (WHERE status = 'open') AS open_count")
+            ->selectRaw("COUNT(*) FILTER (WHERE status = 'open' AND assigned_to = ?) AS mine_count", [$myStaffMemberId])
+            ->selectRaw("COUNT(*) FILTER (WHERE status = 'open' AND assigned_to IS NULL) AS unassigned_count")
+            ->selectRaw("COUNT(*) FILTER (WHERE status = 'closed') AS closed_count")
+            ->first();
 
         return [
-            'all'        => (clone $base)->count(),
-            'open'       => (clone $base)->where('status', 'open')->count(),
-            'mine'       => (clone $base)->where('status', 'open')->where('assigned_to', $myStaffMemberId)->count(),
-            'unassigned' => (clone $base)->where('status', 'open')->whereNull('assigned_to')->count(),
-            'closed'     => (clone $base)->where('status', 'closed')->count(),
+            'all'        => (int) $row->all_count,
+            'open'       => (int) $row->open_count,
+            'mine'       => (int) $row->mine_count,
+            'unassigned' => (int) $row->unassigned_count,
+            'closed'     => (int) $row->closed_count,
         ];
     }
 }
