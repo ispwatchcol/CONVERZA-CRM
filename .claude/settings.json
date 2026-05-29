@@ -87,7 +87,8 @@
       "Bash(php -l database/migrations/2026_05_28_000002_add_header_footer_button_to_templates.php)",
       "Bash(DB_SEARCH_PATH=converza_dev php artisan migrate:status)",
       "Bash(DB_SEARCH_PATH=converza_dev php artisan migrate --force)",
-      "PowerShell(php -l app\\\\Http\\\\Controllers\\\\TemplateController.php)"
+      "PowerShell(php -l app\\\\Http\\\\Controllers\\\\TemplateController.php)",
+      "Bash(php -i)"
     ],
     "additionalDirectories": [
       "C:\\Users\\User\\Desktop\\GITHUB\\ISPWatch-CRM-Whastapp",
