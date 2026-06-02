@@ -12,6 +12,7 @@ use App\Http\Controllers\TeamController;
 use App\Http\Controllers\QuickReplyController;
 use App\Http\Controllers\ClosingNoteController;
 use App\Http\Controllers\MetricsController;
+use App\Http\Controllers\NotificationLogController;
 use App\Http\Controllers\SettingsController;
 use App\Http\Controllers\MediaController;
 use App\Http\Controllers\WhatsAppController;
@@ -111,6 +112,9 @@ Route::middleware('auth')->group(function () {
 
     // Metrics
     Route::get('/metrics', [MetricsController::class, 'index'])->name('metrics.index');
+
+    // Bitácora de avisos automáticos (factura generada / recordatorio de pago)
+    Route::get('/notifications', [NotificationLogController::class, 'index'])->name('notifications.index');
 
     // Manual de Usuario
     Route::get('/manual', [ManualController::class, 'index'])->name('manual.index');
