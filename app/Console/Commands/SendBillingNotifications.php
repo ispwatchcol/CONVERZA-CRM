@@ -8,7 +8,9 @@ use App\Models\Conversation;
 use App\Models\Message;
 use App\Models\Template;
 use App\Models\Tenant;
+use App\Models\TenantNotificationRoute;
 use App\Services\Ispwatch\IspwatchRepository;
+use App\Services\Notifications\EventCatalog;
 use App\Services\WhatsAppService;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
@@ -126,8 +128,20 @@ class SendBillingNotifications extends Command
                 continue;
             }
 
-            $invoiceTpl  = $this->resolveTemplate($tenant->wa_invoice_template);
-            $reminderTpl = $this->resolveTemplate($tenant->wa_reminder_template);
+            // Enrutamiento dinámico: evento → plantilla, definido por el cliente en
+            // Settings (tabla tenant_notification_routes). Solo rutas activas.
+            $routes = $tenant->notificationRoutes()
+                ->where('enabled', true)
+                ->with('template')
+                ->get()
+                ->keyBy('event_key');
+
+            $invoiceRoute  = $routes->get(BillingNotificationLog::KIND_INVOICE);
+            $reminderRoute = $routes->get(BillingNotificationLog::KIND_REMINDER);
+
+            // $tpl = plantilla LISTA para enviar (aprobada+activa) o null.
+            $invoiceTpl  = $this->routeTemplate($invoiceRoute);
+            $reminderTpl = $this->routeTemplate($reminderRoute);
 
             $billings = $ispwatch->whatsappBillingConfigsForTenant((int) $tenant->ispwatch_tenant_id);
             if ($billings === []) {
@@ -170,8 +184,8 @@ class SendBillingNotifications extends Command
 
                 foreach (
                     [
-                        [BillingNotificationLog::KIND_INVOICE,  $runInvoice,  $invoiceTpl,  $tenant->wa_invoice_template],
-                        [BillingNotificationLog::KIND_REMINDER, $runReminder, $reminderTpl, $tenant->wa_reminder_template],
+                        [BillingNotificationLog::KIND_INVOICE,  $runInvoice,  $invoiceTpl,  $invoiceRoute?->template?->name],
+                        [BillingNotificationLog::KIND_REMINDER, $runReminder, $reminderTpl, $reminderRoute?->template?->name],
                     ] as [$kind, $run, $tpl, $tplName]
                 ) {
                     if (! $run) {
@@ -301,30 +315,44 @@ class SendBillingNotifications extends Command
         return $todayDay >= min($day, $daysInMonth);
     }
 
-    private function resolveTemplate(?string $name): ?Template
+    /**
+     * Plantilla LISTA para enviar a partir de una ruta: la asignada, pero solo si
+     * sigue aprobada y activa (pudo desactivarse después de configurarla).
+     */
+    private function routeTemplate(?TenantNotificationRoute $route): ?Template
     {
-        if (blank($name)) {
-            return null;
+        $tpl = $route?->template;
+
+        if ($tpl && $tpl->status === 'approved' && $tpl->is_active) {
+            return $tpl;
         }
 
-        return Template::where('name', $name)
-            ->where('status', 'approved')
-            ->where('is_active', true)
-            ->first();
+        return null;
     }
 
     /**
-     * Construye los parámetros del BODY recortando la convención de valores al
-     * número de variables {{n}} que tenga la plantilla.
+     * Parámetros del BODY. Dos formatos según la plantilla:
+     *   - Nombrada ({{nombre_cliente}}) → mapa { nombre => valor } (named params).
+     *     Los valores salen del catálogo de eventos (EventCatalog::resolveValues).
+     *   - Posicional legada ({{1}}) → lista ordenada con la convención clásica.
      *
-     * @return array<int, string>
+     * @return array<int|string, string>
      */
     private function buildParams(string $kind, Template $tpl, array $row, Tenant $tenant): array
     {
-        preg_match_all('/\{\{(\d+)\}\}/', (string) $tpl->body, $m);
-        $varCount = $m[1] ? max(array_map('intval', $m[1])) : 0;
+        if ($tpl->usesNamedVariables()) {
+            $values = EventCatalog::resolveValues($kind, $row, $tenant);
+            $params = [];
+            foreach (Template::namedVariablesIn($tpl->body) as $name) {
+                $params[$name] = $values[$name] ?? '';
+            }
+            return $params;
+        }
 
-        $values = $this->templateValues($kind, $row, $tenant);
+        // Legado posicional.
+        $positional = Template::positionalVariablesIn($tpl->body);
+        $varCount   = $positional ? max($positional) : 0;
+        $values     = $this->templateValues($kind, $row, $tenant);
 
         $params = [];
         for ($i = 0; $i < $varCount; $i++) {
@@ -341,9 +369,28 @@ class SendBillingNotifications extends Command
         return $params;
     }
 
+    /**
+     * Reconstruye el texto final (para el eco en el chat). Soporta variables
+     * nombradas (mapa) y posicionales (lista).
+     *
+     * @param  array<int|string, string>  $params
+     */
     private function renderBody(Template $tpl, array $params): string
     {
         $body = (string) $tpl->body;
+
+        if (! array_is_list($params)) {
+            foreach ($params as $name => $value) {
+                // callback evita que un '$' en el valor se interprete como backreference.
+                $body = preg_replace_callback(
+                    '/\{\{\s*' . preg_quote((string) $name, '/') . '\s*\}\}/',
+                    fn () => $value,
+                    $body,
+                );
+            }
+            return $body;
+        }
+
         foreach ($params as $i => $value) {
             $body = str_replace('{{' . ($i + 1) . '}}', $value, $body);
         }

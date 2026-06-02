@@ -1,13 +1,15 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
 import { useForm, router, Head, Link } from '@inertiajs/vue3';
-import { ref, computed, watch } from 'vue';
+import { ref, computed, watch, nextTick } from 'vue';
 
 const props = defineProps({
     templates: { type: Array, default: () => [] },
     filters:   { type: Object, default: () => ({}) },
     stats:     { type: Object, default: () => ({}) },
     languages: { type: Object, default: () => ({}) },
+    // Catálogo de eventos: [{ key, label, description, trigger, variables: [{name,label,description,sample}] }]
+    events:    { type: Array, default: () => [] },
     metaConfigured: { type: Boolean, default: false },
 });
 
@@ -49,15 +51,61 @@ const form = useForm({
     name: '',
     category: 'utility',
     language: 'es_CO',
+    // Propósito de la plantilla (evento del catálogo). Define qué variables hay.
+    event_key: '',
     body: '',
     header_text: '',
     footer_text: '',
     button_text: '',
     button_url: '',
     team_label: '',
-    // Muestras por variable: { 1: 'Jhon', 2: '$2541', 3: 'url.com' } — Meta las exige.
+    // Muestras por variable POSICIONAL (legado): { 1: 'Jhon', 2: '$2541' }. Las
+    // variables nombradas usan las muestras del catálogo automáticamente.
     variable_examples: {},
 });
+
+// ── Propósito + variables del evento ─────────────────────────────────────────
+const bodyRef = ref(null);
+
+const selectedEvent = computed(() => props.events.find(e => e.key === form.event_key) || null);
+const eventVariables = computed(() => selectedEvent.value?.variables ?? []);
+const sampleByName = computed(() =>
+    Object.fromEntries(eventVariables.value.map(v => [v.name, v.sample]))
+);
+
+// Tokens nombrados {{nombre_cliente}} presentes en el body (únicos).
+const namedTokens = computed(() => {
+    const names = [...(form.body || '').matchAll(/\{\{\s*([a-z][a-z0-9_]*)\s*\}\}/g)].map(m => m[1]);
+    return [...new Set(names)];
+});
+
+const allowedVarNames = computed(() => eventVariables.value.map(v => v.name));
+const unknownTokens = computed(() => namedTokens.value.filter(n => !allowedVarNames.value.includes(n)));
+
+// Error de coherencia evento ↔ variables (mismo criterio que el backend).
+const variableError = computed(() => {
+    if (namedTokens.value.length === 0) return '';
+    if (!form.event_key) return 'El mensaje usa variables con nombre ({{...}}). Elige primero un propósito para habilitarlas.';
+    if (unknownTokens.value.length) {
+        return 'Variables no disponibles para este propósito: ' + unknownTokens.value.map(n => '{{' + n + '}}').join(', ');
+    }
+    return '';
+});
+
+// Inserta {{nombre}} en la posición del cursor del textarea del body.
+function insertVariable(name) {
+    const token = '{{' + name + '}}';
+    const el = bodyRef.value;
+    if (!el) { form.body = (form.body || '') + token; return; }
+    const start = el.selectionStart ?? form.body.length;
+    const end = el.selectionEnd ?? form.body.length;
+    form.body = form.body.slice(0, start) + token + form.body.slice(end);
+    nextTick(() => {
+        el.focus();
+        const pos = start + token.length;
+        el.setSelectionRange(pos, pos);
+    });
+}
 
 const bodyChars = computed(() => (form.body || '').length);
 const bodyOverflow = computed(() => bodyChars.value > 1024);
@@ -90,13 +138,16 @@ const needsExamples = computed(() =>
 // compilador de Vue, que interpreta los {{ }} literales como interpolación.
 const varLabel = (n) => '{' + '{' + n + '}' + '}';
 
-// Sustituye cada {{n}} por su muestra para una vista previa del mensaje final.
+// Vista previa del mensaje: sustituye variables nombradas por su muestra del
+// catálogo y las posicionales {{n}} por la muestra que escribió el usuario.
 const examplePreview = computed(() => {
     if (!form.body) return '';
-    return form.body.replace(/\{\{\s*(\d+)\s*\}\}/g, (_, n) => {
-        const val = String(form.variable_examples[parseInt(n, 10)] ?? '').trim();
-        return val || `{{${n}}}`;
-    });
+    return form.body
+        .replace(/\{\{\s*([a-z][a-z0-9_]*)\s*\}\}/g, (_, n) => sampleByName.value[n] || `{{${n}}}`)
+        .replace(/\{\{\s*(\d+)\s*\}\}/g, (_, n) => {
+            const val = String(form.variable_examples[parseInt(n, 10)] ?? '').trim();
+            return val || `{{${n}}}`;
+        });
 });
 
 function openCreate() {
@@ -104,6 +155,7 @@ function openCreate() {
     form.reset();
     form.category = 'utility';
     form.language = 'es_CO';
+    form.event_key = '';
     showModal.value = true;
 }
 
@@ -112,6 +164,7 @@ function openEdit(t) {
     form.name = t.name;
     form.category = t.category;
     form.language = t.language || 'es_CO';
+    form.event_key = t.event_key || '';
     form.body = t.body;
     form.header_text = t.header_text || '';
     form.footer_text = t.footer_text || '';
@@ -227,10 +280,15 @@ function categoryLabel(cat) {
     return { marketing: 'Marketing', utility: 'Utilidad', authentication: 'Autenticación' }[cat] || cat;
 }
 
-// Renderiza el body destacando las variables {{1}}, {{2}}...
+// Etiqueta legible del propósito (evento) de una plantilla.
+function eventLabelOf(key) {
+    return props.events.find(e => e.key === key)?.label || null;
+}
+
+// Renderiza el body destacando las variables {{nombre}} o {{1}}.
 function renderBodyWithVars(body) {
     if (!body) return '';
-    return body.replace(/(\{\{\s*\d+\s*\}\})/g,
+    return body.replace(/(\{\{\s*[a-zA-Z0-9_]+\s*\}\})/g,
         '<span class="bg-amber-100 text-amber-800 px-1 rounded font-mono text-[11px]">$1</span>');
 }
 
@@ -242,9 +300,8 @@ function formatDateTime(iso) {
     }).format(new Date(iso));
 }
 
-// Ejemplos de sintaxis (los meto como vars para evitar que Vue interpole los `{{ }}` dentro del template)
-const varExample = '{{1}}, {{2}}';
-const placeholderExample = 'Hola {{1}}, tu factura {{2}} está vencida. Paga ahora para evitar suspensión.';
+// Ejemplo de body (los meto como var para evitar que Vue interpole los `{{ }}` dentro del template)
+const placeholderExample = 'Hola {{nombre_cliente}}, tu factura {{numero_factura}} por {{monto}} vence el {{fecha_vencimiento}}.';
 </script>
 
 <template>
@@ -442,6 +499,7 @@ const placeholderExample = 'Hola {{1}}, tu factura {{2}} está vencida. Paga aho
 
                         <!-- Metadata -->
                         <div class="text-xs text-gray-500 space-y-1 mb-4 pb-4 border-b border-gray-100">
+                            <p v-if="selected.event_key"><span class="text-gray-400">Propósito:</span> {{ eventLabelOf(selected.event_key) || selected.event_key }}</p>
                             <p v-if="selected.team_label"><span class="text-gray-400">Equipo:</span> {{ selected.team_label }}</p>
                             <p><span class="text-gray-400">Creada:</span> {{ formatDateTime(selected.created_at) }}</p>
                             <p><span class="text-gray-400">Actualizada:</span> {{ formatDateTime(selected.updated_at) }}</p>
@@ -505,6 +563,18 @@ const placeholderExample = 'Hola {{1}}, tu factura {{2}} está vencida. Paga aho
                                 </div>
                             </div>
 
+                            <!-- Propósito (evento): define qué variables hay disponibles -->
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Propósito <span class="text-gray-400 font-normal">(para avisos automáticos)</span></label>
+                                <select v-model="form.event_key" class="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm bg-white focus:ring-2 focus:ring-accent/30 focus:border-accent">
+                                    <option value="">General (sin variables del sistema)</option>
+                                    <option v-for="e in events" :key="e.key" :value="e.key">{{ e.label }}</option>
+                                </select>
+                                <p v-if="selectedEvent" class="text-[10px] text-gray-500 mt-1">{{ selectedEvent.description }} <span class="text-gray-400">· Se envía: {{ selectedEvent.trigger }}</span></p>
+                                <p v-else class="text-[10px] text-gray-400 mt-1">Elige para qué aviso sirve esta plantilla y así habilitar sus variables. «General» = sin variables automáticas.</p>
+                                <p v-if="form.errors.event_key" class="text-red-500 text-xs mt-1">{{ form.errors.event_key }}</p>
+                            </div>
+
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-1">Encabezado <span class="text-gray-400 font-normal">(opcional, máx 60)</span></label>
                                 <input v-model="form.header_text" type="text" maxlength="60" placeholder="Ej. Recordatorio de pago"
@@ -518,14 +588,43 @@ const placeholderExample = 'Hola {{1}}, tu factura {{2}} está vencida. Paga aho
                                     <label class="block text-sm font-medium text-gray-700">Contenido (body) <span class="text-red-500">*</span></label>
                                     <span class="text-[10px] tabular-nums" :class="bodyOverflow ? 'text-red-500 font-semibold' : 'text-gray-400'">{{ bodyChars }} / 1024</span>
                                 </div>
-                                <textarea v-model="form.body" rows="5" :placeholder="placeholderExample"
+                                <textarea ref="bodyRef" v-model="form.body" rows="5" :placeholder="placeholderExample"
                                           class="w-full px-4 py-2.5 border rounded-xl text-sm focus:ring-2 focus:ring-accent/30 focus:border-accent resize-none"
-                                          :class="form.errors.body || bodyOverflow ? 'border-red-400' : 'border-gray-200'"></textarea>
+                                          :class="form.errors.body || bodyOverflow || variableError ? 'border-red-400' : 'border-gray-200'"></textarea>
                                 <p v-if="form.errors.body" class="text-red-500 text-xs mt-1">{{ form.errors.body }}</p>
-                                <p v-else class="text-[10px] text-gray-400 mt-1">Usa <code class="font-mono">{{ varExample }}</code> para variables que se reemplazan al enviar.</p>
+                                <p v-else class="text-[10px] text-gray-400 mt-1">Inserta variables con los botones de abajo. Se reemplazan con el dato real al enviar.</p>
                             </div>
 
-                            <!-- Muestras de variables: Meta exige un ejemplo por cada {{n}} -->
+                            <!-- Paleta de variables del propósito elegido -->
+                            <div>
+                                <div class="flex items-center justify-between mb-1.5">
+                                    <label class="block text-sm font-medium text-gray-700">Variables disponibles</label>
+                                    <span v-if="selectedEvent" class="text-[10px] text-gray-400">{{ selectedEvent.label }}</span>
+                                </div>
+                                <div v-if="!form.event_key" class="text-[11px] text-gray-500 bg-gray-50 border border-gray-100 rounded-lg p-2.5">
+                                    Elige un <strong>propósito</strong> arriba para ver las variables que puedes insertar (nombre del cliente, monto, número de factura…).
+                                </div>
+                                <template v-else>
+                                    <div class="flex flex-wrap gap-1.5">
+                                        <button v-for="v in eventVariables" :key="v.name" type="button" @click="insertVariable(v.name)"
+                                                :title="v.description + ' · Ej: ' + v.sample"
+                                                class="inline-flex items-center gap-1 px-2.5 py-1.5 bg-accent/10 text-accent rounded-lg text-xs font-medium hover:bg-accent/20 transition">
+                                            <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
+                                            {{ v.label }}
+                                        </button>
+                                    </div>
+                                    <p class="text-[10px] text-gray-400 mt-1.5">Clic para insertar en el cursor. Pasa el mouse para ver un ejemplo del dato.</p>
+                                </template>
+                                <p v-if="variableError" class="text-amber-800 text-xs mt-2 bg-amber-50 border border-amber-200 rounded-lg p-2">{{ variableError }}</p>
+                            </div>
+
+                            <!-- Vista previa con datos de ejemplo (variables nombradas) -->
+                            <div v-if="form.event_key && namedTokens.length && !variableError" class="bg-[#d9fdd3]/40 border border-emerald-100 rounded-xl p-3">
+                                <p class="text-[10px] text-emerald-700 font-medium mb-1">Así le llegará al cliente (con datos de ejemplo):</p>
+                                <p class="text-xs text-gray-800 bg-white border border-emerald-100 rounded-lg p-2 whitespace-pre-wrap">{{ examplePreview }}</p>
+                            </div>
+
+                            <!-- Muestras de variables POSICIONALES (legado): Meta exige un ejemplo por cada {{n}} -->
                             <div v-if="variableNumbers.length" class="bg-amber-50 border border-amber-100 rounded-xl p-3 space-y-2.5">
                                 <div>
                                     <p class="text-[11px] text-amber-900 font-semibold uppercase tracking-wider">Muestras de variables</p>
@@ -590,8 +689,8 @@ const placeholderExample = 'Hola {{1}}, tu factura {{2}} está vencida. Paga aho
 
                             <div class="flex justify-end gap-3 pt-3 border-t border-gray-50">
                                 <button type="button" @click="showModal = false" class="px-4 py-2.5 text-sm text-gray-600 hover:bg-gray-100 rounded-xl transition">Cancelar</button>
-                                <button type="submit" :disabled="form.processing || bodyOverflow || needsExamples"
-                                        :title="needsExamples ? 'Completa una muestra para cada variable antes de enviar a Meta' : ''"
+                                <button type="submit" :disabled="form.processing || bodyOverflow || needsExamples || !!variableError"
+                                        :title="variableError || (needsExamples ? 'Completa una muestra para cada variable antes de enviar a Meta' : '')"
                                         class="px-5 py-2.5 bg-accent text-white rounded-xl text-sm font-medium hover:bg-accent-hover transition disabled:opacity-50 disabled:cursor-not-allowed">
                                     {{ form.processing ? 'Guardando…' : (editing ? 'Guardar' : (metaConfigured ? 'Enviar a revisión' : 'Guardar')) }}
                                 </button>

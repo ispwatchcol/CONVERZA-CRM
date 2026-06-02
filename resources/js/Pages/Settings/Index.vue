@@ -1,6 +1,6 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
-import { useForm, Head } from '@inertiajs/vue3';
+import { useForm, Head, Link } from '@inertiajs/vue3';
 import { ref, computed } from 'vue';
 import axios from 'axios';
 
@@ -8,7 +8,12 @@ const props = defineProps({
     tenant: Object,
     workspace: Object,
     ispwatchStatus: { type: Object, default: null },
+    // Plantillas aprobadas: [{ id, name, language, event_key }]
     approvedTemplates: { type: Array, default: () => [] },
+    // Catálogo de eventos: [{ key, label, description, trigger, variables }]
+    notificationEvents: { type: Array, default: () => [] },
+    // Asignación actual: { event_key: { template_id, enabled } }
+    notificationRoutes: { type: Object, default: () => ({}) },
 });
 
 // ── Forms (uno por sección) ──────────────────────────────────────────────────
@@ -24,9 +29,40 @@ const whatsappForm = useForm({
     wa_verify_token: props.tenant.wa_verify_token ?? '',
     wa_access_token: '',
     wa_app_secret: '',
-    wa_invoice_template: props.tenant.wa_invoice_template ?? '',
-    wa_reminder_template: props.tenant.wa_reminder_template ?? '',
 });
+
+// ── Avisos automáticos (evento → plantilla) ──────────────────────────────────
+const routesForm = useForm({
+    routes: props.notificationEvents.map((e) => {
+        const r = props.notificationRoutes[e.key] || {};
+        return {
+            event_key: e.key,
+            template_id: r.template_id ?? '',
+            enabled: r.enabled ?? false,
+        };
+    }),
+});
+
+// Plantillas elegibles para un evento: las tageadas con ese propósito o las
+// "generales" (sin propósito).
+function templatesForEvent(eventKey) {
+    return props.approvedTemplates.filter((t) => t.event_key === eventKey || !t.event_key);
+}
+
+function saveNotifications() {
+    routesForm
+        .transform((data) => ({
+            routes: data.routes.map((r) => {
+                const templateId = r.template_id === '' || r.template_id == null ? null : Number(r.template_id);
+                return {
+                    event_key: r.event_key,
+                    template_id: templateId,
+                    enabled: !!r.enabled && templateId != null,
+                };
+            }),
+        }))
+        .put(route('settings.notifications.update'), { preserveScroll: true });
+}
 
 // La vinculación ISPWatch NO es editable por el cliente: la hace el admin del
 // SaaS con `php artisan tenant:link`. Aquí solo mostramos estado en vivo.
@@ -315,35 +351,6 @@ const waBadge = computed(() => {
                             </div>
                         </div>
 
-                        <!-- Plantillas de avisos automáticos -->
-                        <div class="rounded-xl bg-gray-50 border border-gray-100 p-3 space-y-3">
-                            <div>
-                                <p class="text-xs font-semibold text-gray-600 uppercase tracking-wider">Avisos automáticos</p>
-                                <p class="text-xs text-gray-500 mt-1">Plantillas que se envían según las fechas del router en ISPWatch. Deja en blanco para no enviar ese aviso.</p>
-                            </div>
-                            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                <div>
-                                    <label class="block text-xs font-medium text-gray-600 mb-1">Plantilla de factura generada</label>
-                                    <select v-model="whatsappForm.wa_invoice_template" class="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm bg-white focus:ring-2 focus:ring-accent/30 focus:border-accent">
-                                        <option value="">— Ninguna —</option>
-                                        <option v-for="t in approvedTemplates" :key="t" :value="t">{{ t }}</option>
-                                    </select>
-                                    <p v-if="whatsappForm.errors.wa_invoice_template" class="text-red-500 text-xs mt-1">{{ whatsappForm.errors.wa_invoice_template }}</p>
-                                </div>
-                                <div>
-                                    <label class="block text-xs font-medium text-gray-600 mb-1">Plantilla de recordatorio de pago</label>
-                                    <select v-model="whatsappForm.wa_reminder_template" class="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm bg-white focus:ring-2 focus:ring-accent/30 focus:border-accent">
-                                        <option value="">— Ninguna —</option>
-                                        <option v-for="t in approvedTemplates" :key="t" :value="t">{{ t }}</option>
-                                    </select>
-                                    <p v-if="whatsappForm.errors.wa_reminder_template" class="text-red-500 text-xs mt-1">{{ whatsappForm.errors.wa_reminder_template }}</p>
-                                </div>
-                            </div>
-                            <p v-if="!approvedTemplates.length" class="text-xs text-amber-700">
-                                No tienes plantillas aprobadas y activas todavía. Créalas y sincronízalas en Plantillas.
-                            </p>
-                        </div>
-
                         <!-- Test result -->
                         <div v-if="testResult" class="rounded-xl p-3 text-sm" :class="testResult.ok ? 'bg-emerald-50 border border-emerald-100 text-emerald-900' : 'bg-red-50 border border-red-100 text-red-900'">
                             <template v-if="testResult.ok">
@@ -362,6 +369,58 @@ const waBadge = computed(() => {
                             </button>
                             <button type="submit" :disabled="whatsappForm.processing" class="px-5 py-2.5 bg-accent text-white rounded-xl text-sm font-medium hover:bg-accent-hover transition disabled:opacity-50">
                                 {{ whatsappForm.processing ? 'Guardando…' : 'Guardar credenciales' }}
+                            </button>
+                        </div>
+                    </form>
+                </section>
+
+                <!-- ═══════════════ AVISOS AUTOMÁTICOS ═══════════════ -->
+                <section class="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+                    <div class="flex items-center justify-between mb-4">
+                        <div class="flex items-center">
+                            <div class="w-9 h-9 rounded-xl bg-amber-50 flex items-center justify-center mr-3">
+                                <svg class="w-5 h-5 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0"/></svg>
+                            </div>
+                            <div>
+                                <h3 class="text-base font-semibold text-gray-900">Avisos automáticos</h3>
+                                <p class="text-xs text-gray-500">Por cada evento, elige qué plantilla enviar y actívalo. Las fechas las define el router en ISPWatch.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div v-if="!approvedTemplates.length" class="rounded-xl bg-amber-50 border border-amber-100 p-4 text-sm text-amber-800">
+                        No tienes plantillas aprobadas y activas todavía. Créalas y sincronízalas en <Link :href="route('templates.index')" class="font-medium underline">Plantillas</Link> para poder asignarlas a un aviso.
+                    </div>
+
+                    <form v-else @submit.prevent="saveNotifications" class="space-y-3">
+                        <div v-for="(row, i) in routesForm.routes" :key="row.event_key"
+                             class="rounded-xl border border-gray-100 p-4 flex flex-col md:flex-row md:items-center gap-3">
+                            <div class="flex-1 min-w-0">
+                                <p class="text-sm font-semibold text-gray-900">{{ notificationEvents[i]?.label }}</p>
+                                <p class="text-xs text-gray-500 mt-0.5">{{ notificationEvents[i]?.description }}</p>
+                            </div>
+                            <div class="md:w-64">
+                                <select v-model="row.template_id"
+                                        class="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm bg-white focus:ring-2 focus:ring-accent/30 focus:border-accent">
+                                    <option value="">— Sin plantilla —</option>
+                                    <option v-for="t in templatesForEvent(row.event_key)" :key="t.id" :value="t.id">{{ t.name }}</option>
+                                </select>
+                                <p v-if="!templatesForEvent(row.event_key).length" class="text-[10px] text-amber-700 mt-1">
+                                    Ninguna plantilla con este propósito. Tagea una en Plantillas.
+                                </p>
+                            </div>
+                            <label class="inline-flex items-center gap-2 cursor-pointer shrink-0"
+                                   :class="{ 'opacity-40 cursor-not-allowed': !row.template_id }">
+                                <input type="checkbox" v-model="row.enabled" :disabled="!row.template_id"
+                                       class="rounded border-gray-300 text-accent focus:ring-accent/30">
+                                <span class="text-sm text-gray-700">Activo</span>
+                            </label>
+                        </div>
+
+                        <div class="flex justify-end pt-2 border-t border-gray-50">
+                            <button type="submit" :disabled="routesForm.processing"
+                                    class="px-5 py-2.5 bg-accent text-white rounded-xl text-sm font-medium hover:bg-accent-hover transition disabled:opacity-50">
+                                {{ routesForm.processing ? 'Guardando…' : 'Guardar avisos' }}
                             </button>
                         </div>
                     </form>

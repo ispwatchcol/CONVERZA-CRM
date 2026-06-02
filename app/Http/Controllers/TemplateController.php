@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Template;
+use App\Services\Notifications\EventCatalog;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Validation\Rule;
@@ -56,6 +57,9 @@ class TemplateController extends Controller
             'filters'   => ['search' => $search, 'status' => $status],
             'stats'     => $this->stats($tenantId),
             'languages' => self::LANGUAGES,
+            // Catálogo de eventos: alimenta el selector de propósito y la paleta
+            // de variables nombradas que el cliente puede insertar en el body.
+            'events'    => EventCatalog::forFrontend(),
             'metaConfigured' => $this->isMetaConfigured(),
         ]);
     }
@@ -68,10 +72,17 @@ class TemplateController extends Controller
         $validated = $this->validateData($request, $tenantId);
 
         // `variable_examples` no es columna de BD: son las muestras que Meta EXIGE
-        // para cada {{n}} del body (ej. {{1}} => "Jhon"). Se mandan a Meta pero no
-        // se persisten localmente, así que se sacan del array antes de crear.
-        $examples = $this->normalizeExamples($validated['variable_examples'] ?? []);
+        // por cada variable del body. Se mandan a Meta pero no se persisten, así que
+        // se sacan del array antes de crear. Las claves pueden ser nombres
+        // ({{nombre_cliente}}) o números ({{1}}) según el formato del body.
+        $submitted = $this->normalizeExamples($validated['variable_examples'] ?? []);
         unset($validated['variable_examples']);
+
+        // Coherencia evento ↔ variables: si el body usa variables nombradas, deben
+        // pertenecer al evento elegido. Atrapa typos antes de tocar la BD/Meta.
+        if ($err = $this->bodyVariableErrors($validated['body'], $validated['event_key'] ?? null)) {
+            return back()->withErrors(['body' => $err]);
+        }
 
         // 1) Guardar SIEMPRE primero el registro local (pending, sin meta_id).
         //    Si este insert falla, Meta nunca se llama → no quedan plantillas huérfanas
@@ -88,14 +99,16 @@ class TemplateController extends Controller
             return back()->with('success', 'Plantilla guardada localmente. Configura WhatsApp (Business Account ID + token) en Configuración para enviarla a revisión de Meta.');
         }
 
-        // 3) Meta EXIGE una muestra por cada variable {{n}} del body o rechaza.
-        //    Validamos antes de llamar a Meta y revertimos el borrador local para
-        //    poder reintentar sin chocar por nombre duplicado.
+        // 3) Meta EXIGE una muestra por cada variable del body o rechaza. Para las
+        //    variables nombradas de un evento, la muestra se autocompleta desde el
+        //    catálogo, así el cliente no tiene que inventarlas.
+        $examples = $this->resolveExamples($validated['body'], $validated['event_key'] ?? null, $submitted);
+
         $missing = $this->missingVariableExamples($validated['body'], $examples);
         if ($missing) {
             $template->delete();
             return back()->withErrors([
-                'meta' => 'Faltan muestras para las variables: ' . implode(', ', array_map(fn ($n) => "{{{$n}}}", $missing)) . '. Meta exige un valor de ejemplo por cada variable.',
+                'meta' => 'Faltan muestras para las variables: ' . implode(', ', $missing) . '. Meta exige un valor de ejemplo por cada variable.',
             ]);
         }
 
@@ -133,6 +146,10 @@ class TemplateController extends Controller
 
         $validated = $this->validateData($request, $template->tenant_id, ignoreId: $template->id);
         unset($validated['variable_examples']); // no es columna; solo se usa al enviar a Meta
+
+        if ($err = $this->bodyVariableErrors($validated['body'], $validated['event_key'] ?? null)) {
+            return back()->withErrors(['body' => $err]);
+        }
 
         $template->update($validated);
 
@@ -275,6 +292,11 @@ class TemplateController extends Controller
             'components' => $this->buildMetaComponents($data, $examples),
         ];
 
+        // Variables nombradas ({{nombre_cliente}}) requieren declarar el formato.
+        if (Template::namedVariablesIn($data['body']) !== []) {
+            $payload['parameter_format'] = 'NAMED';
+        }
+
         try {
             $response = Http::withToken($accessToken)
                 ->timeout(15)
@@ -304,7 +326,7 @@ class TemplateController extends Controller
      * El header/footer/botón se mandan como estáticos (sin variables).
      *
      * @param  array<string, mixed>  $data  name, body, header_text, footer_text, button_text, button_url
-     * @param  array<int, string>  $examples  Muestra real por número de variable ({{1}} => valor).
+     * @param  array<string, string>  $examples  Muestra real por variable, indexada por token (nombre o número).
      * @return array<int, array<string, mixed>>
      */
     private function buildMetaComponents(array $data, array $examples = []): array
@@ -321,19 +343,30 @@ class TemplateController extends Controller
 
         $body = ['type' => 'BODY', 'text' => $data['body']];
 
-        preg_match_all('/\{\{(\d+)\}\}/', $data['body'], $matches);
-        $varCount = $matches[1] ? max(array_map('intval', $matches[1])) : 0;
+        $named = Template::namedVariablesIn($data['body']);
 
-        if ($varCount > 0) {
-            // Meta espera las muestras EN ORDEN ({{1}}, {{2}}, …). Usamos el valor
-            // real que escribió el usuario; si por alguna razón viene vacío, caemos
-            // a un placeholder para no romper el envío.
-            $bodyExamples = [];
-            for ($i = 1; $i <= $varCount; $i++) {
-                $value = trim((string) ($examples[$i] ?? ''));
-                $bodyExamples[] = $value !== '' ? $value : 'Ejemplo ' . $i;
+        if ($named !== []) {
+            // Variables nombradas: Meta espera body_text_named_params con el nombre
+            // de cada variable y su ejemplo.
+            $namedParams = [];
+            foreach ($named as $name) {
+                $value = trim((string) ($examples[$name] ?? ''));
+                $namedParams[] = ['param_name' => $name, 'example' => $value !== '' ? $value : 'Ejemplo'];
             }
-            $body['example'] = ['body_text' => [$bodyExamples]];
+            $body['example'] = ['body_text_named_params' => $namedParams];
+        } else {
+            // Variables posicionales (legado): muestras EN ORDEN ({{1}}, {{2}}, …).
+            $positional = Template::positionalVariablesIn($data['body']);
+            $varCount   = $positional ? max($positional) : 0;
+
+            if ($varCount > 0) {
+                $bodyExamples = [];
+                for ($i = 1; $i <= $varCount; $i++) {
+                    $value = trim((string) ($examples[(string) $i] ?? ''));
+                    $bodyExamples[] = $value !== '' ? $value : 'Ejemplo ' . $i;
+                }
+                $body['example'] = ['body_text' => [$bodyExamples]];
+            }
         }
 
         $components[] = $body;
@@ -384,13 +417,16 @@ class TemplateController extends Controller
             ],
             'category'    => ['required', Rule::in(self::CATEGORIES)],
             'language'    => ['required', Rule::in(array_keys(self::LANGUAGES))],
+            // Propósito de la plantilla dentro del catálogo de eventos (o null = general).
+            'event_key'   => ['nullable', Rule::in(EventCatalog::keys())],
             'body'        => ['required', 'string', 'max:1024'],
             'header_text' => ['nullable', 'string', 'max:60'],
             'footer_text' => ['nullable', 'string', 'max:60'],
             'button_text' => ['nullable', 'string', 'max:25', 'required_with:button_url'],
             'button_url'  => ['nullable', 'url', 'max:2000', 'required_with:button_text'],
             'team_label'  => ['nullable', 'string', 'max:60'],
-            // Muestras por variable {{n}}: objeto { "1": "Jhon", "2": "$2541", … }.
+            // Muestras por variable indexadas por token (nombre o número):
+            // { "nombre_cliente": "Jhon", "1": "$2541", … }.
             'variable_examples'   => ['nullable', 'array'],
             'variable_examples.*' => ['nullable', 'string', 'max:1024'],
         ], [
@@ -407,40 +443,95 @@ class TemplateController extends Controller
     }
 
     /**
-     * Normaliza las muestras de variables a un mapa { numeroVariable => valor }.
-     * El frontend manda un objeto con claves string ("1", "2", …); aquí las
-     * pasamos a int y descartamos vacíos para no enviar muestras en blanco a Meta.
+     * Normaliza las muestras a un mapa { token => valor }, con el token tal cual
+     * (nombre "nombre_cliente" o número "1"). Descarta claves/valores vacíos para
+     * no enviar muestras en blanco a Meta.
      *
      * @param  array<int|string, mixed>  $raw
-     * @return array<int, string>
+     * @return array<string, string>
      */
     private function normalizeExamples(array $raw): array
     {
         $out = [];
         foreach ($raw as $key => $value) {
-            $n = (int) $key;
+            $key   = trim((string) $key);
             $value = trim((string) $value);
-            if ($n > 0 && $value !== '') {
-                $out[$n] = $value;
+            if ($key !== '' && $value !== '') {
+                $out[$key] = $value;
             }
         }
         return $out;
     }
 
     /**
-     * Devuelve los números de variable {{n}} del body que NO tienen muestra.
-     * Meta rechaza la plantilla si falta alguna, así que avisamos antes de enviar.
+     * Muestras finales por token: para variables nombradas de un evento, se
+     * autocompletan desde el catálogo (el cliente no las escribe); las posicionales
+     * y cualquier override vienen de lo que mandó el cliente.
      *
-     * @param  array<int, string>  $examples
-     * @return array<int, int>
+     * @param  array<string, string>  $submitted
+     * @return array<string, string>
+     */
+    private function resolveExamples(string $body, ?string $eventKey, array $submitted): array
+    {
+        $samples = EventCatalog::samples($eventKey); // [nombre => muestra]
+
+        $out = [];
+        foreach (Template::namedVariablesIn($body) as $name) {
+            $out[$name] = trim((string) ($submitted[$name] ?? $samples[$name] ?? ''));
+        }
+        foreach (Template::positionalVariablesIn($body) as $n) {
+            $out[(string) $n] = trim((string) ($submitted[(string) $n] ?? ''));
+        }
+        return $out;
+    }
+
+    /**
+     * Tokens del body ({{nombre}} o {{n}}) que NO tienen muestra. Meta rechaza la
+     * plantilla si falta alguna, así que avisamos antes de enviar.
+     *
+     * @param  array<string, string>  $examples
+     * @return array<int, string>  Tokens formateados, ej. ['{{monto}}', '{{2}}'].
      */
     private function missingVariableExamples(string $body, array $examples): array
     {
-        preg_match_all('/\{\{(\d+)\}\}/', $body, $matches);
-        $vars = array_unique(array_map('intval', $matches[1] ?? []));
-        sort($vars);
+        $missing = [];
+        foreach (Template::namedVariablesIn($body) as $name) {
+            if (blank($examples[$name] ?? null)) {
+                $missing[] = '{{' . $name . '}}';
+            }
+        }
+        foreach (Template::positionalVariablesIn($body) as $n) {
+            if (blank($examples[(string) $n] ?? null)) {
+                $missing[] = '{{' . $n . '}}';
+            }
+        }
+        return $missing;
+    }
 
-        return array_values(array_filter($vars, fn ($n) => ! isset($examples[$n])));
+    /**
+     * Valida que las variables nombradas del body pertenezcan al evento elegido.
+     * Devuelve el mensaje de error o null si todo está bien. Las plantillas
+     * posicionales ({{1}}) o sin variables no se validan contra el catálogo.
+     */
+    private function bodyVariableErrors(string $body, ?string $eventKey): ?string
+    {
+        $named = Template::namedVariablesIn($body);
+        if ($named === []) {
+            return null;
+        }
+
+        if (! EventCatalog::has($eventKey)) {
+            return 'El mensaje usa variables con nombre ({{...}}). Elige primero el propósito (evento) de la plantilla para habilitarlas.';
+        }
+
+        $unknown = array_values(array_diff($named, EventCatalog::variableNames($eventKey)));
+        if ($unknown !== []) {
+            return 'Variables no disponibles para "' . EventCatalog::label($eventKey) . '": '
+                . implode(', ', array_map(fn ($n) => '{{' . $n . '}}', $unknown))
+                . '. Usa solo las del panel de variables.';
+        }
+
+        return null;
     }
 
     /**
