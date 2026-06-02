@@ -12,6 +12,7 @@ const props = defineProps({
     messagesByHour: { type: Array, default: () => [] },
     messagesByType: { type: Array, default: () => [] },
     topContacts:    { type: Array, default: () => [] },
+    perAgent:       { type: Array, default: () => [] },
 });
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -292,6 +293,44 @@ function metaFor(type) {
                     </div>
                 </div>
                 <div v-else class="text-center py-8 text-xs text-gray-400">Sin actividad reciente</div>
+            </div>
+
+            <!-- ═══════════════ Rendimiento por agente ═══════════════ -->
+            <div class="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 mt-4">
+                <div class="flex items-center justify-between mb-3">
+                    <h3 class="text-sm font-semibold text-gray-900">Rendimiento por agente</h3>
+                    <span class="text-[10px] text-gray-400">últimos 30 días</span>
+                </div>
+                <div v-if="perAgent.length" class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead>
+                            <tr class="text-[10px] uppercase tracking-wider text-gray-400 border-b border-gray-100">
+                                <th class="text-left font-semibold py-2 pr-3">Agente</th>
+                                <th class="text-right font-semibold py-2 px-3" title="Mensajes enviados al cliente">Enviados</th>
+                                <th class="text-right font-semibold py-2 px-3" title="Conversaciones cerradas (notas de cierre)">Cerrados</th>
+                                <th class="text-right font-semibold py-2 px-3" title="Conversaciones abiertas asignadas ahora">Abiertos</th>
+                                <th class="text-right font-semibold py-2 pl-3" title="Tiempo de respuesta promedio">T. respuesta</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-50">
+                            <tr v-for="agent in perAgent" :key="agent.user_id" class="hover:bg-gray-50">
+                                <td class="py-2.5 pr-3">
+                                    <div class="flex items-center gap-2.5 min-w-0">
+                                        <div class="w-8 h-8 rounded-full bg-gradient-to-br from-accent to-accent-light flex items-center justify-center text-white text-[11px] font-bold shrink-0">
+                                            {{ (agent.name || '?')[0].toUpperCase() }}
+                                        </div>
+                                        <span class="font-medium text-gray-900 truncate">{{ agent.name }}</span>
+                                    </div>
+                                </td>
+                                <td class="py-2.5 px-3 text-right tabular-nums font-semibold text-gray-900">{{ agent.messages_sent }}</td>
+                                <td class="py-2.5 px-3 text-right tabular-nums text-gray-700">{{ agent.conversations_closed }}</td>
+                                <td class="py-2.5 px-3 text-right tabular-nums text-gray-700">{{ agent.open_assigned }}</td>
+                                <td class="py-2.5 pl-3 text-right tabular-nums" :class="agent.avg_response_seconds == null ? 'text-gray-400' : 'text-gray-900'">{{ humanizeSeconds(agent.avg_response_seconds) }}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div v-else class="text-center py-8 text-xs text-gray-400">Sin agentes activos o sin actividad reciente</div>
             </div>
         </div>
     </AppLayout>

@@ -18,6 +18,7 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
         $middleware->alias([
             'superadmin' => \App\Http\Middleware\EnsureSuperadmin::class,
+            'role'       => \App\Http\Middleware\EnsureStaffRole::class,
         ]);
         $middleware->validateCsrfTokens(except: [
             'webhook',

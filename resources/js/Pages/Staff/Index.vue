@@ -1,6 +1,6 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
-import { useForm, router, Head, Link } from '@inertiajs/vue3';
+import { useForm, router, Head, Link, usePage } from '@inertiajs/vue3';
 import { ref, computed } from 'vue';
 
 const props = defineProps({
@@ -10,6 +10,9 @@ const props = defineProps({
     filters: { type: Object, default: () => ({}) },
     stats: { type: Object, default: () => ({}) },
 });
+
+// Gestionar staff es solo de admin (el backend ya lo bloquea con role:admin).
+const isAdmin = computed(() => usePage().props.auth?.user?.role === 'admin');
 
 const roleLabels = { admin: 'Administrador', agent: 'Agente', viewer: 'Visor' };
 const roleColors = {
@@ -146,7 +149,7 @@ function deleteStaff(s) {
                     <h1 class="text-2xl font-bold text-gray-900">Staff</h1>
                     <p class="text-sm text-gray-500 mt-1">Agentes que pueden acceder al CRM</p>
                 </div>
-                <div class="flex gap-2">
+                <div v-if="isAdmin" class="flex gap-2">
                     <button v-if="availableUsers.length" @click="openAdd" class="inline-flex items-center px-4 py-2.5 border border-gray-200 text-gray-700 rounded-xl text-sm font-medium hover:bg-gray-50 transition">
                         <svg class="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M18 7.5v3m0 0v3m0-3h3m-3 0h-3m-2.25-4.125a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zM3 19.235v-.11a6.375 6.375 0 0112.75 0v.109A12.318 12.318 0 019.374 21c-2.331 0-4.512-.645-6.374-1.766z"/></svg>
                         Agregar existente
@@ -251,14 +254,17 @@ function deleteStaff(s) {
                                     </span>
                                 </td>
                                 <td class="px-4 py-3 text-center">
-                                    <button @click="toggleActive(s)" :disabled="s.is_me && s.is_active" :title="s.is_me && s.is_active ? 'No puedes desactivarte a ti mismo' : ''">
+                                    <button v-if="isAdmin" @click="toggleActive(s)" :disabled="s.is_me && s.is_active" :title="s.is_me && s.is_active ? 'No puedes desactivarte a ti mismo' : ''">
                                         <span class="relative inline-block w-9 h-5 rounded-full transition-colors" :class="[s.is_active ? 'bg-emerald-500' : 'bg-gray-300', { 'cursor-not-allowed opacity-50': s.is_me && s.is_active }]">
                                             <span class="absolute top-0.5 w-4 h-4 bg-white rounded-full transition-transform" :class="s.is_active ? 'left-4' : 'left-0.5'"></span>
                                         </span>
                                     </button>
+                                    <span v-else class="px-2 py-0.5 rounded-full text-[10px] font-medium" :class="s.is_active ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500'">
+                                        {{ s.is_active ? 'Activo' : 'Inactivo' }}
+                                    </span>
                                 </td>
                                 <td class="px-4 py-3 text-right">
-                                    <div class="flex items-center justify-end gap-1">
+                                    <div v-if="isAdmin" class="flex items-center justify-end gap-1">
                                         <button @click="openEdit(s)" class="p-2 rounded-lg text-blue-500 hover:bg-blue-50 transition" title="Editar">
                                             <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z"/></svg>
                                         </button>
@@ -273,7 +279,7 @@ function deleteStaff(s) {
                     <div v-else class="p-12 text-center text-gray-400">
                         <svg class="w-14 h-14 mx-auto mb-3 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z"/></svg>
                         <p class="text-sm">{{ hasFilters ? 'Ningún miembro coincide con los filtros' : 'Aún no hay staff' }}</p>
-                        <button v-if="!hasFilters" @click="openInvite" class="mt-3 text-xs text-accent hover:underline">+ Invitar al primero</button>
+                        <button v-if="isAdmin && !hasFilters" @click="openInvite" class="mt-3 text-xs text-accent hover:underline">+ Invitar al primero</button>
                     </div>
                 </div>
             </div>

@@ -128,6 +128,13 @@ class SendBillingNotifications extends Command
                 continue;
             }
 
+            // Interruptor MAESTRO del tenant (botón de pausa en Configuración →
+            // Avisos). --customer (prueba dirigida) y --force lo saltan para testear.
+            if (! $tenant->billing_notify_enabled && $customer === null && ! $this->option('force')) {
+                $this->warn('  ↳ Avisos automáticos PAUSADOS para este tenant (interruptor en Configuración). Saltando.');
+                continue;
+            }
+
             // Enrutamiento dinámico: evento → plantilla, definido por el cliente en
             // Settings (tabla tenant_notification_routes). Solo rutas activas.
             $routes = $tenant->notificationRoutes()

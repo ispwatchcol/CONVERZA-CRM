@@ -28,20 +28,58 @@ class EventCatalog
     /**
      * Definición de los eventos disponibles y sus variables.
      *
+     * `auto` = el evento se dispara solo, en una fecha (lo manejan los avisos
+     * automáticos y aparece en Settings → Avisos). Un evento no-auto (ej. "general")
+     * es solo un PROPÓSITO para armar plantillas que se envían a mano.
+     *
      * @return array<string, array{
      *     label: string,
      *     description: string,
      *     trigger: string,
+     *     auto: bool,
      *     variables: array<string, array{label: string, description: string, sample: string}>
      * }>
      */
     public static function events(): array
     {
         return [
+            'general' => [
+                'label'       => 'General (datos del cliente)',
+                'description' => 'Plantilla de propósito libre que puedes enviar manualmente; rellena datos del cliente, tu empresa y la fecha.',
+                'trigger'     => 'Manual (no se envía sola).',
+                'auto'        => false,
+                'variables'   => [
+                    // ── Cliente (de ispwatch) ──────────────────────────────────
+                    'nombre_cliente'  => ['label' => 'Nombre del cliente',  'description' => 'Nombre completo del cliente.',                 'sample' => 'Juan Pérez'],
+                    'primer_nombre'   => ['label' => 'Primer nombre',       'description' => 'Solo el primer nombre del cliente.',           'sample' => 'Juan'],
+                    'correo'          => ['label' => 'Correo',              'description' => 'Email registrado del cliente.',                'sample' => 'juan@correo.com'],
+                    'telefono'        => ['label' => 'Teléfono',            'description' => 'Teléfono registrado del cliente.',             'sample' => '3001234567'],
+                    'cedula'          => ['label' => 'Cédula',              'description' => 'Cédula del cliente.',                          'sample' => '12345678'],
+                    'documento'       => ['label' => 'Documento',           'description' => 'Número de documento del cliente.',             'sample' => 'CC 12345678'],
+                    'usuario_pppoe'   => ['label' => 'Usuario PPPoE',       'description' => 'Usuario de conexión del cliente.',             'sample' => 'juanperez01'],
+                    'estado_servicio' => ['label' => 'Estado del servicio', 'description' => 'Estado del servicio (activo, suspendido…).',    'sample' => 'Activo'],
+                    'saldo_favor'     => ['label' => 'Saldo a favor',       'description' => 'Saldo a favor del cliente.',                   'sample' => '$0'],
+                    'direccion'       => ['label' => 'Dirección',           'description' => 'Dirección registrada del cliente.',            'sample' => 'Cra 10 # 20-30'],
+                    'ip_cliente'      => ['label' => 'IP del cliente',      'description' => 'IP asignada al cliente.',                      'sample' => '10.0.0.25'],
+                    // ── Empresa / agente ───────────────────────────────────────
+                    'empresa'         => ['label' => 'Tu empresa',          'description' => 'Nombre comercial de tu workspace.',            'sample' => 'Mi ISP'],
+                    'agente'          => ['label' => 'Agente',              'description' => 'Nombre del agente que envía (en envío manual).', 'sample' => 'María (Soporte)'],
+                    // ── Fecha / hora ───────────────────────────────────────────
+                    'saludo'          => ['label' => 'Saludo según la hora', 'description' => 'Buenos días / Buenas tardes / Buenas noches.', 'sample' => 'Buenos días'],
+                    'fecha_actual'    => ['label' => 'Fecha de hoy',        'description' => 'Fecha actual (d/m/Y).',                        'sample' => '02/06/2026'],
+                    'hora_actual'     => ['label' => 'Hora actual',         'description' => 'Hora actual (HH:mm).',                         'sample' => '14:30'],
+                    'dia_semana'      => ['label' => 'Día de la semana',     'description' => 'Día actual en texto.',                         'sample' => 'lunes'],
+                    'mes_actual'      => ['label' => 'Mes actual',          'description' => 'Mes actual en texto.',                         'sample' => 'junio'],
+                    'anio_actual'     => ['label' => 'Año actual',          'description' => 'Año actual.',                                  'sample' => '2026'],
+                    'fecha_larga'     => ['label' => 'Fecha larga',         'description' => 'Fecha actual en texto largo.',                 'sample' => '2 de junio de 2026'],
+                ],
+            ],
+
             'invoice_created' => [
                 'label'       => 'Factura generada',
                 'description' => 'Avisa al cliente que su factura del ciclo ya fue generada.',
                 'trigger'     => 'El día que el router crea la factura (campo create_invoice del billing).',
+                'auto'        => true,
                 'variables'   => [
                     'nombre_cliente'    => ['label' => 'Nombre del cliente',    'description' => 'Nombre del cliente en ispwatch.',        'sample' => 'Juan Pérez'],
                     'monto'             => ['label' => 'Monto de la factura',   'description' => 'Total de la factura del ciclo.',          'sample' => '$45.000'],
@@ -55,6 +93,7 @@ class EventCatalog
                 'label'       => 'Recordatorio de pago',
                 'description' => 'Recuerda al cliente que tiene un saldo pendiente por pagar.',
                 'trigger'     => 'El día de recordatorio del router (campo payment_reminder del billing), si está habilitado.',
+                'auto'        => true,
                 'variables'   => [
                     'nombre_cliente'    => ['label' => 'Nombre del cliente',    'description' => 'Nombre del cliente en ispwatch.',        'sample' => 'Juan Pérez'],
                     'saldo'             => ['label' => 'Saldo pendiente',       'description' => 'Saldo aún por pagar de la factura.',      'sample' => '$45.000'],
@@ -70,6 +109,12 @@ class EventCatalog
     public static function keys(): array
     {
         return array_keys(self::events());
+    }
+
+    /** Solo eventos AUTOMÁTICOS (se disparan por fecha). @return array<int, string> */
+    public static function autoKeys(): array
+    {
+        return array_keys(array_filter(self::events(), fn ($e) => $e['auto'] ?? false));
     }
 
     public static function has(?string $eventKey): bool
@@ -113,12 +158,16 @@ class EventCatalog
      * Catálogo en la forma que consume el frontend (Inertia): lista de eventos,
      * cada uno con sus variables como lista ordenada.
      *
+     * @param  bool  $onlyAuto  Si true, solo los eventos automáticos (para Settings).
      * @return array<int, array<string, mixed>>
      */
-    public static function forFrontend(): array
+    public static function forFrontend(bool $onlyAuto = false): array
     {
         $out = [];
         foreach (self::events() as $key => $event) {
+            if ($onlyAuto && ! ($event['auto'] ?? false)) {
+                continue;
+            }
             $variables = [];
             foreach ($event['variables'] as $name => $meta) {
                 $variables[] = [
@@ -133,6 +182,7 @@ class EventCatalog
                 'label'       => $event['label'],
                 'description' => $event['description'],
                 'trigger'     => $event['trigger'],
+                'auto'        => (bool) ($event['auto'] ?? false),
                 'variables'   => $variables,
             ];
         }
@@ -143,10 +193,12 @@ class EventCatalog
      * Valores REALES de las variables de un evento para un cliente concreto.
      * Devuelve { nombre_variable => valor ya formateado }.
      *
-     * @param  array<string, mixed>  $row  Fila de IspwatchRepository::cycleCustomersForBilling
+     * @param  array<string, mixed>  $row  Fila de IspwatchRepository (cycleCustomersForBilling
+     *                                     para eventos auto, customerByPhone para "general").
+     * @param  string|null  $agentName  Nombre del agente que envía (solo "general", envío manual).
      * @return array<string, string>
      */
-    public static function resolveValues(string $eventKey, array $row, Tenant $tenant): array
+    public static function resolveValues(string $eventKey, array $row, Tenant $tenant, ?string $agentName = null): array
     {
         $money = fn ($v): string => '$' . number_format((float) $v, 0, ',', '.');
         $date  = fn ($v): string => $v ? Carbon::parse($v)->format('d/m/Y') : '';
@@ -166,7 +218,48 @@ class EventCatalog
                 'fecha_vencimiento' => $date($row['due_date'] ?? null),
                 'empresa'           => (string) $tenant->name,
             ],
-            default => [],
+            'general' => self::generalValues($row, $tenant, $agentName, $money),
+            default   => [],
         };
+    }
+
+    /**
+     * Valores del propósito "general": cliente (ispwatch customerByPhone) + empresa
+     * + fecha/hora. Listo para el futuro envío manual de plantillas desde el chat.
+     *
+     * @param  array<string, mixed>  $row     Forma de IspwatchRepository::customerByPhone.
+     * @param  callable  $money  Formateador de moneda.
+     * @return array<string, string>
+     */
+    private static function generalValues(array $row, Tenant $tenant, ?string $agentName, callable $money): array
+    {
+        $now    = Carbon::now()->locale('es');
+        $name   = trim((string) ($row['name'] ?? ''));
+        $first  = $name !== '' ? (explode(' ', $name)[0] ?? '') : '';
+        $hour   = (int) $now->format('H');
+        $saludo = $hour < 12 ? 'Buenos días' : ($hour < 19 ? 'Buenas tardes' : 'Buenas noches');
+
+        return [
+            'nombre_cliente'  => $name,
+            'primer_nombre'   => $first,
+            'correo'          => (string) ($row['email'] ?? ''),
+            'telefono'        => (string) ($row['tel'] ?? ''),
+            'cedula'          => (string) ($row['cedula'] ?? ''),
+            'documento'       => (string) ($row['document_number'] ?? ''),
+            'usuario_pppoe'   => (string) ($row['pppoe_username'] ?? ''),
+            'estado_servicio' => (string) ($row['service_status'] ?? ''),
+            'saldo_favor'     => $money($row['credit_balance'] ?? 0),
+            'direccion'       => (string) ($row['address'] ?? ''),
+            'ip_cliente'      => (string) ($row['ip_user'] ?? ''),
+            'empresa'         => (string) $tenant->name,
+            'agente'          => (string) ($agentName ?? ''),
+            'saludo'          => $saludo,
+            'fecha_actual'    => $now->format('d/m/Y'),
+            'hora_actual'     => $now->format('H:i'),
+            'dia_semana'      => $now->isoFormat('dddd'),
+            'mes_actual'      => $now->isoFormat('MMMM'),
+            'anio_actual'     => $now->format('Y'),
+            'fecha_larga'     => $now->isoFormat('D [de] MMMM [de] YYYY'),
+        ];
     }
 }

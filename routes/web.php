@@ -57,13 +57,15 @@ Route::middleware('auth')->group(function () {
     Route::delete('/labels/{label}', [LabelController::class, 'destroy'])->name('labels.destroy');
     Route::post('/labels/load-samples', [LabelController::class, 'loadSamples'])->name('labels.load-samples');
 
-    // Chat
+    // Chat — ver es para todos; escribir (enviar/asignar/notas/reabrir) requiere
+    // agent o admin; borrar la conversación es solo admin.
     Route::get('/chat', [ChatController::class, 'index'])->name('chat.index');
-    Route::post('/chat/send', [ChatController::class, 'sendMessage'])->name('chat.send');
-    Route::post('/chat/send-media', [ChatController::class, 'sendMedia'])->name('chat.send-media');
-    Route::patch('/chat/conversations/{conversation}/assign', [ChatController::class, 'assign'])->name('chat.conversations.assign');
-    Route::post('/chat/conversations/{conversation}/reopen', [ChatController::class, 'reopen'])->name('chat.conversations.reopen');
-    Route::delete('/chat/conversations/{conversation}', [ChatController::class, 'destroy'])->name('chat.conversations.destroy');
+    Route::post('/chat/send', [ChatController::class, 'sendMessage'])->middleware('role:agent')->name('chat.send');
+    Route::post('/chat/send-media', [ChatController::class, 'sendMedia'])->middleware('role:agent')->name('chat.send-media');
+    Route::patch('/chat/conversations/{conversation}/assign', [ChatController::class, 'assign'])->middleware('role:agent')->name('chat.conversations.assign');
+    Route::post('/chat/conversations/{conversation}/notes', [ChatController::class, 'storeNote'])->middleware('role:agent')->name('chat.notes.store');
+    Route::post('/chat/conversations/{conversation}/reopen', [ChatController::class, 'reopen'])->middleware('role:agent')->name('chat.conversations.reopen');
+    Route::delete('/chat/conversations/{conversation}', [ChatController::class, 'destroy'])->middleware('role:admin')->name('chat.conversations.destroy');
 
     // Media files (bypasses storage symlink issues, requires auth)
     Route::get('/media/{path}', [MediaController::class, 'serve'])
@@ -78,21 +80,25 @@ Route::middleware('auth')->group(function () {
     Route::patch('/templates/{template}/toggle', [TemplateController::class, 'toggleActive'])->name('templates.toggle');
     Route::delete('/templates/{template}', [TemplateController::class, 'destroy'])->name('templates.destroy');
 
-    // Staff
+    // Staff — la lista es de solo lectura para todos; gestionar staff es de admin.
     Route::get('/staff', [StaffController::class, 'index'])->name('staff.index');
-    Route::post('/staff', [StaffController::class, 'store'])->name('staff.store');
-    Route::post('/staff/invite', [StaffController::class, 'invite'])->name('staff.invite');
-    Route::put('/staff/{staff}', [StaffController::class, 'update'])->name('staff.update');
-    Route::patch('/staff/{staff}/toggle', [StaffController::class, 'toggle'])->name('staff.toggle');
-    Route::delete('/staff/{staff}', [StaffController::class, 'destroy'])->name('staff.destroy');
+    Route::middleware('role:admin')->group(function () {
+        Route::post('/staff', [StaffController::class, 'store'])->name('staff.store');
+        Route::post('/staff/invite', [StaffController::class, 'invite'])->name('staff.invite');
+        Route::put('/staff/{staff}', [StaffController::class, 'update'])->name('staff.update');
+        Route::patch('/staff/{staff}/toggle', [StaffController::class, 'toggle'])->name('staff.toggle');
+        Route::delete('/staff/{staff}', [StaffController::class, 'destroy'])->name('staff.destroy');
+    });
 
-    // Teams
+    // Teams — ver el listado/miembros es para todos; gestionar equipos es de admin.
     Route::get('/teams', [TeamController::class, 'index'])->name('teams.index');
-    Route::post('/teams', [TeamController::class, 'store'])->name('teams.store');
     Route::get('/teams/{team}/members', [TeamController::class, 'members'])->name('teams.members');
-    Route::post('/teams/load-samples', [TeamController::class, 'loadSamples'])->name('teams.load-samples');
-    Route::put('/teams/{team}', [TeamController::class, 'update'])->name('teams.update');
-    Route::delete('/teams/{team}', [TeamController::class, 'destroy'])->name('teams.destroy');
+    Route::middleware('role:admin')->group(function () {
+        Route::post('/teams', [TeamController::class, 'store'])->name('teams.store');
+        Route::post('/teams/load-samples', [TeamController::class, 'loadSamples'])->name('teams.load-samples');
+        Route::put('/teams/{team}', [TeamController::class, 'update'])->name('teams.update');
+        Route::delete('/teams/{team}', [TeamController::class, 'destroy'])->name('teams.destroy');
+    });
 
     // Quick Replies
     Route::get('/quick-replies', [QuickReplyController::class, 'index'])->name('quick-replies.index');
@@ -103,12 +109,15 @@ Route::middleware('auth')->group(function () {
     Route::post('/quick-replies/load-samples', [QuickReplyController::class, 'loadSamples'])->name('quick-replies.load-samples');
     Route::delete('/quick-replies/{quickReply}', [QuickReplyController::class, 'destroy'])->name('quick-replies.destroy');
 
-    // Closing Notes
+    // Closing Notes — la bitácora es de solo lectura para todos; crear/editar/
+    // cerrar/reabrir requiere agent o admin.
     Route::get('/closing-notes', [ClosingNoteController::class, 'index'])->name('closing-notes.index');
-    Route::post('/closing-notes', [ClosingNoteController::class, 'store'])->name('closing-notes.store');
-    Route::put('/closing-notes/{closingNote}', [ClosingNoteController::class, 'update'])->name('closing-notes.update');
-    Route::delete('/closing-notes/{closingNote}', [ClosingNoteController::class, 'destroy'])->name('closing-notes.destroy');
-    Route::post('/closing-notes/{closingNote}/reopen', [ClosingNoteController::class, 'reopen'])->name('closing-notes.reopen');
+    Route::middleware('role:agent')->group(function () {
+        Route::post('/closing-notes', [ClosingNoteController::class, 'store'])->name('closing-notes.store');
+        Route::put('/closing-notes/{closingNote}', [ClosingNoteController::class, 'update'])->name('closing-notes.update');
+        Route::delete('/closing-notes/{closingNote}', [ClosingNoteController::class, 'destroy'])->name('closing-notes.destroy');
+        Route::post('/closing-notes/{closingNote}/reopen', [ClosingNoteController::class, 'reopen'])->name('closing-notes.reopen');
+    });
 
     // Metrics
     Route::get('/metrics', [MetricsController::class, 'index'])->name('metrics.index');
@@ -124,6 +133,7 @@ Route::middleware('auth')->group(function () {
     Route::put('/settings/profile', [SettingsController::class, 'updateProfile'])->name('settings.profile.update');
     Route::put('/settings/whatsapp', [SettingsController::class, 'updateWhatsApp'])->name('settings.whatsapp.update');
     Route::put('/settings/notifications', [SettingsController::class, 'updateNotifications'])->name('settings.notifications.update');
+    Route::put('/settings/assignment', [SettingsController::class, 'updateAssignment'])->middleware('role:admin')->name('settings.assignment.update');
     Route::post('/settings/whatsapp/test', [SettingsController::class, 'testWhatsAppConnection'])->name('settings.whatsapp.test');
     Route::get('/settings/ispwatch/status', [SettingsController::class, 'ispwatchStatus'])->name('settings.ispwatch.status');
     // La vinculación con ispwatch NO es editable desde la UI: se hace con

@@ -567,11 +567,11 @@ const placeholderExample = 'Hola {{nombre_cliente}}, tu factura {{numero_factura
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-1">Propósito <span class="text-gray-400 font-normal">(para avisos automáticos)</span></label>
                                 <select v-model="form.event_key" class="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm bg-white focus:ring-2 focus:ring-accent/30 focus:border-accent">
-                                    <option value="">General (sin variables del sistema)</option>
+                                    <option value="">— Texto libre (sin variables) —</option>
                                     <option v-for="e in events" :key="e.key" :value="e.key">{{ e.label }}</option>
                                 </select>
                                 <p v-if="selectedEvent" class="text-[10px] text-gray-500 mt-1">{{ selectedEvent.description }} <span class="text-gray-400">· Se envía: {{ selectedEvent.trigger }}</span></p>
-                                <p v-else class="text-[10px] text-gray-400 mt-1">Elige para qué aviso sirve esta plantilla y así habilitar sus variables. «General» = sin variables automáticas.</p>
+                                <p v-else class="text-[10px] text-gray-400 mt-1">Elige el propósito para habilitar sus variables. «General» trae los datos del cliente, tu empresa y la fecha; los avisos automáticos traen los datos de la factura.</p>
                                 <p v-if="form.errors.event_key" class="text-red-500 text-xs mt-1">{{ form.errors.event_key }}</p>
                             </div>
 

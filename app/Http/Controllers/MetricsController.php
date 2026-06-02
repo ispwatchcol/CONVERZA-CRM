@@ -2,11 +2,12 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\ClosingNote;
 use App\Models\Contact;
 use App\Models\Conversation;
 use App\Models\Message;
+use App\Models\StaffMember;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
 
 class MetricsController extends Controller
@@ -34,6 +35,7 @@ class MetricsController extends Controller
             'messagesByHour' => $this->messagesByHour($tenantId, 30),
             'messagesByType' => $this->messagesByType($tenantId, 30),
             'topContacts'    => $this->topContacts($tenantId, 30, 5),
+            'perAgent'       => $this->perAgentStats($tenantId, 30),
         ]);
     }
 
@@ -61,6 +63,9 @@ class MetricsController extends Controller
             ->where('tenant_id', $tenantId)
             ->where('created_at', '>=', $from)
             ->whereIn('status', ['received', 'sent'])
+            // Las notas internas y los eventos de sistema (transferencias) se
+            // guardan con status='sent' pero NO son respuestas reales al cliente.
+            ->where(fn ($q) => $q->whereNull('type')->orWhereNotIn('type', ['system', 'note']))
             ->orderBy('conversation_id')
             ->orderBy('created_at')
             ->get(['conversation_id', 'status', 'created_at']);
@@ -293,5 +298,127 @@ class MetricsController extends Controller
                 'message_count' => (int) $c->message_count,
             ])
             ->all();
+    }
+
+    /**
+     * Productividad por agente en los últimos N días: mensajes enviados, chats
+     * cerrados (closing notes), conversaciones abiertas asignadas ahora y tiempo
+     * de respuesta promedio. Solo staff activo con rol agent/admin.
+     *
+     * @return array<int, array{user_id:int, name:string, messages_sent:int, conversations_closed:int, open_assigned:int, avg_response_seconds:?int}>
+     */
+    private function perAgentStats(int $tenantId, int $days): array
+    {
+        $from = now()->subDays($days)->startOfDay();
+
+        $staff = StaffMember::query()
+            ->where('tenant_id', $tenantId)
+            ->where('is_active', true)
+            ->whereIn('role', ['agent', 'admin'])
+            ->with('user:id,name')
+            ->get();
+
+        if ($staff->isEmpty()) {
+            return [];
+        }
+
+        // Mensajes enviados por usuario (incluye media; excluye sistema/notas).
+        $sentByUser = Message::query()
+            ->where('tenant_id', $tenantId)
+            ->where('created_at', '>=', $from)
+            ->where('status', 'sent')
+            ->whereNotNull('sent_by_user_id')
+            ->where(fn ($q) => $q->whereNull('type')->orWhereNotIn('type', ['system', 'note']))
+            ->selectRaw('sent_by_user_id, count(*) as n')
+            ->groupBy('sent_by_user_id')
+            ->pluck('n', 'sent_by_user_id');
+
+        // Cierres por usuario (cada closing note es una acción de cierre).
+        $closedByUser = ClosingNote::query()
+            ->where('tenant_id', $tenantId)
+            ->where('created_at', '>=', $from)
+            ->selectRaw('user_id, count(*) as n')
+            ->groupBy('user_id')
+            ->pluck('n', 'user_id');
+
+        // Conversaciones abiertas asignadas ahora, por staff_member id.
+        $openByStaff = Conversation::query()
+            ->where('tenant_id', $tenantId)
+            ->where('status', 'open')
+            ->whereNotNull('assigned_to')
+            ->selectRaw('assigned_to, count(*) as n')
+            ->groupBy('assigned_to')
+            ->pluck('n', 'assigned_to');
+
+        $responseByUser = $this->responseTimePerUser($tenantId, $days);
+
+        return $staff
+            ->map(function (StaffMember $s) use ($sentByUser, $closedByUser, $openByStaff, $responseByUser) {
+                $userId = (int) $s->user_id;
+
+                return [
+                    'user_id'              => $userId,
+                    'name'                 => $s->user?->name ?? 'Agente',
+                    'messages_sent'        => (int) ($sentByUser[$userId] ?? 0),
+                    'conversations_closed' => (int) ($closedByUser[$userId] ?? 0),
+                    'open_assigned'        => (int) ($openByStaff[$s->id] ?? 0),
+                    'avg_response_seconds' => $responseByUser[$userId] ?? null,
+                ];
+            })
+            ->sortByDesc('messages_sent')
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Igual que responseTime() pero atribuye cada respuesta al usuario que la
+     * envió (sent_by_user_id), para el desglose por agente.
+     *
+     * @return array<int, int> userId => promedio en segundos
+     */
+    private function responseTimePerUser(int $tenantId, int $days): array
+    {
+        $from = now()->subDays($days)->startOfDay();
+        $maxDeltaSeconds = 7 * 24 * 60 * 60;
+
+        $messages = Message::query()
+            ->where('tenant_id', $tenantId)
+            ->where('created_at', '>=', $from)
+            ->whereIn('status', ['received', 'sent'])
+            ->where(fn ($q) => $q->whereNull('type')->orWhereNotIn('type', ['system', 'note']))
+            ->orderBy('conversation_id')
+            ->orderBy('created_at')
+            ->get(['conversation_id', 'status', 'created_at', 'sent_by_user_id']);
+
+        $deltasByUser = [];
+
+        foreach ($messages->groupBy('conversation_id') as $convMessages) {
+            $msgs = $convMessages->values();
+            $count = $msgs->count();
+
+            for ($i = 0; $i < $count; $i++) {
+                if ($msgs[$i]->status !== 'received') {
+                    continue;
+                }
+                // Primer 'sent' posterior = la respuesta a este 'received'.
+                for ($j = $i + 1; $j < $count; $j++) {
+                    if ($msgs[$j]->status === 'sent') {
+                        $delta = $msgs[$j]->created_at->timestamp - $msgs[$i]->created_at->timestamp;
+                        $uid = $msgs[$j]->sent_by_user_id;
+                        if ($uid && $delta >= 0 && $delta <= $maxDeltaSeconds) {
+                            $deltasByUser[(int) $uid][] = $delta;
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+
+        $out = [];
+        foreach ($deltasByUser as $uid => $deltas) {
+            $out[$uid] = (int) round(array_sum($deltas) / count($deltas));
+        }
+
+        return $out;
     }
 }
