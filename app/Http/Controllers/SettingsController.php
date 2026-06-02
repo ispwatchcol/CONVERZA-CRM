@@ -23,9 +23,8 @@ class SettingsController extends Controller
             'tenant' => $this->serializeTenant($tenant),
             'workspace' => $this->workspaceInfo($tenant),
             'ispwatchStatus' => $this->ispwatchStatusFor($tenant),
-            // Avisos automáticos: catálogo de eventos + plantillas aprobadas +
-            // la asignación actual (evento → plantilla) de este tenant.
-            'notificationEvents'   => EventCatalog::forFrontend(),
+            // Avisos automáticos: solo eventos que se disparan por fecha (no "general").
+            'notificationEvents'   => EventCatalog::forFrontend(onlyAuto: true),
             'approvedTemplates'    => $this->approvedTemplates($tenant->id),
             'notificationRoutes'   => $this->notificationRoutesFor($tenant->id),
         ]);
@@ -128,8 +127,9 @@ class SettingsController extends Controller
         $tenant = app('tenant');
 
         $validated = $request->validate([
+            'master_enabled'       => ['required', 'boolean'],
             'routes'               => ['present', 'array'],
-            'routes.*.event_key'   => ['required', 'string', Rule::in(EventCatalog::keys())],
+            'routes.*.event_key'   => ['required', 'string', Rule::in(EventCatalog::autoKeys())],
             'routes.*.template_id' => [
                 'nullable', 'integer',
                 // Debe ser una plantilla aprobada y activa del propio tenant.
@@ -142,6 +142,9 @@ class SettingsController extends Controller
         ], [
             'routes.*.template_id.exists' => 'La plantilla elegida no es válida (debe estar aprobada y activa).',
         ]);
+
+        // Interruptor maestro del tenant (botón de pausa).
+        $tenant->update(['billing_notify_enabled' => (bool) $validated['master_enabled']]);
 
         foreach ($validated['routes'] as $route) {
             TenantNotificationRoute::updateOrCreate(
@@ -242,6 +245,7 @@ class SettingsController extends Controller
             'wa_business_account_id' => $tenant->wa_business_account_id,
             'wa_verify_token'        => $tenant->wa_verify_token,
             'wa_status'              => $tenant->wa_status,
+            'billing_notify_enabled' => (bool) $tenant->billing_notify_enabled,
             // Los tokens NO se devuelven nunca; solo si están seteados o no.
             'wa_access_token_set'    => filled($accessTokenRaw),
             'wa_app_secret_set'      => filled($appSecretRaw),

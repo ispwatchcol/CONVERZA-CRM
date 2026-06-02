@@ -33,6 +33,8 @@ const whatsappForm = useForm({
 
 // ── Avisos automáticos (evento → plantilla) ──────────────────────────────────
 const routesForm = useForm({
+    // Interruptor maestro: si está apagado, NO se envía ningún aviso de este tenant.
+    master_enabled: props.tenant.billing_notify_enabled ?? true,
     routes: props.notificationEvents.map((e) => {
         const r = props.notificationRoutes[e.key] || {};
         return {
@@ -52,6 +54,7 @@ function templatesForEvent(eventKey) {
 function saveNotifications() {
     routesForm
         .transform((data) => ({
+            master_enabled: !!data.master_enabled,
             routes: data.routes.map((r) => {
                 const templateId = r.template_id === '' || r.template_id == null ? null : Number(r.template_id);
                 return {
@@ -388,34 +391,58 @@ const waBadge = computed(() => {
                         </div>
                     </div>
 
-                    <div v-if="!approvedTemplates.length" class="rounded-xl bg-amber-50 border border-amber-100 p-4 text-sm text-amber-800">
-                        No tienes plantillas aprobadas y activas todavía. Créalas y sincronízalas en <Link :href="route('templates.index')" class="font-medium underline">Plantillas</Link> para poder asignarlas a un aviso.
-                    </div>
-
-                    <form v-else @submit.prevent="saveNotifications" class="space-y-3">
-                        <div v-for="(row, i) in routesForm.routes" :key="row.event_key"
-                             class="rounded-xl border border-gray-100 p-4 flex flex-col md:flex-row md:items-center gap-3">
-                            <div class="flex-1 min-w-0">
-                                <p class="text-sm font-semibold text-gray-900">{{ notificationEvents[i]?.label }}</p>
-                                <p class="text-xs text-gray-500 mt-0.5">{{ notificationEvents[i]?.description }}</p>
-                            </div>
-                            <div class="md:w-64">
-                                <select v-model="row.template_id"
-                                        class="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm bg-white focus:ring-2 focus:ring-accent/30 focus:border-accent">
-                                    <option value="">— Sin plantilla —</option>
-                                    <option v-for="t in templatesForEvent(row.event_key)" :key="t.id" :value="t.id">{{ t.name }}</option>
-                                </select>
-                                <p v-if="!templatesForEvent(row.event_key).length" class="text-[10px] text-amber-700 mt-1">
-                                    Ninguna plantilla con este propósito. Tagea una en Plantillas.
+                    <form @submit.prevent="saveNotifications" class="space-y-3">
+                        <!-- Interruptor MAESTRO: pausa todos los avisos de este workspace -->
+                        <div class="rounded-xl border p-4 flex items-center justify-between gap-3 transition-colors"
+                             :class="routesForm.master_enabled ? 'bg-emerald-50 border-emerald-100' : 'bg-gray-50 border-gray-200'">
+                            <div class="min-w-0">
+                                <p class="text-sm font-semibold flex items-center gap-2" :class="routesForm.master_enabled ? 'text-emerald-900' : 'text-gray-700'">
+                                    <span class="w-2 h-2 rounded-full" :class="routesForm.master_enabled ? 'bg-emerald-500' : 'bg-gray-400'"></span>
+                                    {{ routesForm.master_enabled ? 'Avisos automáticos ACTIVADOS' : 'Avisos automáticos PAUSADOS' }}
+                                </p>
+                                <p class="text-xs mt-1" :class="routesForm.master_enabled ? 'text-emerald-700' : 'text-gray-500'">
+                                    Interruptor general de este workspace. Si lo apagas, no se envía <strong>ningún</strong> aviso, sin importar lo de abajo.
                                 </p>
                             </div>
-                            <label class="inline-flex items-center gap-2 cursor-pointer shrink-0"
-                                   :class="{ 'opacity-40 cursor-not-allowed': !row.template_id }">
-                                <input type="checkbox" v-model="row.enabled" :disabled="!row.template_id"
-                                       class="rounded border-gray-300 text-accent focus:ring-accent/30">
-                                <span class="text-sm text-gray-700">Activo</span>
-                            </label>
+                            <button type="button" @click="routesForm.master_enabled = !routesForm.master_enabled"
+                                    class="relative inline-flex h-6 w-11 shrink-0 rounded-full transition-colors"
+                                    :class="routesForm.master_enabled ? 'bg-emerald-500' : 'bg-gray-300'"
+                                    :aria-pressed="routesForm.master_enabled">
+                                <span class="absolute top-0.5 h-5 w-5 bg-white rounded-full shadow transition-all"
+                                      :class="routesForm.master_enabled ? 'left-5' : 'left-0.5'"></span>
+                            </button>
                         </div>
+
+                        <div v-if="!approvedTemplates.length" class="rounded-xl bg-amber-50 border border-amber-100 p-4 text-sm text-amber-800">
+                            No tienes plantillas aprobadas y activas todavía. Créalas y sincronízalas en <Link :href="route('templates.index')" class="font-medium underline">Plantillas</Link> para poder asignarlas a un aviso.
+                        </div>
+
+                        <template v-else>
+                            <div v-for="(row, i) in routesForm.routes" :key="row.event_key"
+                                 class="rounded-xl border border-gray-100 p-4 flex flex-col md:flex-row md:items-center gap-3 transition-opacity"
+                                 :class="{ 'opacity-50': !routesForm.master_enabled }">
+                                <div class="flex-1 min-w-0">
+                                    <p class="text-sm font-semibold text-gray-900">{{ notificationEvents[i]?.label }}</p>
+                                    <p class="text-xs text-gray-500 mt-0.5">{{ notificationEvents[i]?.description }}</p>
+                                </div>
+                                <div class="md:w-64">
+                                    <select v-model="row.template_id"
+                                            class="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm bg-white focus:ring-2 focus:ring-accent/30 focus:border-accent">
+                                        <option value="">— Sin plantilla —</option>
+                                        <option v-for="t in templatesForEvent(row.event_key)" :key="t.id" :value="t.id">{{ t.name }}</option>
+                                    </select>
+                                    <p v-if="!templatesForEvent(row.event_key).length" class="text-[10px] text-amber-700 mt-1">
+                                        Ninguna plantilla con este propósito. Tagea una en Plantillas.
+                                    </p>
+                                </div>
+                                <label class="inline-flex items-center gap-2 cursor-pointer shrink-0"
+                                       :class="{ 'opacity-40 cursor-not-allowed': !row.template_id }">
+                                    <input type="checkbox" v-model="row.enabled" :disabled="!row.template_id"
+                                           class="rounded border-gray-300 text-accent focus:ring-accent/30">
+                                    <span class="text-sm text-gray-700">Activo</span>
+                                </label>
+                            </div>
+                        </template>
 
                         <div class="flex justify-end pt-2 border-t border-gray-50">
                             <button type="submit" :disabled="routesForm.processing"
