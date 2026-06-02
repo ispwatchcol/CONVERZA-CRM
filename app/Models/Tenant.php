@@ -20,6 +20,7 @@ class Tenant extends Model
         'wa_invoice_template',
         'wa_reminder_template',
         'billing_notify_enabled',
+        'auto_assign_enabled',
         'is_active',
     ];
 
@@ -33,6 +34,7 @@ class Tenant extends Model
         return [
             'is_active' => 'boolean',
             'billing_notify_enabled' => 'boolean',
+            'auto_assign_enabled' => 'boolean',
             'wa_access_token' => 'encrypted',
             'wa_app_secret' => 'encrypted',
         ];

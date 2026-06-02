@@ -1,7 +1,7 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
-import { useForm, router, Link, Head } from '@inertiajs/vue3';
-import { ref, onMounted, onUnmounted, nextTick, watch } from 'vue';
+import { useForm, router, Link, Head, usePage } from '@inertiajs/vue3';
+import { ref, onMounted, onUnmounted, nextTick, watch, computed } from 'vue';
 
 const props = defineProps({
     conversations: { type: Array, default: () => [] },
@@ -18,7 +18,19 @@ const props = defineProps({
     myStaffMemberId: { type: Number, default: null },
     filter: { type: String, default: 'all' },
     filterCounts: { type: Object, default: () => ({}) },
+    presence: { type: Object, default: () => ({ viewers: [] }) },
 });
+
+// Nombres de otros agentes viendo este chat ahora (detección de colisión).
+const viewerNames = computed(() => (props.presence?.viewers ?? []).map(v => v.name).join(', '));
+
+// ── Permisos según rol (viewer < agent < admin) ──────────────────────────────
+// El backend ya bloquea estas acciones; aquí solo ocultamos la UI para no
+// mostrar botones que devolverían 403.
+const page = usePage();
+const myRole = computed(() => page.props.auth?.user?.role ?? 'agent');
+const canWrite = computed(() => myRole.value !== 'viewer'); // agent o admin
+const isAdmin = computed(() => myRole.value === 'admin');
 
 const showNewChatModal = ref(false);
 const showQuickReplies = ref(false);
@@ -46,6 +58,7 @@ watch(() => props.activeConversationId, (val) => {
     form.conversation_id = val;
     form.phone = props.activePhone || '';
     clearSelectedFile();
+    noteMode.value = false;
     scrollToBottom();
 });
 
@@ -59,8 +72,25 @@ function scrollToBottom() {
     });
 }
 
+// ── Nota interna vs. mensaje al cliente ──────────────────────────────────────
+// Cuando noteMode está activo, el composer escribe una nota interna (solo el
+// equipo la ve) en vez de enviar un WhatsApp al cliente.
+const noteMode = ref(false);
+const noteSending = ref(false);
+
 const submit = () => {
     if (!form.message.trim()) return;
+
+    if (noteMode.value) {
+        noteSending.value = true;
+        router.post(route('chat.notes.store', props.activeConversationId), { note: form.message }, {
+            preserveScroll: true,
+            onSuccess: () => { form.reset('message'); scrollToBottom(); },
+            onFinish: () => { noteSending.value = false; },
+        });
+        return;
+    }
+
     form.post(route('chat.send'), {
         onSuccess: () => { form.reset('message'); scrollToBottom(); },
         preserveScroll: true,
@@ -457,7 +487,9 @@ function googleMapsUrl(body) {
 let pollingInterval = null;
 onMounted(() => {
     pollingInterval = setInterval(() => {
-        router.reload({ only: ['conversations', 'activeChat'], preserveScroll: true, preserveState: true });
+        // 'presence' + 'staffMembers' también registran el heartbeat de presencia
+        // en el backend (el partial reload ejecuta ChatController::index completo).
+        router.reload({ only: ['conversations', 'activeChat', 'staffMembers', 'presence'], preserveScroll: true, preserveState: true });
     }, 5000);
 });
 onUnmounted(() => { if (pollingInterval) clearInterval(pollingInterval); });
@@ -562,6 +594,7 @@ onUnmounted(() => window.removeEventListener('resize', handleResize));
                                 </div>
                             </Link>
                             <button
+                                v-if="isAdmin"
                                 @click.prevent.stop="confirmDelete(conv)"
                                 class="absolute top-1/2 -translate-y-1/2 right-2 p-1.5 rounded-full text-gray-400 hover:text-red-500 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-opacity"
                                 title="Eliminar conversación"
@@ -606,7 +639,7 @@ onUnmounted(() => window.removeEventListener('resize', handleResize));
                         </div>
 
                         <!-- ── Asignación (dropdown) ── -->
-                        <div class="relative">
+                        <div v-if="canWrite" class="relative">
                             <button @click="showAssignMenu = !showAssignMenu"
                                     class="inline-flex items-center gap-1.5 px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs font-medium text-gray-700 hover:bg-gray-50 hover:border-gray-300 transition">
                                 <span v-if="activeAssignedTo"
@@ -636,10 +669,16 @@ onUnmounted(() => window.removeEventListener('resize', handleResize));
                                         @click="assignTo(staff.id)"
                                         class="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 transition"
                                         :class="{ 'bg-emerald-50': activeAssignedTo?.id === staff.id }">
-                                    <span class="w-6 h-6 rounded-full bg-emerald-500 flex items-center justify-center text-[10px] font-bold text-white">
-                                        {{ staff.initial?.toUpperCase() }}
+                                    <span class="relative shrink-0">
+                                        <span class="w-6 h-6 rounded-full bg-emerald-500 flex items-center justify-center text-[10px] font-bold text-white">
+                                            {{ staff.initial?.toUpperCase() }}
+                                        </span>
+                                        <span v-if="staff.is_online" class="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-green-400 ring-2 ring-white" title="En línea"></span>
                                     </span>
-                                    <span class="flex-1 text-left">{{ staff.name }}</span>
+                                    <span class="flex-1 text-left">
+                                        {{ staff.name }}
+                                        <span v-if="staff.is_online" class="block text-[9px] text-green-600 font-medium leading-tight">en línea</span>
+                                    </span>
                                     <svg v-if="activeAssignedTo?.id === staff.id" class="w-4 h-4 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"/></svg>
                                 </button>
 
@@ -651,7 +690,7 @@ onUnmounted(() => window.removeEventListener('resize', handleResize));
                             </div>
                         </div>
 
-                        <button v-if="activeStatus !== 'closed'" @click="openCloseModal"
+                        <button v-if="canWrite && activeStatus !== 'closed'" @click="openCloseModal"
                                 class="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 rounded-lg text-xs font-medium text-gray-700 hover:bg-gray-50 hover:border-gray-300 transition">
                             <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
                             Cerrar
@@ -667,15 +706,37 @@ onUnmounted(() => window.removeEventListener('resize', handleResize));
                         </button>
                     </div>
 
+                    <!-- Banner de colisión: otros agentes viendo este chat ahora -->
+                    <div v-if="presence.viewers.length" class="bg-amber-50 border-b border-amber-200 px-4 py-1.5 flex items-center gap-2 text-[11px] text-amber-800 shrink-0 z-10">
+                        <svg class="w-3.5 h-3.5 text-amber-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                        <span><strong class="font-semibold">{{ viewerNames }}</strong> {{ presence.viewers.length > 1 ? 'también están' : 'también está' }} viendo este chat ahora.</span>
+                    </div>
+
                     <!-- Messages -->
                     <div ref="messagesContainer" class="flex-1 overflow-y-auto p-4 space-y-2 z-0 relative">
                         <div v-for="msg in activeChat" :key="msg.id" class="flex animate-fade-in"
-                             :class="{ 'justify-end': msg.status === 'sent' && msg.type !== 'system', 'justify-center': msg.type === 'system' }">
+                             :class="{ 'justify-end': msg.status === 'sent' && msg.type !== 'system' && msg.type !== 'note', 'justify-center': msg.type === 'system' || msg.type === 'note' }">
 
                             <!-- ─── Sistema (transferencias / eventos) ──────────────── -->
                             <div v-if="msg.type === 'system'" class="max-w-[85%] my-1">
                                 <div class="inline-block rounded-lg bg-black/5 px-3 py-1 text-[11px] text-gray-500 text-center">
                                     {{ msg.body }}
+                                </div>
+                            </div>
+
+                            <!-- ─── Nota interna (solo el equipo, NO se envía al cliente) ─── -->
+                            <div v-else-if="msg.type === 'note'" class="max-w-[85%] my-1">
+                                <div class="rounded-xl bg-amber-50 border border-amber-200 px-3 py-2 shadow-sm">
+                                    <div class="flex items-center gap-1.5 mb-0.5">
+                                        <svg class="w-3.5 h-3.5 text-amber-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" /></svg>
+                                        <span class="text-[10px] font-semibold text-amber-700 uppercase tracking-wide">Nota interna</span>
+                                        <span v-if="msg.sender_name" class="text-[10px] text-amber-600">· {{ msg.sender_name }}</span>
+                                        <span class="text-[9px] text-amber-500/80 italic ml-auto">solo el equipo</span>
+                                    </div>
+                                    <p class="text-sm text-amber-900 whitespace-pre-wrap break-words">{{ msg.body }}</p>
+                                    <div class="flex items-center justify-end mt-0.5">
+                                        <span class="text-[10px] text-amber-500">{{ formatTime(msg.created_at) }}</span>
+                                    </div>
                                 </div>
                             </div>
 
@@ -913,14 +974,14 @@ onUnmounted(() => window.removeEventListener('resize', handleResize));
                             <svg class="w-4 h-4 text-gray-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z"/></svg>
                             <span class="truncate">Esta conversación está cerrada. No puedes enviar mensajes hasta reabrirla.</span>
                         </div>
-                        <button @click="reopenConversation"
+                        <button v-if="canWrite" @click="reopenConversation"
                                 class="shrink-0 px-3 py-1.5 bg-accent text-white rounded-lg text-xs font-medium hover:bg-accent-hover transition">
                             Reabrir
                         </button>
                     </div>
 
-                    <!-- Input Area -->
-                    <div v-else class="bg-[#f0f2f5] p-3 z-10 shrink-0">
+                    <!-- Input Area (solo agent/admin pueden escribir) -->
+                    <div v-else-if="canWrite" class="bg-[#f0f2f5] p-3 z-10 shrink-0">
 
                         <!-- Vista previa del archivo seleccionado -->
                         <div v-if="selectedFile" class="mb-2 bg-white rounded-xl border border-gray-200 shadow-sm p-3 flex items-center gap-3">
@@ -988,14 +1049,37 @@ onUnmounted(() => window.removeEventListener('resize', handleResize));
                                 </div>
                             </div>
 
-                            <div class="flex-1 bg-white rounded-xl flex items-center shadow-sm border border-gray-100 focus-within:ring-2 focus-within:ring-accent/30">
-                                <textarea v-model="form.message" rows="1" placeholder="Escribe un mensaje" class="w-full border-none focus:ring-0 rounded-xl resize-none py-3 px-4 text-sm max-h-32 bg-transparent" @keydown.enter.exact.prevent="submit"></textarea>
+                            <!-- Toggle: nota interna -->
+                            <button type="button" @click="noteMode = !noteMode"
+                                    class="p-2.5 rounded-lg transition group relative shrink-0"
+                                    :class="noteMode ? 'text-amber-600 bg-amber-100' : 'text-gray-500 hover:text-amber-500 hover:bg-amber-50'"
+                                    :title="noteMode ? 'Modo nota interna activo (clic para volver a chat)' : 'Escribir nota interna'">
+                                <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" /></svg>
+                                <span class="absolute -top-8 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-[10px] px-2 py-0.5 rounded-md whitespace-nowrap opacity-0 group-hover:opacity-100 transition pointer-events-none">Nota interna</span>
+                            </button>
+
+                            <div class="flex-1 rounded-xl flex items-center shadow-sm border focus-within:ring-2 transition"
+                                 :class="noteMode ? 'bg-amber-50 border-amber-200 focus-within:ring-amber-300/40' : 'bg-white border-gray-100 focus-within:ring-accent/30'">
+                                <textarea v-model="form.message" rows="1"
+                                          :placeholder="noteMode ? 'Nota interna (solo el equipo la verá)…' : 'Escribe un mensaje'"
+                                          class="w-full border-none focus:ring-0 rounded-xl resize-none py-3 px-4 text-sm max-h-32 bg-transparent"
+                                          @keydown.enter.exact.prevent="submit"></textarea>
                             </div>
-                            <button type="submit" :disabled="form.processing || !form.message" class="p-3 bg-accent text-white rounded-xl hover:bg-accent-hover disabled:opacity-50 transition shadow-sm flex items-center justify-center h-11 w-11">
-                                <svg v-if="!form.processing" class="w-5 h-5 rotate-90" fill="currentColor" viewBox="0 0 20 20"><path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" /></svg>
-                                <svg v-else class="animate-spin w-5 h-5" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+                            <button type="submit" :disabled="(noteMode ? noteSending : form.processing) || !form.message"
+                                    class="p-3 text-white rounded-xl disabled:opacity-50 transition shadow-sm flex items-center justify-center h-11 w-11"
+                                    :class="noteMode ? 'bg-amber-500 hover:bg-amber-600' : 'bg-accent hover:bg-accent-hover'"
+                                    :title="noteMode ? 'Guardar nota interna' : 'Enviar mensaje'">
+                                <svg v-if="noteMode ? noteSending : form.processing" class="animate-spin w-5 h-5" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+                                <svg v-else-if="noteMode" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" /></svg>
+                                <svg v-else class="w-5 h-5 rotate-90" fill="currentColor" viewBox="0 0 20 20"><path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" /></svg>
                             </button>
                         </form>
+                    </div>
+
+                    <!-- Solo lectura: los viewers no pueden enviar mensajes -->
+                    <div v-else class="bg-[#f0f2f5] px-4 py-3.5 z-10 shrink-0 flex items-center justify-center gap-2 text-xs text-gray-500 border-t border-gray-200">
+                        <svg class="w-4 h-4 text-gray-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z"/></svg>
+                        <span>Tienes acceso de <strong class="font-semibold">solo lectura</strong>. No puedes enviar mensajes ni notas.</span>
                     </div>
                 </template>
 

@@ -8,6 +8,7 @@ use App\Models\Message;
 use App\Models\QuickReply;
 use App\Models\StaffMember;
 use App\Services\Ispwatch\IspwatchRepository;
+use App\Services\Presence\PresenceService;
 use App\Services\WhatsAppService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -20,6 +21,7 @@ class ChatController extends Controller
     public function __construct(
         protected WhatsAppService $whatsappService,
         protected IspwatchRepository $ispwatch,
+        protected PresenceService $presence,
     ) {}
 
     public function index(Request $request)
@@ -116,6 +118,12 @@ class ChatController extends Controller
             }
         }
 
+        // Heartbeat de presencia: registra que este usuario está en línea y, si
+        // hay conversación activa, que la está viendo (base de la colisión). Corre
+        // también en cada poll de 5s, porque el partial reload ejecuta el método
+        // completo aunque solo serialice algunas props.
+        $this->presence->heartbeat($tenantId, $userId, $request->user()->name, $activeConversation?->id);
+
         // Resolución de ispwatch memoizada: una sola vez por petición aunque
         // la consuman dos props (customer + invoices).
         $ispwatchData = null;
@@ -153,19 +161,33 @@ class ChatController extends Controller
             'ispwatchCustomer'     => fn () => $resolveIspwatch()[0],
             'ispwatchInvoices'     => fn () => $resolveIspwatch()[1],
 
-            'staffMembers'         => fn () => StaffMember::query()
-                ->where('tenant_id', $tenantId)
-                ->where('is_active', true)
-                ->with('user:id,name')
-                ->orderBy('id')
-                ->get()
-                ->map(fn (StaffMember $s) => [
-                    'id'      => $s->id,
-                    'name'    => $s->user?->name ?? 'Agente',
-                    'initial' => mb_substr($s->user?->name ?? '?', 0, 1),
-                    'is_me'   => $s->id === $myStaffMember->id,
-                ])
-                ->all(),
+            'staffMembers'         => function () use ($tenantId, $myStaffMember) {
+                $onlineUserIds = $this->presence->onlineUserIds($tenantId);
+
+                return StaffMember::query()
+                    ->where('tenant_id', $tenantId)
+                    ->where('is_active', true)
+                    ->with('user:id,name')
+                    ->orderBy('id')
+                    ->get()
+                    ->map(fn (StaffMember $s) => [
+                        'id'        => $s->id,
+                        'user_id'   => $s->user_id,
+                        'name'      => $s->user?->name ?? 'Agente',
+                        'initial'   => mb_substr($s->user?->name ?? '?', 0, 1),
+                        'is_me'     => $s->id === $myStaffMember->id,
+                        'is_online' => in_array((int) $s->user_id, $onlineUserIds, true),
+                    ])
+                    ->all();
+            },
+
+            // Presencia para detección de colisión: otros usuarios viendo la
+            // conversación activa AHORA. Refresca en cada poll de 5s.
+            'presence'             => fn () => [
+                'viewers' => $activeConversation
+                    ? $this->presence->viewersOf($activeConversation->id, $userId)
+                    : [],
+            ],
 
             'filterCounts'         => fn () => $this->filterCounts($tenantId, $myStaffMember->id),
         ]);
@@ -406,6 +428,36 @@ class ChatController extends Controller
         $conversation->delete();
 
         return redirect()->route('chat.index')->with('success', 'Conversación eliminada.');
+    }
+
+    /**
+     * Agrega una NOTA INTERNA a la conversación: un mensaje visible solo para
+     * el equipo, que NUNCA se envía al cliente por WhatsApp. Se guarda como
+     * Message type='note' para reaprovechar el timeline y el polling.
+     *
+     * No llama a touch(): una nota no debe reordenar la lista ni cambiar el
+     * "último mensaje" mostrado (latestMessage ya excluye type='note').
+     */
+    public function storeNote(Request $request, Conversation $conversation)
+    {
+        $tenantId = app('tenant')->id;
+        abort_if($conversation->tenant_id !== $tenantId, 403);
+
+        $validated = $request->validate([
+            'note' => ['required', 'string', 'min:1', 'max:4096'],
+        ]);
+
+        Message::create([
+            'tenant_id'       => $tenantId,
+            'conversation_id' => $conversation->id,
+            'contact_id'      => $conversation->contact_id,
+            'body'            => $validated['note'],
+            'status'          => 'sent',
+            'type'            => 'note',
+            'sent_by_user_id' => $request->user()->id,
+        ]);
+
+        return back()->with('success', 'Nota interna agregada.');
     }
 
     /**

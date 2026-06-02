@@ -1,6 +1,6 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
-import { useForm, Head, Link } from '@inertiajs/vue3';
+import { useForm, Head, Link, usePage } from '@inertiajs/vue3';
 import { ref, computed } from 'vue';
 import axios from 'axios';
 
@@ -30,6 +30,17 @@ const whatsappForm = useForm({
     wa_access_token: '',
     wa_app_secret: '',
 });
+
+// ── Asignación automática ────────────────────────────────────────────────────
+const assignForm = useForm({
+    auto_assign_enabled: props.tenant.auto_assign_enabled ?? false,
+});
+function saveAssignment() {
+    assignForm.put(route('settings.assignment.update'), { preserveScroll: true });
+}
+
+// Solo el admin del tenant configura la asignación automática.
+const isAdmin = computed(() => usePage().props.auth?.user?.role === 'admin');
 
 // ── Avisos automáticos (evento → plantilla) ──────────────────────────────────
 const routesForm = useForm({
@@ -372,6 +383,48 @@ const waBadge = computed(() => {
                             </button>
                             <button type="submit" :disabled="whatsappForm.processing" class="px-5 py-2.5 bg-accent text-white rounded-xl text-sm font-medium hover:bg-accent-hover transition disabled:opacity-50">
                                 {{ whatsappForm.processing ? 'Guardando…' : 'Guardar credenciales' }}
+                            </button>
+                        </div>
+                    </form>
+                </section>
+
+                <!-- ═══════════════ ASIGNACIÓN AUTOMÁTICA ═══════════════ -->
+                <section v-if="isAdmin" class="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+                    <div class="flex items-center mb-4">
+                        <div class="w-9 h-9 rounded-xl bg-indigo-50 flex items-center justify-center mr-3">
+                            <svg class="w-5 h-5 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M18 18.72a9.094 9.094 0 003.741-.479 3 3 0 00-4.682-2.72m.94 3.198l.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0112 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 016 18.719m12 0a5.971 5.971 0 00-.941-3.197m0 0A5.995 5.995 0 0012 12.75a5.995 5.995 0 00-5.058 2.772m0 0a3 3 0 00-4.681 2.72 8.986 8.986 0 003.74.477m.94-3.197a5.971 5.971 0 00-.94 3.197M15 6.75a3 3 0 11-6 0 3 3 0 016 0zm6 3a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0zm-13.5 0a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0z"/></svg>
+                        </div>
+                        <div>
+                            <h3 class="text-base font-semibold text-gray-900">Asignación automática</h3>
+                            <p class="text-xs text-gray-500">Reparte las conversaciones entrantes sin dueño al agente con menos chats abiertos.</p>
+                        </div>
+                    </div>
+
+                    <form @submit.prevent="saveAssignment" class="space-y-3">
+                        <div class="rounded-xl border p-4 flex items-center justify-between gap-3 transition-colors"
+                             :class="assignForm.auto_assign_enabled ? 'bg-indigo-50 border-indigo-100' : 'bg-gray-50 border-gray-200'">
+                            <div class="min-w-0">
+                                <p class="text-sm font-semibold flex items-center gap-2" :class="assignForm.auto_assign_enabled ? 'text-indigo-900' : 'text-gray-700'">
+                                    <span class="w-2 h-2 rounded-full" :class="assignForm.auto_assign_enabled ? 'bg-indigo-500' : 'bg-gray-400'"></span>
+                                    {{ assignForm.auto_assign_enabled ? 'Auto-asignación ACTIVADA' : 'Auto-asignación DESACTIVADA' }}
+                                </p>
+                                <p class="text-xs mt-1" :class="assignForm.auto_assign_enabled ? 'text-indigo-700' : 'text-gray-500'">
+                                    Al llegar un mensaje a un chat abierto <strong>sin asignar</strong>, se asigna al agente o admin activo con menos conversaciones abiertas. Los viewers no entran al reparto.
+                                </p>
+                            </div>
+                            <button type="button" @click="assignForm.auto_assign_enabled = !assignForm.auto_assign_enabled"
+                                    class="relative inline-flex h-6 w-11 shrink-0 rounded-full transition-colors"
+                                    :class="assignForm.auto_assign_enabled ? 'bg-indigo-500' : 'bg-gray-300'"
+                                    :aria-pressed="assignForm.auto_assign_enabled">
+                                <span class="absolute top-0.5 h-5 w-5 bg-white rounded-full shadow transition-all"
+                                      :class="assignForm.auto_assign_enabled ? 'left-5' : 'left-0.5'"></span>
+                            </button>
+                        </div>
+
+                        <div class="flex justify-end">
+                            <button type="submit" :disabled="assignForm.processing"
+                                    class="px-5 py-2.5 bg-accent text-white rounded-xl text-sm font-medium hover:bg-accent-hover transition disabled:opacity-50">
+                                {{ assignForm.processing ? 'Guardando…' : 'Guardar' }}
                             </button>
                         </div>
                     </form>

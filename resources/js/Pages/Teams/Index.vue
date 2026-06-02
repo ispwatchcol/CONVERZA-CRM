@@ -1,6 +1,6 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
-import { useForm, router, Head, Link } from '@inertiajs/vue3';
+import { useForm, router, Head, Link, usePage } from '@inertiajs/vue3';
 import { ref, computed } from 'vue';
 import axios from 'axios';
 
@@ -8,6 +8,9 @@ const props = defineProps({
     teams: { type: Array, default: () => [] },
     stats: { type: Object, default: () => ({}) },
 });
+
+// Gestionar equipos es solo de admin (el backend ya lo bloquea con role:admin).
+const isAdmin = computed(() => usePage().props.auth?.user?.role === 'admin');
 
 const presetColors = [
     '#ef4444', '#f97316', '#f59e0b', '#eab308',
@@ -102,7 +105,7 @@ const roleLabels = { admin: 'Admin', agent: 'Agente', viewer: 'Visor' };
                     <h1 class="text-2xl font-bold text-gray-900">Equipos</h1>
                     <p class="text-sm text-gray-500 mt-1">Organiza tu staff en departamentos (soporte, ventas, cobranza...)</p>
                 </div>
-                <button @click="openCreate" class="inline-flex items-center px-4 py-2.5 bg-accent text-white rounded-xl text-sm font-medium hover:bg-accent-hover transition shadow-sm">
+                <button v-if="isAdmin" @click="openCreate" class="inline-flex items-center px-4 py-2.5 bg-accent text-white rounded-xl text-sm font-medium hover:bg-accent-hover transition shadow-sm">
                     <svg class="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
                     Nuevo equipo
                 </button>
@@ -140,7 +143,7 @@ const roleLabels = { admin: 'Admin', agent: 'Agente', viewer: 'Visor' };
                                 <path stroke-linecap="round" stroke-linejoin="round" d="M18 18.72a9.094 9.094 0 003.741-.479 3 3 0 00-4.682-2.72m.94 3.198l.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0112 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 016 18.719m12 0a5.971 5.971 0 00-.941-3.197m0 0A5.995 5.995 0 0012 12.75a5.995 5.995 0 00-5.058 2.772m0 0a3 3 0 00-4.681 2.72 8.986 8.986 0 003.74.477m.94-3.197a5.971 5.971 0 00-.94 3.197M15 6.75a3 3 0 11-6 0 3 3 0 016 0zm6 3a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0zm-13.5 0a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0z"/>
                             </svg>
                         </div>
-                        <div class="flex space-x-0.5 opacity-0 group-hover:opacity-100 transition" @click.stop>
+                        <div v-if="isAdmin" class="flex space-x-0.5 opacity-0 group-hover:opacity-100 transition" @click.stop>
                             <button @click="openEdit(team)" class="p-1.5 rounded-lg text-blue-500 hover:bg-blue-50 transition" title="Editar">
                                 <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z"/></svg>
                             </button>
@@ -168,7 +171,7 @@ const roleLabels = { admin: 'Admin', agent: 'Agente', viewer: 'Visor' };
                 <svg class="w-16 h-16 mx-auto mb-4 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M18 18.72a9.094 9.094 0 003.741-.479 3 3 0 00-4.682-2.72m.94 3.198l.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0112 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 016 18.719m12 0a5.971 5.971 0 00-.941-3.197m0 0A5.995 5.995 0 0012 12.75a5.995 5.995 0 00-5.058 2.772m0 0a3 3 0 00-4.681 2.72 8.986 8.986 0 003.74.477m.94-3.197a5.971 5.971 0 00-.94 3.197M15 6.75a3 3 0 11-6 0 3 3 0 016 0zm6 3a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0zm-13.5 0a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0z"/></svg>
                 <h3 class="text-base font-semibold text-gray-700 mb-1">Aún no hay equipos</h3>
                 <p class="text-sm text-gray-400 mb-5 max-w-md mx-auto">Los equipos te permiten agrupar agentes por departamento y dirigir conversaciones (ej. "Soporte", "Ventas").</p>
-                <div class="flex justify-center gap-2">
+                <div v-if="isAdmin" class="flex justify-center gap-2">
                     <button @click="openCreate" class="px-4 py-2 bg-accent text-white rounded-xl text-sm font-medium hover:bg-accent-hover transition">Crear el primero</button>
                     <button @click="loadSamples" class="px-4 py-2 border border-gray-200 text-gray-700 rounded-xl text-sm font-medium hover:bg-gray-50 transition">Cargar 4 ejemplos</button>
                 </div>
@@ -238,7 +241,7 @@ const roleLabels = { admin: 'Admin', agent: 'Agente', viewer: 'Visor' };
                             </div>
 
                             <!-- Acciones -->
-                            <div class="flex flex-col sm:flex-row gap-2 mt-5 pt-4 border-t border-gray-100">
+                            <div v-if="isAdmin" class="flex flex-col sm:flex-row gap-2 mt-5 pt-4 border-t border-gray-100">
                                 <button @click="openEdit(selected)" class="flex-1 px-4 py-2.5 bg-accent text-white rounded-xl text-sm font-medium hover:bg-accent-hover transition">
                                     Editar equipo
                                 </button>

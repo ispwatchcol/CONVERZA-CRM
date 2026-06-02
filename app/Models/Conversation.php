@@ -6,6 +6,7 @@ use App\Models\Concerns\BelongsToTenant;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class Conversation extends Model
 {
@@ -38,8 +39,19 @@ class Conversation extends Model
         return $this->hasMany(ClosingNote::class);
     }
 
-    public function latestMessage()
+    /**
+     * El "último mensaje" de la lista de chats y el cálculo de "cliente
+     * esperando" del dashboard deben reflejar la conversación real con el
+     * cliente, NO las notas internas ni los eventos de sistema (transferencias).
+     * type NULL = mensaje de texto saliente antiguo, por eso se incluye.
+     */
+    public function latestMessage(): HasOne
     {
-        return $this->hasOne(Message::class)->latestOfMany();
+        return $this->hasOne(Message::class)->ofMany(
+            ['created_at' => 'max', 'id' => 'max'],
+            fn ($query) => $query->where(function ($q) {
+                $q->whereNull('type')->orWhereNotIn('type', ['system', 'note']);
+            }),
+        );
     }
 }

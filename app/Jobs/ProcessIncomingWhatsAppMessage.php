@@ -6,6 +6,7 @@ use App\Models\Contact;
 use App\Models\Conversation;
 use App\Models\Message;
 use App\Models\Tenant;
+use App\Services\Assignment\ConversationAssigner;
 use App\Services\WhatsAppService;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Database\UniqueConstraintViolationException;
@@ -73,6 +74,16 @@ class ProcessIncomingWhatsAppMessage implements ShouldQueue
         } catch (UniqueConstraintViolationException) {
             // Meta retried the webhook — message already stored, nothing to do.
             Log::info('Duplicate webhook job ignored', ['wa_message_id' => $waMessageId]);
+        }
+
+        // Auto-asignación "al menos ocupado": si el tenant la activó y la
+        // conversación está abierta y sin dueño, le asigna un agente. Idempotente
+        // ante reintentos de webhook: si ya tiene assigned_to, no hace nada.
+        if ($tenant && $tenant->auto_assign_enabled
+            && $conversation->status === 'open'
+            && is_null($conversation->assigned_to)
+        ) {
+            app(ConversationAssigner::class)->assignLeastBusy($conversation, $tenant);
         }
     }
 

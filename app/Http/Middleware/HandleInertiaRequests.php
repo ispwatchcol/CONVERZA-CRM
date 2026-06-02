@@ -42,7 +42,12 @@ class HandleInertiaRequests extends Middleware
                 'user' => fn() => $request->user()
                     ? array_merge(
                         $request->user()->only('id', 'name', 'email'),
-                        ['is_superadmin' => (bool) $request->user()->is_superadmin]
+                        [
+                            'is_superadmin' => (bool) $request->user()->is_superadmin,
+                            // Rol efectivo en el tenant (viewer < agent < admin) para
+                            // que la UI oculte acciones que el backend ya bloquea.
+                            'role'          => $request->user()->staffRole(),
+                        ]
                     )
                     : null,
             ],

@@ -161,6 +161,23 @@ class SettingsController extends Controller
     }
 
     /**
+     * Activa/desactiva la auto-asignación de conversaciones entrantes (estrategia
+     * "al menos ocupado"). Es config del tenant, por eso la ruta va con role:admin.
+     */
+    public function updateAssignment(Request $request)
+    {
+        $tenant = app('tenant');
+
+        $data = $request->validate([
+            'auto_assign_enabled' => ['required', 'boolean'],
+        ]);
+
+        $tenant->update(['auto_assign_enabled' => (bool) $data['auto_assign_enabled']]);
+
+        return back()->with('success', 'Asignación automática actualizada.');
+    }
+
+    /**
      * GET a la API de Meta para validar que phone_number_id + access_token sirven.
      * No envía mensajes, no cuesta créditos.
      */
@@ -246,6 +263,7 @@ class SettingsController extends Controller
             'wa_verify_token'        => $tenant->wa_verify_token,
             'wa_status'              => $tenant->wa_status,
             'billing_notify_enabled' => (bool) $tenant->billing_notify_enabled,
+            'auto_assign_enabled'    => (bool) $tenant->auto_assign_enabled,
             // Los tokens NO se devuelven nunca; solo si están seteados o no.
             'wa_access_token_set'    => filled($accessTokenRaw),
             'wa_app_secret_set'      => filled($appSecretRaw),
