@@ -51,6 +51,12 @@ class Tenant extends Model
         return $this->hasMany(Conversation::class);
     }
 
+    /** Enrutamiento de avisos automáticos (evento → plantilla). */
+    public function notificationRoutes(): HasMany
+    {
+        return $this->hasMany(TenantNotificationRoute::class);
+    }
+
     public function hasWhatsAppConfigured(): bool
     {
         // Usamos getRawOriginal para evitar disparar el cast 'encrypted'

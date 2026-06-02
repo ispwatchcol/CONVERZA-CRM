@@ -454,7 +454,8 @@ class WhatsAppService
      * @param string                    $to         Número en formato internacional sin '+', ej. 573001234567.
      * @param string                    $template   Nombre EXACTO de la plantilla aprobada en Meta.
      * @param string                    $language   Código de idioma EXACTO de la plantilla (ej. 'es_CO', 'es').
-     * @param array<int, string>        $bodyParams Variables {{1}}, {{2}}, ... del BODY, en orden.
+     * @param array<int|string, string> $bodyParams Variables del BODY. Lista ordenada → posicional ({{1}}…);
+     *                                              mapa { nombre => valor } → named params ({{nombre}}…).
      * @param array<int, array<string,mixed>> $extraComponents Componentes extra opcionales (header, buttons).
      */
     public function sendTemplate(
@@ -475,12 +476,21 @@ class WhatsAppService
         $components = $extraComponents;
 
         if ($bodyParams !== []) {
+            // Lista → posicional ({{1}}); mapa asociativo → named params ({{nombre}}).
+            $parameters = array_is_list($bodyParams)
+                ? array_map(
+                    fn (string $value) => ['type' => 'text', 'text' => $value],
+                    $bodyParams,
+                )
+                : array_map(
+                    fn (string $name, string $value) => ['type' => 'text', 'parameter_name' => $name, 'text' => $value],
+                    array_keys($bodyParams),
+                    array_values($bodyParams),
+                );
+
             $components[] = [
                 'type'       => 'body',
-                'parameters' => array_map(
-                    fn (string $value) => ['type' => 'text', 'text' => $value],
-                    array_values($bodyParams),
-                ),
+                'parameters' => array_values($parameters),
             ];
         }
 

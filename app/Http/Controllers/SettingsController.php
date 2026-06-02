@@ -3,7 +3,9 @@
 namespace App\Http\Controllers;
 
 use App\Models\Template;
+use App\Models\TenantNotificationRoute;
 use App\Services\Ispwatch\IspwatchRepository;
+use App\Services\Notifications\EventCatalog;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Validation\Rule;
@@ -21,28 +23,52 @@ class SettingsController extends Controller
             'tenant' => $this->serializeTenant($tenant),
             'workspace' => $this->workspaceInfo($tenant),
             'ispwatchStatus' => $this->ispwatchStatusFor($tenant),
-            // Plantillas aprobadas y activas, para elegir cuál usar en los
-            // avisos automáticos (factura generada / recordatorio).
-            'approvedTemplates' => $this->approvedTemplateNames($tenant->id),
+            // Avisos automáticos: catálogo de eventos + plantillas aprobadas +
+            // la asignación actual (evento → plantilla) de este tenant.
+            'notificationEvents'   => EventCatalog::forFrontend(),
+            'approvedTemplates'    => $this->approvedTemplates($tenant->id),
+            'notificationRoutes'   => $this->notificationRoutesFor($tenant->id),
         ]);
     }
 
     /**
-     * Nombres de plantillas aprobadas y activas del tenant (sin duplicar por
-     * idioma), para los selectores de avisos automáticos.
+     * Plantillas aprobadas y activas del tenant, con el evento al que sirven, para
+     * los selectores de avisos. El frontend filtra por evento (la plantilla sirve
+     * si su event_key coincide o si es "general" sin evento).
      *
-     * @return array<int, string>
+     * @return array<int, array{id: int, name: string, language: ?string, event_key: ?string}>
      */
-    private function approvedTemplateNames(int $tenantId): array
+    private function approvedTemplates(int $tenantId): array
     {
         return Template::query()
             ->where('tenant_id', $tenantId)
             ->where('status', 'approved')
             ->where('is_active', true)
             ->orderBy('name')
-            ->pluck('name')
-            ->unique()
-            ->values()
+            ->get(['id', 'name', 'language', 'event_key'])
+            ->map(fn ($t) => [
+                'id'        => $t->id,
+                'name'      => $t->name,
+                'language'  => $t->language,
+                'event_key' => $t->event_key,
+            ])
+            ->all();
+    }
+
+    /**
+     * Asignación actual de avisos: { event_key => { template_id, enabled } }.
+     *
+     * @return array<string, array{template_id: ?int, enabled: bool}>
+     */
+    private function notificationRoutesFor(int $tenantId): array
+    {
+        return TenantNotificationRoute::query()
+            ->where('tenant_id', $tenantId)
+            ->get()
+            ->mapWithKeys(fn ($r) => [$r->event_key => [
+                'template_id' => $r->template_id,
+                'enabled'     => (bool) $r->enabled,
+            ]])
             ->all();
     }
 
@@ -65,14 +91,6 @@ class SettingsController extends Controller
     {
         $tenant = app('tenant');
 
-        // El <select> de "ninguna plantilla" puede llegar como '' — normalizamos
-        // a null para que pase la regla `nullable` (vacío = no enviar ese aviso).
-        foreach (['wa_invoice_template', 'wa_reminder_template'] as $tplField) {
-            if (blank($request->input($tplField))) {
-                $request->merge([$tplField => null]);
-            }
-        }
-
         $data = $request->validate([
             // Único entre tenants: el webhook enruta por phone_number_id, dos
             // tenants con el mismo ID generarían colisiones de mensajes.
@@ -84,14 +102,8 @@ class SettingsController extends Controller
             'wa_verify_token'        => ['nullable', 'string', 'max:120'],
             'wa_access_token'        => ['nullable', 'string'],
             'wa_app_secret'          => ['nullable', 'string'],
-            // Plantillas para avisos automáticos: deben ser plantillas aprobadas
-            // y activas del propio tenant (o vacío para no enviar ese aviso).
-            'wa_invoice_template'    => ['nullable', 'string', Rule::in($this->approvedTemplateNames($tenant->id))],
-            'wa_reminder_template'   => ['nullable', 'string', Rule::in($this->approvedTemplateNames($tenant->id))],
         ], [
             'wa_phone_number_id.unique' => 'Este Phone Number ID ya está en uso por otro tenant.',
-            'wa_invoice_template.in'    => 'La plantilla de factura debe ser una plantilla aprobada y activa.',
-            'wa_reminder_template.in'   => 'La plantilla de recordatorio debe ser una plantilla aprobada y activa.',
         ]);
 
         // Tokens en blanco = "no tocar el que ya está guardado".
@@ -105,6 +117,44 @@ class SettingsController extends Controller
         $tenant->fill($data)->save();
 
         return back()->with('success', 'Credenciales WhatsApp actualizadas.');
+    }
+
+    /**
+     * Guarda la asignación de avisos automáticos: por cada evento del catálogo,
+     * qué plantilla usar y si está activo. Reemplaza los dos selects fijos.
+     */
+    public function updateNotifications(Request $request)
+    {
+        $tenant = app('tenant');
+
+        $validated = $request->validate([
+            'routes'               => ['present', 'array'],
+            'routes.*.event_key'   => ['required', 'string', Rule::in(EventCatalog::keys())],
+            'routes.*.template_id' => [
+                'nullable', 'integer',
+                // Debe ser una plantilla aprobada y activa del propio tenant.
+                Rule::exists('templates', 'id')
+                    ->where('tenant_id', $tenant->id)
+                    ->where('status', 'approved')
+                    ->where('is_active', true),
+            ],
+            'routes.*.enabled'     => ['required', 'boolean'],
+        ], [
+            'routes.*.template_id.exists' => 'La plantilla elegida no es válida (debe estar aprobada y activa).',
+        ]);
+
+        foreach ($validated['routes'] as $route) {
+            TenantNotificationRoute::updateOrCreate(
+                ['tenant_id' => $tenant->id, 'event_key' => $route['event_key']],
+                [
+                    'template_id' => $route['template_id'] ?? null,
+                    // Sin plantilla no se puede enviar: forzamos enabled=false.
+                    'enabled'     => ! empty($route['template_id']) && (bool) $route['enabled'],
+                ],
+            );
+        }
+
+        return back()->with('success', 'Avisos automáticos actualizados.');
     }
 
     /**
@@ -192,8 +242,6 @@ class SettingsController extends Controller
             'wa_business_account_id' => $tenant->wa_business_account_id,
             'wa_verify_token'        => $tenant->wa_verify_token,
             'wa_status'              => $tenant->wa_status,
-            'wa_invoice_template'    => $tenant->wa_invoice_template,
-            'wa_reminder_template'   => $tenant->wa_reminder_template,
             // Los tokens NO se devuelven nunca; solo si están seteados o no.
             'wa_access_token_set'    => filled($accessTokenRaw),
             'wa_app_secret_set'      => filled($appSecretRaw),
