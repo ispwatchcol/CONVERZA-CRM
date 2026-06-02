@@ -68,9 +68,17 @@ jobs:
             set -e
             cd /var/www/converza-crm
 
-            echo "==> Fetching and checking out ${{ github.sha }}"
-            git fetch origin
-            git checkout ${{ github.sha }}
+            echo "==> Fetching and resetting to ${{ github.sha }}"
+            git fetch origin --prune
+            # Descarta cualquier cambio local en archivos trackeados antes del reset.
+            # Esto evita el error "would be overwritten by checkout/reset" si alguien
+            # editó un archivo manualmente en el servidor.
+            git checkout -- .
+            # reset --hard (en vez de checkout) hace el deploy determinista: fuerza
+            # el árbol al SHA exacto aunque alguien haya editado archivos trackeados
+            # en el servidor. NO toca .env, public/build ni medios subidos (están
+            # gitignored / sin trackear). No usar 'git clean' aquí: borraría el .env.
+            git reset --hard ${{ github.sha }}
 
             echo "==> Installing PHP dependencies"
             composer install --no-dev --optimize-autoloader --no-interaction
