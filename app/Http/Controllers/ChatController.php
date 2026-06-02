@@ -263,8 +263,9 @@ class ChatController extends Controller
 
         $request->validate([
             'phone'           => 'required|string',
-            // Imagen: jpeg/png/webp hasta 5 MB. Audio: ogg/mp3/m4a/aac hasta 16 MB.
-            'file'            => 'required|file|max:16384|mimes:jpeg,jpg,png,webp,ogg,oga,mp3,m4a,aac,amr',
+            // Imagen: jpeg/png/webp hasta 5 MB. Audio: ogg/mp3/m4a/aac/amr y webm
+            // (grabado desde el navegador, se transcodifica abajo) hasta 16 MB.
+            'file'            => 'required|file|max:16384|mimes:jpeg,jpg,png,webp,ogg,oga,mp3,m4a,aac,amr,webm,weba',
             'caption'         => 'nullable|string|max:1024',
             'conversation_id' => [
                 'nullable', 'integer',
@@ -279,6 +280,24 @@ class ChatController extends Controller
         $caption   = $request->input('caption');
         $type      = str_starts_with($mimeType, 'image/') ? 'image' : 'audio';
         $content   = file_get_contents($uploaded->getRealPath());
+        $ext       = $uploaded->getClientOriginalExtension();
+
+        // WhatsApp no acepta webm para audio. Las grabaciones del navegador
+        // (Chrome/Edge → webm/opus) se transcodifican a OGG/opus con ffmpeg.
+        if ($type === 'audio') {
+            $baseMime = strtolower(Str::before($mimeType, ';'));
+            $accepted = ['audio/ogg', 'audio/mpeg', 'audio/mp3', 'audio/amr', 'audio/aac', 'audio/mp4'];
+            if (! in_array($baseMime, $accepted, true)) {
+                $converted = $this->transcodeToOggOpus($content, $ext ?: 'webm');
+                if (! $converted) {
+                    return back()->withErrors(['file' => 'No se pudo procesar el audio grabado. ¿Está ffmpeg instalado en el servidor?']);
+                }
+                $content  = $converted;
+                $mimeType = 'audio/ogg';
+                $ext      = 'ogg';
+                $origName = pathinfo($origName, PATHINFO_FILENAME) . '.ogg';
+            }
+        }
 
         $contact = Contact::firstOrCreate(
             ['phone' => $phone, 'tenant_id' => $tenantId],
@@ -318,8 +337,8 @@ class ChatController extends Controller
         }
 
         // Guardar el archivo en el disco configurado (local o Supabase)
+        // $ext ya está definido arriba (puede haber cambiado a 'ogg' al transcodificar).
         $mediaDisk = config('filesystems.media_disk', 'public');
-        $ext       = $uploaded->getClientOriginalExtension();
         $storedName = Str::uuid() . ($ext ? '.' . $ext : '');
         $path       = 'whatsapp-media/' . $storedName;
 
@@ -356,6 +375,53 @@ class ChatController extends Controller
         $conversation->touch();
 
         return back()->with('success', ($type === 'image' ? 'Imagen' : 'Audio') . ' enviado.');
+    }
+
+    /**
+     * Transcodifica un audio (típicamente webm/opus grabado en el navegador) a
+     * OGG/opus, el único formato que WhatsApp acepta como nota de voz.
+     *
+     * Requiere ffmpeg en el servidor (apt install ffmpeg). Devuelve el contenido
+     * OGG, o null si ffmpeg no está disponible o falla.
+     */
+    private function transcodeToOggOpus(string $content, string $srcExt): ?string
+    {
+        $tmpIn  = tempnam(sys_get_temp_dir(), 'wa_in_') . '.' . ($srcExt ?: 'webm');
+        $tmpOut = tempnam(sys_get_temp_dir(), 'wa_out_') . '.ogg';
+
+        file_put_contents($tmpIn, $content);
+
+        try {
+            $process = new \Symfony\Component\Process\Process([
+                config('media.ffmpeg_path', 'ffmpeg'),
+                '-y',
+                '-i', $tmpIn,
+                '-vn',
+                '-c:a', 'libopus',
+                '-b:a', '32k',
+                '-ar', '48000',
+                '-ac', '1',
+                $tmpOut,
+            ]);
+            $process->setTimeout(60);
+            $process->run();
+
+            if (! $process->isSuccessful() || ! is_file($tmpOut) || filesize($tmpOut) === 0) {
+                \Log::error('ChatController: ffmpeg audio transcode failed', [
+                    'exit'   => $process->getExitCode(),
+                    'stderr' => $process->getErrorOutput(),
+                ]);
+                return null;
+            }
+
+            return file_get_contents($tmpOut);
+        } catch (\Throwable $e) {
+            \Log::error('ChatController: ffmpeg transcode exception: ' . $e->getMessage());
+            return null;
+        } finally {
+            @unlink($tmpIn);
+            @unlink($tmpOut);
+        }
     }
 
     /**

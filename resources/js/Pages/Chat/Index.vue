@@ -52,17 +52,50 @@ onMounted(() => {
         form.conversation_id = props.activeConversationId;
         scrollToBottom();
     }
+    // Inicializar el rastreo del scroll inteligente con el estado actual,
+    // así el primer polling no arrastra al usuario hacia abajo.
+    trackedConvForScroll = props.activeConversationId;
+    lastChatSignature = chatSignature(props.activeChat);
 });
 
 watch(() => props.activeConversationId, (val) => {
     form.conversation_id = val;
     form.phone = props.activePhone || '';
     clearSelectedFile();
+    if (recording.value) cancelRecording();
     noteMode.value = false;
-    scrollToBottom();
+    // El scroll al cambiar de conversación lo maneja el watch de activeChat
+    // (detecta convChanged), para no competir con el scroll inteligente.
 });
 
-watch(() => props.activeChat, () => scrollToBottom(), { deep: true });
+// Auto-scroll inteligente: solo bajamos al final cuando el usuario ya estaba
+// abajo, cuando cambia de conversación, o cuando llega un mensaje nuevo estando
+// cerca del final. Así el polling de cada 5s no lo arrastra hacia abajo mientras
+// lee mensajes antiguos.
+let lastChatSignature = null;
+let trackedConvForScroll = null;
+
+function chatSignature(chat) {
+    return chat.length ? `${chat.length}:${chat[chat.length - 1]?.id}` : '0';
+}
+
+function isNearBottom(threshold = 140) {
+    const el = messagesContainer.value;
+    if (!el) return true;
+    return el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+}
+
+watch(() => props.activeChat, (newChat) => {
+    const convChanged = props.activeConversationId !== trackedConvForScroll;
+    const sig = chatSignature(newChat);
+    const appended = sig !== lastChatSignature;
+    const wasNearBottom = isNearBottom();
+    trackedConvForScroll = props.activeConversationId;
+    lastChatSignature = sig;
+    if (convChanged || (appended && wasNearBottom)) {
+        scrollToBottom();
+    }
+}, { deep: true });
 
 function scrollToBottom() {
     nextTick(() => {
@@ -77,6 +110,11 @@ function scrollToBottom() {
 // equipo la ve) en vez de enviar un WhatsApp al cliente.
 const noteMode = ref(false);
 const noteSending = ref(false);
+
+// ¿Hay un envío en curso? Mientras lo haya, pausamos el polling para que un
+// router.reload no cancele el request en vuelo (causa de imágenes que "se
+// quedaban" sin enviarse).
+const sending = computed(() => form.processing || mediaForm.processing || noteSending.value);
 
 const submit = () => {
     if (!form.message.trim()) return;
@@ -104,9 +142,16 @@ const startNewChat = () => {
     });
 };
 
+// Al elegir una respuesta rápida se envía directamente (un solo clic), sin
+// pasar por nota interna: siempre va al cliente.
 function useQuickReply(qr) {
-    form.message = qr.body;
     showQuickReplies.value = false;
+    if (!qr.body?.trim() || form.processing) return;
+    form.message = qr.body;
+    form.post(route('chat.send'), {
+        onSuccess: () => { form.reset('message'); scrollToBottom(); },
+        preserveScroll: true,
+    });
 }
 
 // ── Adjuntar medios (imagen / audio) ─────────────────────────────────────────
@@ -117,20 +162,130 @@ function openFileInput(accept) {
     }
 }
 
-function onFileSelected(event) {
-    const file = event.target.files[0];
+function setSelectedFile(file) {
     if (!file) return;
+    if (filePreviewUrl.value) URL.revokeObjectURL(filePreviewUrl.value);
     selectedFile.value = file;
-    if (file.type.startsWith('image/')) {
-        filePreviewUrl.value = URL.createObjectURL(file);
-    } else {
-        filePreviewUrl.value = null;
-    }
+    filePreviewUrl.value = file.type.startsWith('image/') ? URL.createObjectURL(file) : null;
+    mediaForm.clearErrors();
     mediaForm.phone = props.activePhone || '';
     mediaForm.conversation_id = props.activeConversationId;
+}
+
+function onFileSelected(event) {
+    setSelectedFile(event.target.files[0]);
     // Reset the input so the same file can be re-selected after clearing
     event.target.value = '';
 }
+
+// Pegar imagen desde el portapapeles (Ctrl+V dentro del cuadro de mensaje).
+function onPaste(event) {
+    const items = event.clipboardData?.items;
+    if (!items) return;
+    for (const item of items) {
+        if (item.type && item.type.startsWith('image/')) {
+            const blob = item.getAsFile();
+            if (blob) {
+                event.preventDefault();
+                const ext = (item.type.split('/')[1] || 'png').replace('jpeg', 'jpg');
+                const file = new File([blob], `pegado-${Date.now()}.${ext}`, { type: item.type });
+                setSelectedFile(file);
+            }
+            break;
+        }
+    }
+}
+
+// ── Grabación de audio con el micrófono ───────────────────────────────────────
+// Graba con MediaRecorder (webm/opus en Chrome/Edge). El backend lo transcodifica
+// a OGG/opus con ffmpeg antes de enviarlo a WhatsApp.
+const recording = ref(false);
+const recordingTime = ref(0);
+const recordError = ref(null);
+let mediaRecorder = null;
+let recordedChunks = [];
+let recordTimer = null;
+let recordStream = null;
+
+function pickRecordMime() {
+    if (typeof MediaRecorder === 'undefined') return '';
+    const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4'];
+    for (const c of candidates) {
+        try { if (MediaRecorder.isTypeSupported(c)) return c; } catch (e) {}
+    }
+    return '';
+}
+
+async function startRecording() {
+    recordError.value = null;
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+        recordError.value = 'Tu navegador no permite grabar audio.';
+        return;
+    }
+    try {
+        recordStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (e) {
+        recordError.value = 'No se pudo acceder al micrófono. Revisa los permisos.';
+        return;
+    }
+    const mime = pickRecordMime();
+    recordedChunks = [];
+    try {
+        mediaRecorder = mime ? new MediaRecorder(recordStream, { mimeType: mime }) : new MediaRecorder(recordStream);
+    } catch (e) {
+        mediaRecorder = new MediaRecorder(recordStream);
+    }
+    mediaRecorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) recordedChunks.push(e.data); };
+    mediaRecorder.onstop = () => finalizeRecording();
+    mediaRecorder.start();
+    recording.value = true;
+    recordingTime.value = 0;
+    recordTimer = setInterval(() => { recordingTime.value += 1; }, 1000);
+}
+
+function stopTracks() {
+    if (recordStream) { recordStream.getTracks().forEach(t => t.stop()); recordStream = null; }
+    if (recordTimer) { clearInterval(recordTimer); recordTimer = null; }
+}
+
+function stopRecording() {
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        mediaRecorder.stop(); // dispara onstop → finalizeRecording
+    }
+    recording.value = false;
+    if (recordTimer) { clearInterval(recordTimer); recordTimer = null; }
+}
+
+function cancelRecording() {
+    recordedChunks = [];
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        mediaRecorder.onstop = null;
+        try { mediaRecorder.stop(); } catch (e) {}
+    }
+    mediaRecorder = null;
+    recording.value = false;
+    stopTracks();
+}
+
+function finalizeRecording() {
+    const type = (mediaRecorder?.mimeType || recordedChunks[0]?.type || 'audio/webm').split(';')[0];
+    const blob = new Blob(recordedChunks, { type });
+    stopTracks();
+    mediaRecorder = null;
+    recordedChunks = [];
+    if (!blob.size) return;
+    const ext = type.includes('ogg') ? 'ogg' : type.includes('mp4') ? 'm4a' : 'webm';
+    const file = new File([blob], `nota-voz-${Date.now()}.${ext}`, { type });
+    setSelectedFile(file);
+}
+
+function fmtRecordTime(sec) {
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+onUnmounted(() => { stopTracks(); });
 
 function clearSelectedFile() {
     if (filePreviewUrl.value) URL.revokeObjectURL(filePreviewUrl.value);
@@ -315,6 +470,7 @@ function toggleAudio(id) {
                 audioStates.value[otherId].playing = false;
             }
         });
+        el.playbackRate = playbackRate.value;
         el.play().catch(() => { audioState(id).error = true; });
     }
 }
@@ -346,6 +502,29 @@ function fmtAudioTime(sec) {
     const m = Math.floor(sec / 60);
     const s = Math.floor(sec % 60);
     return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+// ── Velocidad de reproducción (x1 / x1.5 / x2) + adelantar (seek) ─────────────
+const playbackRate = ref(1);
+const RATE_STEPS = [1, 1.5, 2];
+
+function cyclePlaybackRate() {
+    const idx = RATE_STEPS.indexOf(playbackRate.value);
+    playbackRate.value = RATE_STEPS[(idx + 1) % RATE_STEPS.length];
+    // Aplicar de inmediato a cualquier audio que esté sonando.
+    Object.keys(audioStates.value).forEach((id) => {
+        const el = document.getElementById('audio-' + id);
+        if (el) el.playbackRate = playbackRate.value;
+    });
+}
+
+function seekAudio(id, event) {
+    const el = document.getElementById('audio-' + id);
+    if (!el || !el.duration || isNaN(el.duration)) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const ratio = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
+    el.currentTime = ratio * el.duration;
+    audioState(id).currentTime = el.currentTime;
 }
 
 // ── Image error tracking ──────────────────────────────────────────────────────
@@ -487,6 +666,9 @@ function googleMapsUrl(body) {
 let pollingInterval = null;
 onMounted(() => {
     pollingInterval = setInterval(() => {
+        // No recargar mientras hay un envío en curso: un router.reload cancelaría
+        // el request en vuelo (por eso una imagen podía "quedarse" sin enviarse).
+        if (sending.value) return;
         // 'presence' + 'staffMembers' también registran el heartbeat de presencia
         // en el backend (el partial reload ejecuta ChatController::index completo).
         router.reload({ only: ['conversations', 'activeChat', 'staffMembers', 'presence'], preserveScroll: true, preserveState: true });
@@ -890,12 +1072,15 @@ onUnmounted(() => window.removeEventListener('resize', handleResize));
 
                                         <!-- Progress + time -->
                                         <div class="flex-1 min-w-0">
-                                            <div class="relative h-1.5 rounded-full overflow-hidden" :class="msg.status === 'sent' ? 'bg-green-200' : 'bg-gray-200'">
-                                                <div
-                                                    class="absolute inset-y-0 left-0 rounded-full transition-all duration-100"
-                                                    :class="msg.status === 'sent' ? 'bg-green-600' : 'bg-accent'"
-                                                    :style="{ width: audioProgress(msg.id) + '%' }"
-                                                />
+                                            <!-- Barra clicable para adelantar/retroceder (seek) -->
+                                            <div class="relative h-3 flex items-center cursor-pointer" @click="seekAudio(msg.id, $event)">
+                                                <div class="relative w-full h-1.5 rounded-full overflow-hidden" :class="msg.status === 'sent' ? 'bg-green-200' : 'bg-gray-200'">
+                                                    <div
+                                                        class="absolute inset-y-0 left-0 rounded-full transition-all duration-100"
+                                                        :class="msg.status === 'sent' ? 'bg-green-600' : 'bg-accent'"
+                                                        :style="{ width: audioProgress(msg.id) + '%' }"
+                                                    />
+                                                </div>
                                             </div>
                                             <p class="text-[10px] mt-1" :class="msg.status === 'sent' ? 'text-green-700' : 'text-gray-500'">
                                                 <span v-if="audioState(msg.id).error && msg.media_url">
@@ -906,6 +1091,16 @@ onUnmounted(() => window.removeEventListener('resize', handleResize));
                                                 <span v-else>{{ fmtAudioTime(audioState(msg.id).duration) || '...' }}</span>
                                             </p>
                                         </div>
+
+                                        <!-- Velocidad de reproducción (x1 / x1.5 / x2) -->
+                                        <button
+                                            v-if="msg.media_url && !audioState(msg.id).error"
+                                            type="button"
+                                            @click="cyclePlaybackRate"
+                                            class="shrink-0 text-[11px] font-semibold px-1.5 py-0.5 rounded-md tabular-nums transition"
+                                            :class="msg.status === 'sent' ? 'text-green-700 hover:bg-green-200/70' : 'text-gray-500 hover:bg-gray-200'"
+                                            title="Velocidad de reproducción"
+                                        >{{ playbackRate }}×</button>
 
                                         <!-- Mic icon / Download icon when error -->
                                         <a v-if="audioState(msg.id).error && msg.media_url" :href="msg.media_url" target="_blank" rel="noopener noreferrer"
@@ -996,6 +1191,7 @@ onUnmounted(() => window.removeEventListener('resize', handleResize));
                                 <p class="text-xs text-gray-500">{{ isAudioFile(selectedFile) ? 'Audio' : 'Imagen' }} · {{ (selectedFile.size / 1024).toFixed(0) }} KB</p>
                                 <!-- Caption solo para imágenes -->
                                 <input v-if="!isAudioFile(selectedFile)" v-model="mediaForm.caption" type="text" placeholder="Añadir descripción (opcional)" class="mt-1 w-full text-xs border-0 border-b border-gray-200 bg-transparent focus:ring-0 focus:border-accent px-0 py-0.5" />
+                                <p v-if="mediaForm.errors.file" class="mt-1 text-xs text-red-500">{{ mediaForm.errors.file }}</p>
                             </div>
                             <div class="flex items-center gap-1 shrink-0">
                                 <button type="button" @click="clearSelectedFile" class="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition">
@@ -1008,71 +1204,103 @@ onUnmounted(() => window.removeEventListener('resize', handleResize));
                             </div>
                         </div>
 
+                        <!-- Error de grabación de micrófono -->
+                        <p v-if="recordError" class="mb-2 text-xs text-red-500">{{ recordError }}</p>
+
                         <form @submit.prevent="submit" class="flex items-end space-x-2">
                             <!-- Hidden file input -->
                             <input ref="fileInputRef" type="file" class="hidden" @change="onFileSelected" />
 
-                            <!-- Botón Imagen (directo, sin dropdown) -->
-                            <button type="button" @click="openFileInput('image/jpeg,image/jpg,image/png,image/webp')"
-                                    class="p-2.5 text-gray-500 hover:text-blue-500 transition rounded-lg hover:bg-blue-50 group relative"
-                                    title="Enviar imagen">
-                                <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z"/></svg>
-                                <span class="absolute -top-8 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-[10px] px-2 py-0.5 rounded-md whitespace-nowrap opacity-0 group-hover:opacity-100 transition pointer-events-none">Imagen</span>
-                            </button>
-
-                            <!-- Botón Audio (directo, sin dropdown) -->
-                            <button type="button" @click="openFileInput('audio/ogg,audio/mpeg,audio/mp4,audio/aac,audio/amr,audio/*')"
-                                    class="p-2.5 text-gray-500 hover:text-green-500 transition rounded-lg hover:bg-green-50 group relative"
-                                    title="Enviar audio">
-                                <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z"/></svg>
-                                <span class="absolute -top-8 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-[10px] px-2 py-0.5 rounded-md whitespace-nowrap opacity-0 group-hover:opacity-100 transition pointer-events-none">Audio</span>
-                            </button>
-
-                            <!-- Quick replies button -->
-                            <div class="relative">
-                                <button type="button" @click="showQuickReplies = !showQuickReplies" class="p-2.5 text-gray-500 hover:text-accent transition rounded-lg hover:bg-white group relative">
-                                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" /></svg>
-                                    <span class="absolute -top-8 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-[10px] px-2 py-0.5 rounded-md whitespace-nowrap opacity-0 group-hover:opacity-100 transition pointer-events-none">Respuestas rápidas</span>
+                            <!-- Controles normales (ocultos mientras se graba) -->
+                            <template v-if="!recording">
+                                <!-- Botón Imagen (directo, sin dropdown) -->
+                                <button type="button" @click="openFileInput('image/jpeg,image/jpg,image/png,image/webp')"
+                                        class="p-2.5 text-gray-500 hover:text-blue-500 transition rounded-lg hover:bg-blue-50 group relative"
+                                        title="Enviar imagen">
+                                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z"/></svg>
+                                    <span class="absolute -top-8 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-[10px] px-2 py-0.5 rounded-md whitespace-nowrap opacity-0 group-hover:opacity-100 transition pointer-events-none">Imagen</span>
                                 </button>
-                                <!-- Backdrop para cerrar al hacer click fuera -->
-                                <Teleport to="body">
-                                    <div v-if="showQuickReplies && quickReplies.length" class="fixed inset-0 z-[19]" @click="showQuickReplies = false"></div>
-                                </Teleport>
-                                <!-- Quick replies dropdown -->
-                                <div v-if="showQuickReplies && quickReplies.length" class="absolute bottom-12 left-0 w-[calc(100vw-2rem)] sm:w-72 max-w-xs bg-white rounded-xl shadow-xl border border-gray-200 max-h-60 overflow-y-auto z-20 animate-scale-in">
-                                    <div class="p-2">
-                                        <button v-for="qr in quickReplies" :key="qr.id" type="button" @click="useQuickReply(qr)" class="w-full text-left p-3 rounded-lg hover:bg-gray-50 transition">
-                                            <p class="text-sm font-medium text-gray-900">{{ qr.title }}</p>
-                                            <p class="text-xs text-gray-500 truncate">{{ qr.body }}</p>
-                                        </button>
+
+                                <!-- Botón Audio (subir archivo) -->
+                                <button type="button" @click="openFileInput('audio/ogg,audio/mpeg,audio/mp4,audio/aac,audio/amr,audio/*')"
+                                        class="p-2.5 text-gray-500 hover:text-green-500 transition rounded-lg hover:bg-green-50 group relative"
+                                        title="Subir audio">
+                                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 7.5L12 3m0 0L7.5 7.5M12 3v13.5"/></svg>
+                                    <span class="absolute -top-8 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-[10px] px-2 py-0.5 rounded-md whitespace-nowrap opacity-0 group-hover:opacity-100 transition pointer-events-none">Subir audio</span>
+                                </button>
+
+                                <!-- Botón Grabar audio -->
+                                <button type="button" @click="startRecording"
+                                        class="p-2.5 text-gray-500 hover:text-red-500 transition rounded-lg hover:bg-red-50 group relative"
+                                        title="Grabar audio">
+                                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z"/></svg>
+                                    <span class="absolute -top-8 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-[10px] px-2 py-0.5 rounded-md whitespace-nowrap opacity-0 group-hover:opacity-100 transition pointer-events-none">Grabar audio</span>
+                                </button>
+
+                                <!-- Quick replies button -->
+                                <div class="relative">
+                                    <button type="button" @click="showQuickReplies = !showQuickReplies" class="p-2.5 text-gray-500 hover:text-accent transition rounded-lg hover:bg-white group relative">
+                                        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" /></svg>
+                                        <span class="absolute -top-8 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-[10px] px-2 py-0.5 rounded-md whitespace-nowrap opacity-0 group-hover:opacity-100 transition pointer-events-none">Respuestas rápidas</span>
+                                    </button>
+                                    <!-- Backdrop para cerrar al hacer click fuera -->
+                                    <Teleport to="body">
+                                        <div v-if="showQuickReplies && quickReplies.length" class="fixed inset-0 z-[19]" @click="showQuickReplies = false"></div>
+                                    </Teleport>
+                                    <!-- Quick replies dropdown -->
+                                    <div v-if="showQuickReplies && quickReplies.length" class="absolute bottom-12 left-0 w-[calc(100vw-2rem)] sm:w-72 max-w-xs bg-white rounded-xl shadow-xl border border-gray-200 max-h-60 overflow-y-auto z-20 animate-scale-in">
+                                        <div class="p-2">
+                                            <button v-for="qr in quickReplies" :key="qr.id" type="button" @click="useQuickReply(qr)" class="w-full text-left p-3 rounded-lg hover:bg-gray-50 transition">
+                                                <p class="text-sm font-medium text-gray-900">{{ qr.title }}</p>
+                                                <p class="text-xs text-gray-500 truncate">{{ qr.body }}</p>
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
-                            </div>
 
-                            <!-- Toggle: nota interna -->
-                            <button type="button" @click="noteMode = !noteMode"
-                                    class="p-2.5 rounded-lg transition group relative shrink-0"
-                                    :class="noteMode ? 'text-amber-600 bg-amber-100' : 'text-gray-500 hover:text-amber-500 hover:bg-amber-50'"
-                                    :title="noteMode ? 'Modo nota interna activo (clic para volver a chat)' : 'Escribir nota interna'">
-                                <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" /></svg>
-                                <span class="absolute -top-8 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-[10px] px-2 py-0.5 rounded-md whitespace-nowrap opacity-0 group-hover:opacity-100 transition pointer-events-none">Nota interna</span>
-                            </button>
+                                <!-- Toggle: nota interna -->
+                                <button type="button" @click="noteMode = !noteMode"
+                                        class="p-2.5 rounded-lg transition group relative shrink-0"
+                                        :class="noteMode ? 'text-amber-600 bg-amber-100' : 'text-gray-500 hover:text-amber-500 hover:bg-amber-50'"
+                                        :title="noteMode ? 'Modo nota interna activo (clic para volver a chat)' : 'Escribir nota interna'">
+                                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" /></svg>
+                                    <span class="absolute -top-8 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-[10px] px-2 py-0.5 rounded-md whitespace-nowrap opacity-0 group-hover:opacity-100 transition pointer-events-none">Nota interna</span>
+                                </button>
 
-                            <div class="flex-1 rounded-xl flex items-center shadow-sm border focus-within:ring-2 transition"
-                                 :class="noteMode ? 'bg-amber-50 border-amber-200 focus-within:ring-amber-300/40' : 'bg-white border-gray-100 focus-within:ring-accent/30'">
-                                <textarea v-model="form.message" rows="1"
-                                          :placeholder="noteMode ? 'Nota interna (solo el equipo la verá)…' : 'Escribe un mensaje'"
-                                          class="w-full border-none focus:ring-0 rounded-xl resize-none py-3 px-4 text-sm max-h-32 bg-transparent"
-                                          @keydown.enter.exact.prevent="submit"></textarea>
+                                <div class="flex-1 rounded-xl flex items-center shadow-sm border focus-within:ring-2 transition"
+                                     :class="noteMode ? 'bg-amber-50 border-amber-200 focus-within:ring-amber-300/40' : 'bg-white border-gray-100 focus-within:ring-accent/30'">
+                                    <textarea v-model="form.message" rows="1"
+                                              :placeholder="noteMode ? 'Nota interna (solo el equipo la verá)…' : 'Escribe un mensaje'"
+                                              class="w-full border-none focus:ring-0 rounded-xl resize-none py-3 px-4 text-sm max-h-32 bg-transparent"
+                                              @paste="onPaste"
+                                              @keydown.enter.exact.prevent="submit"></textarea>
+                                </div>
+                                <button type="submit" :disabled="(noteMode ? noteSending : form.processing) || !form.message"
+                                        class="p-3 text-white rounded-xl disabled:opacity-50 transition shadow-sm flex items-center justify-center h-11 w-11"
+                                        :class="noteMode ? 'bg-amber-500 hover:bg-amber-600' : 'bg-accent hover:bg-accent-hover'"
+                                        :title="noteMode ? 'Guardar nota interna' : 'Enviar mensaje'">
+                                    <svg v-if="noteMode ? noteSending : form.processing" class="animate-spin w-5 h-5" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+                                    <svg v-else-if="noteMode" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" /></svg>
+                                    <svg v-else class="w-5 h-5 rotate-90" fill="currentColor" viewBox="0 0 20 20"><path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" /></svg>
+                                </button>
+                            </template>
+
+                            <!-- Barra de grabación de audio -->
+                            <div v-else class="flex-1 flex items-center gap-3 bg-white rounded-xl shadow-sm border border-red-200 px-4 py-2.5">
+                                <span class="relative flex h-3 w-3 shrink-0">
+                                    <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                                    <span class="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
+                                </span>
+                                <span class="text-sm font-medium text-gray-700 tabular-nums">{{ fmtRecordTime(recordingTime) }}</span>
+                                <span class="text-xs text-gray-400 hidden sm:inline">Grabando…</span>
+                                <div class="flex-1"></div>
+                                <button type="button" @click="cancelRecording" class="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition" title="Cancelar grabación">
+                                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                                </button>
+                                <button type="button" @click="stopRecording" class="p-2.5 bg-accent text-white rounded-lg hover:bg-accent-hover transition shadow-sm" title="Detener y revisar">
+                                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"/></svg>
+                                </button>
                             </div>
-                            <button type="submit" :disabled="(noteMode ? noteSending : form.processing) || !form.message"
-                                    class="p-3 text-white rounded-xl disabled:opacity-50 transition shadow-sm flex items-center justify-center h-11 w-11"
-                                    :class="noteMode ? 'bg-amber-500 hover:bg-amber-600' : 'bg-accent hover:bg-accent-hover'"
-                                    :title="noteMode ? 'Guardar nota interna' : 'Enviar mensaje'">
-                                <svg v-if="noteMode ? noteSending : form.processing" class="animate-spin w-5 h-5" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
-                                <svg v-else-if="noteMode" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" /></svg>
-                                <svg v-else class="w-5 h-5 rotate-90" fill="currentColor" viewBox="0 0 20 20"><path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" /></svg>
-                            </button>
                         </form>
                     </div>
 

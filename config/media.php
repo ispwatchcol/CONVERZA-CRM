@@ -28,6 +28,19 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Transcodificación de audio (ffmpeg)
+    |--------------------------------------------------------------------------
+    |
+    | Ruta al binario de ffmpeg. Se usa para convertir audios grabados en el
+    | navegador (webm/opus) a OGG/opus, único formato que WhatsApp acepta como
+    | nota de voz. Si ffmpeg está en el PATH basta con 'ffmpeg'; en el droplet
+    | se puede instalar con: apt install ffmpeg
+    |
+    */
+    'ffmpeg_path' => env('FFMPEG_PATH', 'ffmpeg'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Limpieza automática de medios antiguos
     |--------------------------------------------------------------------------
     |
