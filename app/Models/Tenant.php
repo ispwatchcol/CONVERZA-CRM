@@ -17,6 +17,8 @@ class Tenant extends Model
         'wa_app_secret',
         'wa_verify_token',
         'wa_status',
+        'wa_invoice_template',
+        'wa_reminder_template',
         'is_active',
     ];
 

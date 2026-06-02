@@ -8,6 +8,7 @@ const props = defineProps({
     tenant: Object,
     workspace: Object,
     ispwatchStatus: { type: Object, default: null },
+    approvedTemplates: { type: Array, default: () => [] },
 });
 
 // ── Forms (uno por sección) ──────────────────────────────────────────────────
@@ -23,6 +24,8 @@ const whatsappForm = useForm({
     wa_verify_token: props.tenant.wa_verify_token ?? '',
     wa_access_token: '',
     wa_app_secret: '',
+    wa_invoice_template: props.tenant.wa_invoice_template ?? '',
+    wa_reminder_template: props.tenant.wa_reminder_template ?? '',
 });
 
 // La vinculación ISPWatch NO es editable por el cliente: la hace el admin del
@@ -310,6 +313,35 @@ const waBadge = computed(() => {
                                     {{ copiedKey === 'webhook' ? '✓ Copiado' : 'Copiar' }}
                                 </button>
                             </div>
+                        </div>
+
+                        <!-- Plantillas de avisos automáticos -->
+                        <div class="rounded-xl bg-gray-50 border border-gray-100 p-3 space-y-3">
+                            <div>
+                                <p class="text-xs font-semibold text-gray-600 uppercase tracking-wider">Avisos automáticos</p>
+                                <p class="text-xs text-gray-500 mt-1">Plantillas que se envían según las fechas del router en ISPWatch. Deja en blanco para no enviar ese aviso.</p>
+                            </div>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                <div>
+                                    <label class="block text-xs font-medium text-gray-600 mb-1">Plantilla de factura generada</label>
+                                    <select v-model="whatsappForm.wa_invoice_template" class="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm bg-white focus:ring-2 focus:ring-accent/30 focus:border-accent">
+                                        <option value="">— Ninguna —</option>
+                                        <option v-for="t in approvedTemplates" :key="t" :value="t">{{ t }}</option>
+                                    </select>
+                                    <p v-if="whatsappForm.errors.wa_invoice_template" class="text-red-500 text-xs mt-1">{{ whatsappForm.errors.wa_invoice_template }}</p>
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-medium text-gray-600 mb-1">Plantilla de recordatorio de pago</label>
+                                    <select v-model="whatsappForm.wa_reminder_template" class="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm bg-white focus:ring-2 focus:ring-accent/30 focus:border-accent">
+                                        <option value="">— Ninguna —</option>
+                                        <option v-for="t in approvedTemplates" :key="t" :value="t">{{ t }}</option>
+                                    </select>
+                                    <p v-if="whatsappForm.errors.wa_reminder_template" class="text-red-500 text-xs mt-1">{{ whatsappForm.errors.wa_reminder_template }}</p>
+                                </div>
+                            </div>
+                            <p v-if="!approvedTemplates.length" class="text-xs text-amber-700">
+                                No tienes plantillas aprobadas y activas todavía. Créalas y sincronízalas en Plantillas.
+                            </p>
                         </div>
 
                         <!-- Test result -->

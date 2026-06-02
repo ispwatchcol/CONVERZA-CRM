@@ -43,5 +43,9 @@ return [
         'graph_version' => env('WHATSAPP_GRAPH_VERSION', 'v20.0'),
         // Nombre de la plantilla aprobada en Meta usada para recordatorios de pago.
         'reminder_template' => env('WHATSAPP_REMINDER_TEMPLATE', 'payment_reminder'),
+        // Interruptor maestro del envío automático masivo (whatsapp:billing-notify).
+        // Default false: la tarea agendada NO envía nada hasta activarlo. Las pruebas
+        // dirigidas (--customer) y los --dry-run siguen funcionando con esto en false.
+        'billing_notify_enabled' => env('WHATSAPP_BILLING_NOTIFY_ENABLED', false),
     ],
 ];

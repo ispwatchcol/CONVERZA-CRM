@@ -273,6 +273,108 @@ class IspwatchRepository
     }
 
     /**
+     * Configuraciones de `billing` de un tenant con el envío por WhatsApp
+     * habilitado (`notificar_wpp = true`). Cada billing define las fechas que
+     * disparan los avisos automáticos; de las fechas SOLO importa el día del
+     * mes (las fechas guardadas pueden ser de meses pasados).
+     *
+     * Devuelve por cada billing: id, día de generación (create_invoice), día de
+     * recordatorio (payment_reminder), si el recordatorio está habilitado y los
+     * nombres de los routers que la usan (para mostrar en la bitácora).
+     *
+     * Sin caché: es un job batch y la frescura importa.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function whatsappBillingConfigsForTenant(int $ispwatchTenantId): array
+    {
+        $rows = \DB::connection('ispwatch')
+            ->table('billing as b')
+            ->leftJoin('router as r', 'r.billing_router_id', '=', 'b.id')
+            ->where('b.tenant_id', $ispwatchTenantId)
+            ->where('b.notificar_wpp', true)
+            ->groupBy('b.id', 'b.create_invoice', 'b.payment_reminder', 'b.payment_reminder_enabled')
+            ->selectRaw("b.id as billing_id,
+                         extract(day from b.create_invoice)::int   as create_day,
+                         extract(day from b.payment_reminder)::int as reminder_day,
+                         b.payment_reminder_enabled,
+                         string_agg(distinct r.name, ', ') as router_names")
+            ->orderBy('b.id')
+            ->get();
+
+        return $rows->map(fn ($r) => [
+            'billing_id'               => (int) $r->billing_id,
+            'create_day'               => $r->create_day !== null ? (int) $r->create_day : null,
+            'reminder_day'             => $r->reminder_day !== null ? (int) $r->reminder_day : null,
+            'payment_reminder_enabled' => (bool) $r->payment_reminder_enabled,
+            'router_names'             => $r->router_names,
+        ])->all();
+    }
+
+    /**
+     * Clientes ACTIVOS (`cp.status = true`) cuyos routers usan la billing dada,
+     * con LEFT JOIN a su factura del ciclo actual (la más reciente cuyo
+     * `issue_date` cae entre $cycleStart y $cycleEnd). `invoice_id` viene null
+     * si el cliente no tiene factura este ciclo (motivo de skip en el aviso).
+     *
+     * Una fila por cliente (DISTINCT ON). Sin caché: batch.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function cycleCustomersForBilling(
+        int $ispwatchTenantId,
+        int $billingId,
+        string $cycleStart,
+        string $cycleEnd,
+    ): array {
+        $sql = <<<'SQL'
+            select distinct on (u.id)
+                u.id   as customer_user_id,
+                u.tel  as phone,
+                u.name as user_name,
+                cp.name      as cp_name,
+                cp.last_name as cp_last_name,
+                i.id          as invoice_id,
+                i.number      as invoice_number,
+                i.total       as total,
+                i.balance_due as balance_due,
+                i.status      as invoice_status,
+                i.due_date    as due_date
+            from customer_profile cp
+            join users u  on u.id = cp.user_id
+            join router r on r.id = cp.router_id
+            left join invoices i
+                   on i.customer_id = u.id
+                  and i.tenant_id   = ?
+                  and i.issue_date between ? and ?
+            where r.billing_router_id = ?
+              and u.tenant_id = ?
+              and cp.status = true
+            order by u.id, i.issue_date desc nulls last
+        SQL;
+
+        $rows = \DB::connection('ispwatch')->select($sql, [
+            $ispwatchTenantId,
+            $cycleStart,
+            $cycleEnd,
+            $billingId,
+            $ispwatchTenantId,
+        ]);
+
+        return array_map(fn ($r) => [
+            'customer_user_id' => (int) $r->customer_user_id,
+            'phone'            => $r->phone,
+            'customer_name'    => trim(($r->cp_name ?: $r->user_name) . ' ' . ($r->cp_last_name ?? '')) ?: 'Cliente',
+            'invoice_id'       => $r->invoice_id !== null ? (int) $r->invoice_id : null,
+            'invoice_number'   => $r->invoice_number,
+            'total'            => $r->total !== null ? (string) $r->total : null,
+            'balance_due'      => $r->balance_due !== null ? (string) $r->balance_due : null,
+            'invoice_status'   => $r->invoice_status,
+            'due_date'         => $r->due_date,
+        ], $rows);
+    }
+
+    /**
      * Quita todo lo que no sea dígito y trimea el prefijo país `57` si está
      * presente, devolviendo el número en formato local de 10 dígitos.
      * Retorna null si el resultado no es un teléfono creíble (<10 dígitos).

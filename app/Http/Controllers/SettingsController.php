@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Template;
 use App\Services\Ispwatch\IspwatchRepository;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
@@ -20,7 +21,29 @@ class SettingsController extends Controller
             'tenant' => $this->serializeTenant($tenant),
             'workspace' => $this->workspaceInfo($tenant),
             'ispwatchStatus' => $this->ispwatchStatusFor($tenant),
+            // Plantillas aprobadas y activas, para elegir cuál usar en los
+            // avisos automáticos (factura generada / recordatorio).
+            'approvedTemplates' => $this->approvedTemplateNames($tenant->id),
         ]);
+    }
+
+    /**
+     * Nombres de plantillas aprobadas y activas del tenant (sin duplicar por
+     * idioma), para los selectores de avisos automáticos.
+     *
+     * @return array<int, string>
+     */
+    private function approvedTemplateNames(int $tenantId): array
+    {
+        return Template::query()
+            ->where('tenant_id', $tenantId)
+            ->where('status', 'approved')
+            ->where('is_active', true)
+            ->orderBy('name')
+            ->pluck('name')
+            ->unique()
+            ->values()
+            ->all();
     }
 
     public function updateProfile(Request $request)
@@ -42,6 +65,14 @@ class SettingsController extends Controller
     {
         $tenant = app('tenant');
 
+        // El <select> de "ninguna plantilla" puede llegar como '' — normalizamos
+        // a null para que pase la regla `nullable` (vacío = no enviar ese aviso).
+        foreach (['wa_invoice_template', 'wa_reminder_template'] as $tplField) {
+            if (blank($request->input($tplField))) {
+                $request->merge([$tplField => null]);
+            }
+        }
+
         $data = $request->validate([
             // Único entre tenants: el webhook enruta por phone_number_id, dos
             // tenants con el mismo ID generarían colisiones de mensajes.
@@ -53,8 +84,14 @@ class SettingsController extends Controller
             'wa_verify_token'        => ['nullable', 'string', 'max:120'],
             'wa_access_token'        => ['nullable', 'string'],
             'wa_app_secret'          => ['nullable', 'string'],
+            // Plantillas para avisos automáticos: deben ser plantillas aprobadas
+            // y activas del propio tenant (o vacío para no enviar ese aviso).
+            'wa_invoice_template'    => ['nullable', 'string', Rule::in($this->approvedTemplateNames($tenant->id))],
+            'wa_reminder_template'   => ['nullable', 'string', Rule::in($this->approvedTemplateNames($tenant->id))],
         ], [
             'wa_phone_number_id.unique' => 'Este Phone Number ID ya está en uso por otro tenant.',
+            'wa_invoice_template.in'    => 'La plantilla de factura debe ser una plantilla aprobada y activa.',
+            'wa_reminder_template.in'   => 'La plantilla de recordatorio debe ser una plantilla aprobada y activa.',
         ]);
 
         // Tokens en blanco = "no tocar el que ya está guardado".
@@ -155,6 +192,8 @@ class SettingsController extends Controller
             'wa_business_account_id' => $tenant->wa_business_account_id,
             'wa_verify_token'        => $tenant->wa_verify_token,
             'wa_status'              => $tenant->wa_status,
+            'wa_invoice_template'    => $tenant->wa_invoice_template,
+            'wa_reminder_template'   => $tenant->wa_reminder_template,
             // Los tokens NO se devuelven nunca; solo si están seteados o no.
             'wa_access_token_set'    => filled($accessTokenRaw),
             'wa_app_secret_set'      => filled($appSecretRaw),
