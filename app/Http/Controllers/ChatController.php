@@ -354,8 +354,19 @@ class ChatController extends Controller
             }
         }
 
-        // Siempre guardar copia local como fallback
-        Storage::disk('public')->put($path, $content);
+        // Siempre intentar guardar copia local como fallback. Envuelto en try/catch:
+        // si storage/app/public no es escribible por el usuario de PHP-FPM (www-data)
+        // en el servidor, esto NO debe tirar 500 — el archivo ya se envió a WhatsApp y
+        // el mensaje debe quedar registrado en la conversación. El thumbnail puede verse
+        // roto hasta corregir los permisos, pero el envío no se pierde.
+        try {
+            Storage::disk('public')->put($path, $content);
+        } catch (\Throwable $e) {
+            \Log::error('ChatController sendMedia: no se pudo guardar copia local (¿permisos de storage/app/public para www-data?)', [
+                'path'  => $path,
+                'error' => $e->getMessage(),
+            ]);
+        }
 
         Message::create([
             'tenant_id'       => $tenantId,
