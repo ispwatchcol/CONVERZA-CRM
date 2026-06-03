@@ -237,7 +237,10 @@ async function startRecording() {
     }
     mediaRecorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) recordedChunks.push(e.data); };
     mediaRecorder.onstop = () => finalizeRecording();
-    mediaRecorder.start();
+    // timeslice de 1s: vuelca datos cada segundo en vez de un único blob al
+    // detener. Sin esto el .webm de MediaRecorder queda sin duración/cues válidos
+    // y ffmpeg lo transcodifica truncado o vacío → la nota llegaba SIN voz.
+    mediaRecorder.start(1000);
     recording.value = true;
     recordingTime.value = 0;
     recordTimer = setInterval(() => { recordingTime.value += 1; }, 1000);
