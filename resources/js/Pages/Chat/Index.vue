@@ -1243,10 +1243,14 @@ onUnmounted(() => window.removeEventListener('resize', handleResize));
                                         <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" /></svg>
                                         <span class="absolute -top-8 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-[10px] px-2 py-0.5 rounded-md whitespace-nowrap opacity-0 group-hover:opacity-100 transition pointer-events-none">Respuestas rápidas</span>
                                     </button>
-                                    <!-- Backdrop para cerrar al hacer click fuera -->
-                                    <Teleport to="body">
-                                        <div v-if="showQuickReplies && quickReplies.length" class="fixed inset-0 z-[19]" @click="showQuickReplies = false"></div>
-                                    </Teleport>
+                                    <!-- Backdrop para cerrar al hacer click fuera.
+                                         NO teleportar a body: el composer tiene z-10 y crea su
+                                         propio stacking context (es flex item con shrink-0), así que
+                                         un backdrop teleportado a la raíz (z-19) quedaría POR ENCIMA
+                                         del dropdown (z-20 atrapado dentro del z-10), interceptando el
+                                         click → el menú se cerraba sin enviar la respuesta rápida.
+                                         Como hermano del dropdown, z-20 > z-19 y el click llega al botón. -->
+                                    <div v-if="showQuickReplies && quickReplies.length" class="fixed inset-0 z-[19]" @click="showQuickReplies = false"></div>
                                     <!-- Quick replies dropdown -->
                                     <div v-if="showQuickReplies && quickReplies.length" class="absolute bottom-12 left-0 w-[calc(100vw-2rem)] sm:w-72 max-w-xs bg-white rounded-xl shadow-xl border border-gray-200 max-h-60 overflow-y-auto z-20 animate-scale-in">
                                         <div class="p-2">
