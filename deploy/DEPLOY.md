@@ -78,6 +78,32 @@ QUEUE_CONNECTION=database
 LOG_LEVEL=warning
 ```
 
+### 6. Permisos de `storage` para www-data (¡o el chat tira 500 al enviar medios!)
+
+PHP-FPM corre como **www-data** y necesita ESCRIBIR en `storage/app/public` cada vez
+que se envía una imagen o audio desde el chat. Si `storage` quedó como `deploy:deploy`,
+www-data no puede escribir y `sendMedia` tira **500 SERVER ERROR**.
+
+Esto se arregla **una sola vez** (logueado como tu SSH_USER, con tu password de sudo):
+
+```bash
+cd /var/www/converza-crm
+# dueño = usuario de deploy (para que los 'php artisan' del deploy escriban),
+# grupo = www-data con escritura (para que PHP-FPM escriba en runtime)
+sudo chown -R "$(whoami)":www-data storage bootstrap/cache
+sudo chmod -R 775 storage bootstrap/cache
+# setgid: los archivos/carpetas creados en runtime heredan el grupo www-data
+sudo find storage bootstrap/cache -type d -exec chmod g+s {} \;
+```
+
+No se hace en el deploy automático porque el deploy-user no tiene sudo sin password para
+`chown/chmod`, y con el `setgid` de arriba los medios nuevos ya heredan el grupo correcto,
+así que no hay que repetirlo.
+
+> Nota: el disco `supabase` (driver s3) no está operativo —falta el paquete
+> `league/flysystem-aws-s3-v3`—, así que los medios se guardan SOLO en disco local.
+> Para no intentar supabase en vano, podés poner `MEDIA_DISK=public` en el `.env`.
+
 **Listo.** A partir de ahora cada `git push origin main` despliega solo.
 
 ---
