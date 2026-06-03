@@ -104,6 +104,24 @@ así que no hay que repetirlo.
 > `league/flysystem-aws-s3-v3`—, así que los medios se guardan SOLO en disco local.
 > Para no intentar supabase en vano, podés poner `MEDIA_DISK=public` en el `.env`.
 
+### 7. ffmpeg para notas de voz grabadas en el navegador
+
+El audio grabado desde el chat sale en `webm/opus`, que WhatsApp no acepta. El servidor
+lo transcodifica a OGG/opus con **ffmpeg**. Sin ffmpeg, grabar audio falla con
+*"No se pudo procesar el audio grabado"*. Instalalo una vez:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y ffmpeg
+which ffmpeg                                  # /usr/bin/ffmpeg
+sudo -u www-data ffmpeg -version | head -1    # www-data debe poder ejecutarlo
+```
+
+El paquete de Ubuntu ya incluye libopus. Como `FFMPEG_PATH` por defecto es `ffmpeg` y
+`/usr/bin` está en el PATH, no hace falta tocar el `.env`. (Solo si PHP-FPM no lo
+encuentra: `FFMPEG_PATH=/usr/bin/ffmpeg` en `.env` + `php artisan config:cache` + reload
+de php-fpm.) Subir un `.mp3`/`.ogg`/`.m4a` ya listo NO requiere ffmpeg.
+
 **Listo.** A partir de ahora cada `git push origin main` despliega solo.
 
 ---
