@@ -68,16 +68,11 @@ jobs:
             set -e
             cd /var/www/converza-crm
 
-            # PHP-FPM corre como www-data (ver deploy/DEPLOY.md). Para que pueda
-            # ESCRIBIR en storage/app/public (medios enviados desde el chat) sin tirar
-            # 500, el grupo debe ser www-data con permiso de escritura. El dueño sigue
-            # siendo el usuario de deploy para que los 'php artisan' de este script
-            # (view:clear, etc.) también puedan escribir. setgid (g+s) hace que los
-            # archivos creados en runtime hereden el grupo www-data y queden escribibles.
-            echo "==> Fixing storage permissions (runtime user = www-data)"
-            sudo chown -R ${{ secrets.SSH_USER }}:www-data /var/www/converza-crm/storage
-            sudo chmod -R 775 /var/www/converza-crm/storage
-            sudo find /var/www/converza-crm/storage -type d -exec chmod g+s {} \\;
+            # NOTA: los permisos de storage (para que www-data, el usuario de PHP-FPM,
+            # pueda escribir storage/app/public) se arreglan UNA SOLA VEZ a mano —ver
+            # deploy/DEPLOY.md—. No se hacen aquí porque el usuario de deploy no tiene
+            # sudo sin contraseña para chown/chmod, y con setgid los archivos nuevos
+            # ya heredan el grupo www-data, así que no hace falta repetirlo cada deploy.
 
             echo "==> Fetching and resetting to ${{ github.sha }}"
             git fetch origin --prune
