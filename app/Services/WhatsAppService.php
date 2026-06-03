@@ -379,13 +379,16 @@ class WhatsAppService
             return null;
         }
 
-        $graphRoot = preg_replace('#/[^/]+$#', '', rtrim($baseUrl, '/'));
-
+        // La subida de media va al endpoint del PROPIO número:
+        //   …/v18.0/{phone_number_id}/media   (= $baseUrl . '/media')
+        // NO a …/v18.0/media. (downloadMedia sí quita el último segmento porque
+        // ahí se consulta por {media_id}, pero subir es scoped al phone_number_id.)
         try {
             $response = Http::withToken($token)
                 ->attach('file', $fileContent, $filename, ['Content-Type' => $mimeType])
-                ->post($graphRoot . '/media', [
+                ->post($baseUrl . '/media', [
                     'messaging_product' => 'whatsapp',
+                    'type'              => $mimeType,
                 ]);
 
             if ($response->successful()) {
