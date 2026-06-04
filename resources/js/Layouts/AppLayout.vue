@@ -125,16 +125,27 @@ function isActive(routeName) {
 }
 
 // ─── Flash ────────────────────────────────────────────────────────────────────
+// Sin { deep: true }: Vue usa Object.is() para comparar el valor retornado por
+// el getter. El polling reutiliza la misma referencia del objeto flash (Inertia
+// solo hace spread del top-level page.props), así que Object.is retorna true y
+// el callback NO se dispara. Una respuesta real del servidor siempre produce un
+// objeto nuevo desde JSON → referencia distinta → callback sí se dispara.
+// lastShownFlash es defensa adicional: si por alguna razón el watcher sí
+// dispara con la misma referencia, la comparación === lo descarta.
+let flashTimeout = null;
+let lastShownFlash = null;
 watch(() => page.props.flash, (flash) => {
-    if (flash?.success) {
-        flashMessage.value = flash.success; flashType.value = 'success';
-        setTimeout(() => { flashMessage.value = null; }, 4000);
-    }
-    if (flash?.error) {
-        flashMessage.value = flash.error; flashType.value = 'error';
-        setTimeout(() => { flashMessage.value = null; }, 4000);
-    }
-}, { deep: true, immediate: true });
+    const msg = flash?.success || flash?.error;
+    if (!msg || flash === lastShownFlash) return;
+    lastShownFlash = flash;
+    if (flashTimeout) clearTimeout(flashTimeout);
+    flashMessage.value = msg;
+    flashType.value = flash?.success ? 'success' : 'error';
+    flashTimeout = setTimeout(() => {
+        flashMessage.value = null;
+        flashTimeout = null;
+    }, 4000);
+}, { immediate: true });
 
 watch(currentRoute, () => { 
     if (typeof window !== 'undefined' && window.innerWidth < 768) {

@@ -28,9 +28,17 @@ const viewerNames = computed(() => (props.presence?.viewers ?? []).map(v => v.na
 // El backend ya bloquea estas acciones; aquí solo ocultamos la UI para no
 // mostrar botones que devolverían 403.
 const page = usePage();
-const myRole = computed(() => page.props.auth?.user?.role ?? 'agent');
+const myRole   = computed(() => page.props.auth?.user?.role ?? 'agent');
 const canWrite = computed(() => myRole.value !== 'viewer'); // agent o admin
-const isAdmin = computed(() => myRole.value === 'admin');
+const isAdmin  = computed(() => myRole.value === 'admin');
+const isAgent  = computed(() => myRole.value === 'agent');
+
+// Puede cerrar: admin siempre; agent solo si es el asesor asignado a esta conv.
+const canClose = computed(() => {
+    if (!canWrite.value || props.activeStatus === 'closed') return false;
+    if (isAdmin.value) return true;
+    return props.activeAssignedTo?.id === props.myStaffMemberId;
+});
 
 const showNewChatModal = ref(false);
 const showQuickReplies = ref(false);
@@ -536,13 +544,19 @@ function onImgError(id) { imgErrors.value[id] = true; }
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ── Filtros de lista de conversaciones ───────────────────────────────────────
-const filterChips = [
+// Los agentes solo ven sus propios chips; el backend ya restringe los datos.
+const ALL_FILTER_CHIPS = [
     { value: 'all',        label: 'Todas' },
     { value: 'open',       label: 'Abiertas' },
     { value: 'mine',       label: 'Mías' },
     { value: 'unassigned', label: 'Sin asignar' },
     { value: 'closed',     label: 'Cerradas' },
 ];
+const filterChips = computed(() =>
+    isAgent.value
+        ? ALL_FILTER_CHIPS.filter(c => c.value === 'mine' || c.value === 'closed')
+        : ALL_FILTER_CHIPS
+);
 
 function setFilter(value) {
     router.get(route('chat.index'), {
@@ -553,6 +567,17 @@ function setFilter(value) {
 
 // ── Asignación de agente ─────────────────────────────────────────────────────
 const showAssignMenu = ref(false);
+const assignMenuRef = ref(null);
+
+// Cerrar el dropdown al hacer clic fuera de él.
+// Se usa document mousedown en lugar de un overlay teleportado a body, porque
+// el overlay (z-[55] en root) quedaba por encima del dropdown (z-[56] dentro del
+// stacking context z-10 del header), interceptando todos los clicks.
+function handleAssignOutsideClick(e) {
+    if (showAssignMenu.value && assignMenuRef.value && !assignMenuRef.value.contains(e.target)) {
+        showAssignMenu.value = false;
+    }
+}
 
 function assignTo(staffMemberId) {
     router.patch(route('chat.conversations.assign', props.activeConversationId), {
@@ -693,6 +718,9 @@ function handleResize() {
 }
 onMounted(() => window.addEventListener('resize', handleResize));
 onUnmounted(() => window.removeEventListener('resize', handleResize));
+
+onMounted(() => document.addEventListener('mousedown', handleAssignOutsideClick));
+onUnmounted(() => document.removeEventListener('mousedown', handleAssignOutsideClick));
 </script>
 
 <template>
@@ -824,7 +852,7 @@ onUnmounted(() => window.removeEventListener('resize', handleResize));
                         </div>
 
                         <!-- ── Asignación (dropdown) ── -->
-                        <div v-if="canWrite" class="relative">
+                        <div v-if="canWrite" class="relative" ref="assignMenuRef">
                             <button @click="showAssignMenu = !showAssignMenu"
                                     class="inline-flex items-center gap-1.5 px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs font-medium text-gray-700 hover:bg-gray-50 hover:border-gray-300 transition">
                                 <span v-if="activeAssignedTo"
@@ -836,12 +864,8 @@ onUnmounted(() => window.removeEventListener('resize', handleResize));
                                 <svg class="w-3 h-3 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5"/></svg>
                             </button>
 
-                            <!-- Dropdown -->
-                            <Teleport to="body">
-                                <div v-if="showAssignMenu" class="fixed inset-0 z-[55]" @click="showAssignMenu = false"></div>
-                            </Teleport>
                             <div v-if="showAssignMenu"
-                                 class="absolute right-0 mt-1 w-60 bg-white rounded-xl shadow-xl border border-gray-200 py-1 z-[56] animate-scale-in">
+                                 class="absolute right-0 mt-1 w-60 bg-white rounded-xl shadow-xl border border-gray-200 py-1 z-50 animate-scale-in">
                                 <p class="px-3 py-1.5 text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Asignar a</p>
 
                                 <button v-if="myStaffMemberId !== activeAssignedTo?.id" @click="assignTo(myStaffMemberId)"
@@ -875,7 +899,7 @@ onUnmounted(() => window.removeEventListener('resize', handleResize));
                             </div>
                         </div>
 
-                        <button v-if="canWrite && activeStatus !== 'closed'" @click="openCloseModal"
+                        <button v-if="canClose" @click="openCloseModal"
                                 class="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 rounded-lg text-xs font-medium text-gray-700 hover:bg-gray-50 hover:border-gray-300 transition">
                             <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
                             Cerrar
