@@ -34,21 +34,38 @@ class ChatController extends Controller
         // Permite asignarse conversaciones sin pasar primero por la UI de Staff.
         $myStaffMember = $this->getOrCreateStaffForUser($tenantId, $userId, $request->user()->name);
 
+        // ── Restricción de visibilidad por rol ───────────────────────────────
+        // Los agentes solo ven conversaciones asignadas a ellos. Los admins ven todo.
+        // El check es en backend para que no se pueda eludir manipulando el query string.
+        $userRole = $request->user()->staffRole();
+        $isAgent  = $userRole === 'agent';
+
         // ── Filtro de la lista de conversaciones ─────────────────────────────
-        $filter = $request->query('filter', 'all'); // all | open | mine | unassigned | closed
+        $filter = $request->query('filter', $isAgent ? 'mine' : 'all');
 
         $conversationsQuery = Conversation::query()
             ->where('tenant_id', $tenantId)
             ->with(['contact', 'latestMessage', 'assignee.user']);
 
-        if ($filter === 'open') {
-            $conversationsQuery->where('status', 'open');
-        } elseif ($filter === 'closed') {
-            $conversationsQuery->where('status', 'closed');
-        } elseif ($filter === 'mine') {
-            $conversationsQuery->where('assigned_to', $myStaffMember->id)->where('status', 'open');
-        } elseif ($filter === 'unassigned') {
-            $conversationsQuery->whereNull('assigned_to')->where('status', 'open');
+        if ($isAgent) {
+            // Agentes: siempre solo sus conversaciones asignadas, cualquier filtro que pidan.
+            $conversationsQuery->where('assigned_to', $myStaffMember->id);
+            if ($filter === 'closed') {
+                $conversationsQuery->where('status', 'closed');
+            } else {
+                $conversationsQuery->where('status', 'open');
+            }
+        } else {
+            // Admin: filtro completo
+            if ($filter === 'open') {
+                $conversationsQuery->where('status', 'open');
+            } elseif ($filter === 'closed') {
+                $conversationsQuery->where('status', 'closed');
+            } elseif ($filter === 'mine') {
+                $conversationsQuery->where('assigned_to', $myStaffMember->id)->where('status', 'open');
+            } elseif ($filter === 'unassigned') {
+                $conversationsQuery->whereNull('assigned_to')->where('status', 'open');
+            }
         }
 
         $conversations = $conversationsQuery
@@ -78,9 +95,13 @@ class ChatController extends Controller
         $activeAssignedTo = null;
 
         if ($activeConversationId) {
-            $activeConversation = Conversation::with(['contact', 'assignee.user'])
-                ->where('tenant_id', $tenantId)
-                ->find($activeConversationId);
+            $convQuery = Conversation::with(['contact', 'assignee.user'])
+                ->where('tenant_id', $tenantId);
+            if ($isAgent) {
+                // Evita que el agente acceda a conversaciones ajenas por URL.
+                $convQuery->where('assigned_to', $myStaffMember->id);
+            }
+            $activeConversation = $convQuery->find($activeConversationId);
         } elseif ($conversations->isNotEmpty()) {
             $firstId = $conversations->first()['id'];
             $activeConversation = Conversation::with(['contact', 'assignee.user'])
@@ -189,7 +210,7 @@ class ChatController extends Controller
                     : [],
             ],
 
-            'filterCounts'         => fn () => $this->filterCounts($tenantId, $myStaffMember->id),
+            'filterCounts'         => fn () => $this->filterCounts($tenantId, $myStaffMember->id, $isAgent),
         ]);
     }
 
@@ -226,12 +247,19 @@ class ChatController extends Controller
             );
         }
 
-        // Reabrir si estaba cerrada — enviar un mensaje implica que retomamos la conversación
+        // Bloquear envío a conversaciones cerradas. La reapertura debe ser explícita.
         if ($conversation->status === 'closed') {
-            $conversation->update(['status' => 'open']);
+            return back()->withErrors(['message' => 'La conversación está cerrada. Reabrela primero para enviar mensajes.']);
         }
 
-        $result = $this->whatsappService->sendMessage($phone, $messageContent);
+        // Prefijo del asesor en el texto enviado a WhatsApp: "Nombre: mensaje".
+        // Se aplica solo al payload de WhatsApp; en BD guardamos el cuerpo limpio
+        // para no duplicar el nombre en la UI (sent_by_user_id ya identifica al agente).
+        $agentName    = $request->user()->name;
+        $prefix       = '*' . $agentName . ':* ';
+        $messageToWA  = str_starts_with($messageContent, $prefix) ? $messageContent : $prefix . $messageContent;
+
+        $result = $this->whatsappService->sendMessage($phone, $messageToWA);
 
         if ($result['success']) {
             Message::create([
@@ -315,7 +343,7 @@ class ChatController extends Controller
             );
         }
         if ($conversation->status === 'closed') {
-            $conversation->update(['status' => 'open']);
+            return back()->withErrors(['file' => 'La conversación está cerrada. Reabrela primero para enviar archivos.']);
         }
 
         // Subir el archivo a WhatsApp para obtener un media_id
@@ -449,33 +477,65 @@ class ChatController extends Controller
 
         $conversation->update(['assigned_to' => $newStaffId]);
 
-        // Registrar la transferencia como mensaje de sistema dentro del chat,
-        // para que quede el rastro de quién pasó la conversación a quién.
-        $actorName = $request->user()->name;
+        // Registrar la transferencia como mensaje de sistema dentro del chat.
+        $actorName    = $request->user()->name;
         $previousName = $previousStaffId
             ? StaffMember::with('user:id,name')->find($previousStaffId)?->user?->name
             : null;
-        $newName = $newStaffId
-            ? StaffMember::with('user:id,name')->find($newStaffId)?->user?->name
+        $newStaff = $newStaffId
+            ? StaffMember::with('user:id,name')->find($newStaffId)
             : null;
+        $newName = $newStaff?->user?->name;
 
         if ($newStaffId === null) {
-            $body = "🔄 {$actorName} quitó la asignación de " . ($previousName ?? 'la conversación') . '.';
+            $systemBody = "🔄 {$actorName} quitó la asignación de " . ($previousName ?? 'la conversación') . '.';
         } elseif ($previousName) {
-            $body = "🔄 {$actorName} transfirió la conversación de {$previousName} a {$newName}.";
+            $systemBody = "🔄 {$actorName} transfirió la conversación de {$previousName} a {$newName}.";
         } else {
-            $body = "🔄 {$actorName} asignó la conversación a {$newName}.";
+            $systemBody = "🔄 {$actorName} asignó la conversación a {$newName}.";
         }
 
         Message::create([
             'tenant_id'       => $tenantId,
             'conversation_id' => $conversation->id,
             'contact_id'      => $conversation->contact_id,
-            'body'            => $body,
+            'body'            => $systemBody,
             'status'          => 'sent',
             'type'            => 'system',
             'sent_by_user_id' => $request->user()->id,
         ]);
+
+        // Enviar mensaje al cliente notificando la transferencia, solo si se asignó
+        // a alguien nuevo y la conversación está abierta.
+        // El try-catch protege la asignación: si WA falla, el cambio de asesor
+        // ya se guardó y el mensaje de sistema ya existe — no revertimos por eso.
+        if ($newStaffId !== null && $conversation->status === 'open') {
+            $conversation->loadMissing('contact');
+            $phone = $conversation->contact?->phone;
+
+            if ($phone) {
+                try {
+                    $clientMsg = "Has sido transferido con {$newName}. En breve te atenderé.";
+                    $waResult  = $this->whatsappService->sendMessage($phone, $clientMsg);
+
+                    Message::create([
+                        'tenant_id'       => $tenantId,
+                        'conversation_id' => $conversation->id,
+                        'contact_id'      => $conversation->contact_id,
+                        'body'            => $clientMsg,
+                        'status'          => 'sent',
+                        'sent_by_user_id' => $newStaff?->user_id,
+                        'wa_message_id'   => $waResult['data']['messages'][0]['id'] ?? null,
+                    ]);
+                } catch (\Throwable $e) {
+                    \Log::warning('ChatController@assign: WA notification failed', [
+                        'conversation_id' => $conversation->id,
+                        'phone'           => $phone,
+                        'error'           => $e->getMessage(),
+                    ]);
+                }
+            }
+        }
 
         $conversation->touch();
 
@@ -584,13 +644,33 @@ class ChatController extends Controller
 
     /**
      * Conteos por filtro para mostrar en los chips de la lista.
+     * Con $agentScope=true, todos los conteos se restringen a las
+     * conversaciones asignadas a $myStaffMemberId (vista de agente).
      *
      * @return array<string, int>
      */
-    private function filterCounts(int $tenantId, int $myStaffMemberId): array
+    private function filterCounts(int $tenantId, int $myStaffMemberId, bool $agentScope = false): array
     {
-        // Una sola consulta con agregación condicional en lugar de 5 COUNT
-        // separados (clave cuando la BD es remota: 1 ida/vuelta en vez de 5).
+        if ($agentScope) {
+            // Agente: solo sus conversaciones asignadas.
+            $row = Conversation::query()
+                ->where('tenant_id', $tenantId)
+                ->where('assigned_to', $myStaffMemberId)
+                ->selectRaw('COUNT(*) AS all_count')
+                ->selectRaw("COUNT(*) FILTER (WHERE status = 'open') AS open_count")
+                ->selectRaw("COUNT(*) FILTER (WHERE status = 'closed') AS closed_count")
+                ->first();
+
+            return [
+                'all'        => (int) $row->all_count,
+                'open'       => (int) $row->open_count,
+                'mine'       => (int) $row->open_count,
+                'unassigned' => 0,
+                'closed'     => (int) $row->closed_count,
+            ];
+        }
+
+        // Admin: conteos globales del tenant.
         $row = Conversation::query()
             ->where('tenant_id', $tenantId)
             ->selectRaw('COUNT(*) AS all_count')
