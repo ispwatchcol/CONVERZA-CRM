@@ -53,5 +53,11 @@ return [
         // así que el comando convierte "ahora" a esta zona antes de comparar.
         // Cámbiala por env si el ISP no es de Colombia.
         'billing_notify_timezone' => env('WHATSAPP_BILLING_NOTIFY_TIMEZONE', 'America/Bogota'),
+        // Días de catch-up: tras el día agendado, el aviso se reintenta durante N
+        // días más (acotado a fin de mes) para recuperar caídas prolongadas
+        // (WhatsApp/ispwatch/servidor caído un día completo). Default 2 ≈ hasta 48h.
+        // 0 = solo el día agendado (comportamiento anterior). La idempotencia por
+        // ciclo impide reenviar a quien ya recibió, sin importar la fecha.
+        'billing_notify_catchup_days' => (int) env('WHATSAPP_BILLING_NOTIFY_CATCHUP_DAYS', 2),
     ],
 ];

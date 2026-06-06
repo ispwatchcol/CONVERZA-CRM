@@ -65,17 +65,25 @@ class NotificationLogController extends Controller
     }
 
     /**
-     * @return array<string, int>
+     * @return array<string, int|string>
      */
     private function stats(int $tenantId): array
     {
         $base = BillingNotificationLog::query()->where('tenant_id', $tenantId);
 
+        // Ciclo actual en la zona del ISP (igual que el comando billing-notify):
+        // sobre él se alerta de fallos pendientes en el panel.
+        $tz       = config('services.whatsapp.billing_notify_timezone', 'America/Bogota');
+        $cycleKey = \Carbon\Carbon::now($tz)->format('Y-m');
+
         return [
-            'total'   => (clone $base)->count(),
-            'sent'    => (clone $base)->where('status', 'sent')->count(),
-            'skipped' => (clone $base)->where('status', 'skipped')->count(),
-            'failed'  => (clone $base)->where('status', 'failed')->count(),
+            'total'             => (clone $base)->count(),
+            'sent'              => (clone $base)->where('status', 'sent')->count(),
+            'skipped'           => (clone $base)->where('status', 'skipped')->count(),
+            'failed'            => (clone $base)->where('status', 'failed')->count(),
+            // Fallidos del ciclo en curso: lo que dispara la alerta del panel.
+            'failed_this_cycle' => (clone $base)->where('status', 'failed')->where('cycle_key', $cycleKey)->count(),
+            'cycle_key'         => $cycleKey,
         ];
     }
 }

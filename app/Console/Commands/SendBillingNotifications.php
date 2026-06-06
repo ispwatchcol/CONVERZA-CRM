@@ -32,10 +32,15 @@ use Illuminate\Support\Facades\Log;
  * que el comando convierte "ahora" a `services.whatsapp.billing_notify_timezone`
  * antes de comparar día y hora. Sin esto, todo saldría 5 horas tarde.
  *
- * Catch-up acotado al DÍA: la tarea corre cada minuto y dispara desde la hora
- * configurada hasta el FIN de ese mismo día; si un envío falla, reintenta los
- * minutos siguientes del mismo día sin duplicar (idempotencia en
- * `billing_notification_logs`). Pasado el día NO arrastra avisos viejos.
+ * Catch-up con ventana de N días (services.whatsapp.billing_notify_catchup_days,
+ * default 2): la tarea corre cada minuto y dispara desde la hora configurada del
+ * día agendado hasta el FIN del día (agendado + N), acotado a fin de mes. Si un
+ * envío falla —o el sistema estuvo caído todo un día— reintenta los minutos/días
+ * siguientes sin duplicar (idempotencia por ciclo en `billing_notification_logs`,
+ * llaveada al MES, no a la fecha: cambiar la fecha/hora del router NO reenvía a
+ * quien ya recibió). En los días de catch-up una compuerta LOCAL barata evita el
+ * query pesado a ispwatch cuando ya no queda nada pendiente. Pasada la ventana,
+ * el reenvío es solo manual.
  *
  * Todo intento queda registrado (sent / skipped+motivo / failed) para la
  * bitácora del sidebar.
@@ -86,6 +91,12 @@ class SendBillingNotifications extends Command
         // Hora local del ISP: los días/horas de ispwatch están en esta zona, y la
         // app corre en UTC. Comparamos día y hora SIEMPRE en esta zona.
         $tz = config('services.whatsapp.billing_notify_timezone', 'America/Bogota');
+
+        // Catch-up: cuántos días tras el agendado se sigue reintentando. La
+        // compuerta de recursos (hasPendingWork) se salta en pruebas dirigidas
+        // (--customer) y en --force para que el envío sea predecible.
+        $catchupDays = max(0, (int) config('services.whatsapp.billing_notify_catchup_days', 2));
+        $bypassGate  = $customer !== null || (bool) $this->option('force');
 
         try {
             $now = $this->option('date')
@@ -180,17 +191,34 @@ class SendBillingNotifications extends Command
                 ->all();
 
             foreach ($billings as $billing) {
-                $runInvoice  = $this->timeReached($billing['create_day'], $billing['create_time'], $now);
+                $runInvoice  = $this->timeReached($billing['create_day'], $billing['create_time'], $now, $catchupDays);
                 $runReminder = $billing['payment_reminder_enabled']
-                    && $this->timeReached($billing['reminder_day'], $billing['reminder_time'], $now);
+                    && $this->timeReached($billing['reminder_day'], $billing['reminder_time'], $now, $catchupDays);
+
+                // Compuerta de recursos en días de CATCH-UP (posteriores al día
+                // agendado): el query a ispwatch es caro y sin caché. En un día de
+                // recuperación solo vale la pena jalar la lista de clientes si de
+                // verdad quedó algo pendiente (nada enviado aún, o hay fallidos por
+                // reintentar). El día agendado original SIEMPRE pasa. Chequeo LOCAL
+                // barato; no toca ispwatch. Se salta con --customer/--force.
+                if (! $bypassGate) {
+                    if ($runInvoice && $this->isCatchupDay($billing['create_day'], $now)
+                        && ! $this->hasPendingWork($tenant->id, (int) $billing['billing_id'], BillingNotificationLog::KIND_INVOICE, $cycleKey)) {
+                        $runInvoice = false;
+                    }
+                    if ($runReminder && $this->isCatchupDay($billing['reminder_day'], $now)
+                        && ! $this->hasPendingWork($tenant->id, (int) $billing['billing_id'], BillingNotificationLog::KIND_REMINDER, $cycleKey)) {
+                        $runReminder = false;
+                    }
+                }
 
                 $this->line("  ↳ billing #{$billing['billing_id']} ({$billing['router_names']}) — "
                     . 'factura(' . $this->describeWhen($billing['create_day'], $billing['create_time']) . ($runInvoice ? ' ✓' : ' ·') . ') '
                     . 'recordatorio(' . $this->describeWhen($billing['reminder_day'], $billing['reminder_time']) . ($runReminder ? ' ✓' : ' ·') . ')');
 
-                // Nada llegó a su hora todavía: NO traemos la lista de clientes.
-                // La tarea corre cada minuto; este corto-circuito evita un query
-                // pesado a ispwatch en cada tic cuando no hay nada que enviar.
+                // Nada que enviar (ni a su hora, ni catch-up pendiente): NO traemos
+                // la lista de clientes. La tarea corre cada minuto; este
+                // corto-circuito evita el query pesado a ispwatch cuando no hay nada.
                 if (! $runInvoice && ! $runReminder) {
                     continue;
                 }
@@ -338,20 +366,23 @@ class SendBillingNotifications extends Command
     }
 
     /**
-     * ¿Estamos DENTRO de la ventana de envío del aviso (día + hora) para ESTE
-     * ciclo? La ventana es [hora configurada, fin de ESE día], en la zona local
-     * de `$now`:
+     * ¿Estamos DENTRO de la ventana de envío del aviso para ESTE ciclo? La ventana
+     * es [día agendado @ hora configurada → fin del día (agendado + $catchupDays)],
+     * en la zona local de `$now` y SIEMPRE acotada a fin de mes (nunca cruza al
+     * ciclo siguiente):
      *
-     *   - Antes de la hora del día configurado  → false (aún no toca).
-     *   - El día configurado, pasada la hora     → true (envía; reintenta cada
-     *     minuto hasta fin del día ante fallos, la idempotencia evita duplicar).
-     *   - Cualquier día posterior                → false (NO arrastra avisos
-     *     viejos de días pasados; decisión del ISP sobre el catch-up).
+     *   - Antes de la hora del día agendado      → false (aún no toca).
+     *   - El día agendado, pasada la hora         → true (envía).
+     *   - Días de catch-up (hasta agendado + N)   → true (recupera caídas largas;
+     *     la idempotencia por ciclo impide reenviar a quien ya recibió).
+     *   - Después de la ventana                   → false (ya no arrastra; solo manual).
      *
-     * Día acotado a fin de mes (día 31 en un mes de 30 ⇒ se evalúa el 30). Hora
-     * ausente/ilegible ⇒ medianoche.
+     * Con $catchupDays = 0 equivale al comportamiento anterior (solo el día
+     * agendado). Día agendado acotado a fin de mes (día 31 en un mes de 30 ⇒ 30);
+     * un agendado el último día del mes no tiene días de catch-up disponibles.
+     * Hora ausente/ilegible ⇒ medianoche.
      */
-    private function timeReached(?int $day, ?string $time, Carbon $now): bool
+    private function timeReached(?int $day, ?string $time, Carbon $now, int $catchupDays = 0): bool
     {
         if ($day === null) {
             return false;
@@ -360,12 +391,58 @@ class SendBillingNotifications extends Command
         $scheduledDay = min($day, $now->daysInMonth);
         [$h, $m, $s]  = $this->parseTime($time);
 
-        $scheduled = $now->copy()
+        // Inicio: el día agendado, a la hora configurada.
+        $windowStart = $now->copy()
             ->setDate($now->year, $now->month, $scheduledDay)
             ->setTime($h, $m, $s);
 
-        // Solo el día configurado y a partir de la hora: ni antes, ni días después.
-        return $now->day === $scheduledDay && $now->greaterThanOrEqualTo($scheduled);
+        // Fin: N días después, al cierre de ESE día, sin pasar de fin de mes.
+        $lastDay   = min($scheduledDay + max(0, $catchupDays), $now->daysInMonth);
+        $windowEnd = $now->copy()
+            ->setDate($now->year, $now->month, $lastDay)
+            ->endOfDay();
+
+        return $now->greaterThanOrEqualTo($windowStart) && $now->lessThanOrEqualTo($windowEnd);
+    }
+
+    /**
+     * ¿Hoy es un día de CATCH-UP (posterior al día agendado), no el día original?
+     * Se usa para decidir si aplica la compuerta de recursos. El día agendado se
+     * acota a fin de mes igual que en timeReached.
+     */
+    private function isCatchupDay(?int $day, Carbon $now): bool
+    {
+        if ($day === null) {
+            return false;
+        }
+
+        return $now->day > min($day, $now->daysInMonth);
+    }
+
+    /**
+     * ¿Queda trabajo pendiente para este (billing, kind) en el ciclo? Chequeo
+     * LOCAL barato sobre billing_notification_logs (NO toca ispwatch): hay
+     * pendiente si todavía no se ha enviado nada (caída total el día agendado) o
+     * si hay envíos FALLIDOS por reintentar. Si ya hubo envíos y ninguno falló se
+     * asume completo y se evita el query pesado de clientes en los días de
+     * catch-up. (Clientes nuevos a mitad de ciclo no se recuperan por esta vía:
+     * el aviso de un cliente que aparece tras completarse el billing es manual.)
+     */
+    private function hasPendingWork(int $tenantId, int $billingId, string $kind, string $cycleKey): bool
+    {
+        $row = BillingNotificationLog::query()
+            ->where('tenant_id', $tenantId)
+            ->where('billing_id', $billingId)
+            ->where('kind', $kind)
+            ->where('cycle_key', $cycleKey)
+            ->selectRaw("count(*) filter (where status = 'sent') as sent_count,
+                         count(*) filter (where status = 'failed') as failed_count")
+            ->first();
+
+        $sent   = (int) ($row->sent_count ?? 0);
+        $failed = (int) ($row->failed_count ?? 0);
+
+        return $failed > 0 || $sent === 0;
     }
 
     /**
