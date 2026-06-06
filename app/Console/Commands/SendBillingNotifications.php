@@ -247,7 +247,13 @@ class SendBillingNotifications extends Command
 
         $this->newLine();
         $this->info("Total — Enviados: {$grand['sent']} · Omitidos: {$grand['skipped']} · Fallidos: {$grand['failed']} · Ya enviados: {$grand['already']} · Sin factura: {$grand['no_due']}");
-        Log::info('whatsapp:billing-notify complete', $grand);
+
+        // Corre cada minuto: solo dejamos rastro en laravel.log cuando hubo
+        // actividad real (envío, fallo u omisión significativa), para no inundar
+        // el log con miles de líneas vacías en los minutos sin nada que hacer.
+        if ($grand['sent'] || $grand['failed'] || $grand['skipped']) {
+            Log::info('whatsapp:billing-notify', $grand);
+        }
 
         return self::SUCCESS;
     }
