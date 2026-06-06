@@ -279,8 +279,14 @@ class IspwatchRepository
      * mes (las fechas guardadas pueden ser de meses pasados).
      *
      * Devuelve por cada billing: id, día de generación (create_invoice), día de
-     * recordatorio (payment_reminder), si el recordatorio está habilitado y los
-     * nombres de los routers que la usan (para mostrar en la bitácora).
+     * recordatorio (payment_reminder), la HORA local de cada uno
+     * (create_invoice_time / payment_reminder_time, formato 'HH:MM:SS' o null),
+     * si el recordatorio está habilitado y los nombres de los routers que la
+     * usan (para mostrar en la bitácora).
+     *
+     * Las horas son `time without time zone`: hora de pared que el admin del ISP
+     * escribió en su zona local. Quien las consuma debe interpretarlas en esa
+     * zona (ver services.whatsapp.billing_notify_timezone).
      *
      * Sin caché: es un job batch y la frescura importa.
      *
@@ -293,10 +299,16 @@ class IspwatchRepository
             ->leftJoin('router as r', 'r.billing_router_id', '=', 'b.id')
             ->where('b.tenant_id', $ispwatchTenantId)
             ->where('b.notificar_wpp', true)
-            ->groupBy('b.id', 'b.create_invoice', 'b.payment_reminder', 'b.payment_reminder_enabled')
+            ->groupBy(
+                'b.id', 'b.create_invoice', 'b.payment_reminder',
+                'b.create_invoice_time', 'b.payment_reminder_time',
+                'b.payment_reminder_enabled',
+            )
             ->selectRaw("b.id as billing_id,
                          extract(day from b.create_invoice)::int   as create_day,
                          extract(day from b.payment_reminder)::int as reminder_day,
+                         to_char(b.create_invoice_time,   'HH24:MI:SS') as create_time,
+                         to_char(b.payment_reminder_time, 'HH24:MI:SS') as reminder_time,
                          b.payment_reminder_enabled,
                          string_agg(distinct r.name, ', ') as router_names")
             ->orderBy('b.id')
@@ -306,6 +318,8 @@ class IspwatchRepository
             'billing_id'               => (int) $r->billing_id,
             'create_day'               => $r->create_day !== null ? (int) $r->create_day : null,
             'reminder_day'             => $r->reminder_day !== null ? (int) $r->reminder_day : null,
+            'create_time'              => $r->create_time,   // 'HH:MM:SS' (hora local ISP) o null
+            'reminder_time'            => $r->reminder_time, // 'HH:MM:SS' (hora local ISP) o null
             'payment_reminder_enabled' => (bool) $r->payment_reminder_enabled,
             'router_names'             => $r->router_names,
         ])->all();

@@ -24,11 +24,18 @@ use Illuminate\Support\Facades\Log;
  *   - kind=payment_reminder → "recordatorio de pago", el día `payment_reminder`.
  *
  * Gate: solo routers con `billing.notificar_wpp = true` (el toggle de WhatsApp
- * del core). De las fechas solo importa el DÍA del mes.
+ * del core). De las fechas importa el DÍA del mes y la HORA local
+ * (`create_invoice_time` / `payment_reminder_time`).
  *
- * Catch-up: corre a diario y dispara si hoy es >= el día configurado y el aviso
- * aún no salió este ciclo, así un fallo o una caída se recuperan el día
- * siguiente sin duplicar (idempotencia en `billing_notification_logs`).
+ * Zona horaria: esas horas son `time without time zone` que el admin del ISP
+ * escribió en su hora local (Colombia por defecto). La app corre en UTC, así
+ * que el comando convierte "ahora" a `services.whatsapp.billing_notify_timezone`
+ * antes de comparar día y hora. Sin esto, todo saldría 5 horas tarde.
+ *
+ * Catch-up acotado al DÍA: la tarea corre cada minuto y dispara desde la hora
+ * configurada hasta el FIN de ese mismo día; si un envío falla, reintenta los
+ * minutos siguientes del mismo día sin duplicar (idempotencia en
+ * `billing_notification_logs`). Pasado el día NO arrastra avisos viejos.
  *
  * Todo intento queda registrado (sent / skipped+motivo / failed) para la
  * bitácora del sidebar.
@@ -36,16 +43,16 @@ use Illuminate\Support\Facades\Log;
  * Uso:
  *   php artisan whatsapp:billing-notify
  *   php artisan whatsapp:billing-notify --tenant=2
- *   php artisan whatsapp:billing-notify --date=2026-06-05   # simula un día
+ *   php artisan whatsapp:billing-notify --date="2026-06-06 14:30"  # simula fecha+hora (hora local ISP)
  *   php artisan whatsapp:billing-notify --dry-run
- *   php artisan whatsapp:billing-notify --limit=1            # máx. envíos por tenant
+ *   php artisan whatsapp:billing-notify --limit=1                   # máx. envíos por tenant
  */
 class SendBillingNotifications extends Command
 {
     protected $signature = 'whatsapp:billing-notify
         {--tenant= : Limitar a un tenant de Converza por ID}
         {--customer= : Limitar a un cliente de ispwatch por user_id (pruebas)}
-        {--date= : Simular la fecha de corrida (YYYY-MM-DD), default hoy}
+        {--date= : Simular la corrida en hora local del ISP (YYYY-MM-DD o "YYYY-MM-DD HH:MM"), default ahora}
         {--dry-run : No envía; solo muestra lo que haría}
         {--force : Permite el envío masivo aunque el interruptor maestro esté apagado}
         {--limit= : Máximo de avisos a ENVIAR por tenant}';
@@ -76,17 +83,22 @@ class SendBillingNotifications extends Command
         $limit    = $this->option('limit') !== null ? max(0, (int) $this->option('limit')) : null;
         $customer = $this->option('customer') !== null ? (int) $this->option('customer') : null;
 
+        // Hora local del ISP: los días/horas de ispwatch están en esta zona, y la
+        // app corre en UTC. Comparamos día y hora SIEMPRE en esta zona.
+        $tz = config('services.whatsapp.billing_notify_timezone', 'America/Bogota');
+
         try {
-            $today = $this->option('date') ? Carbon::parse($this->option('date')) : Carbon::now();
+            $now = $this->option('date')
+                ? Carbon::parse($this->option('date'), $tz)
+                : Carbon::now($tz);
         } catch (\Throwable $e) {
             $this->error("Fecha inválida en --date: {$this->option('date')}");
             return self::FAILURE;
         }
 
-        $cycleKey   = $today->format('Y-m');
-        $cycleStart = $today->copy()->startOfMonth()->toDateString();
-        $cycleEnd   = $today->copy()->endOfMonth()->toDateString();
-        $daysInMon  = $today->daysInMonth;
+        $cycleKey   = $now->format('Y-m');
+        $cycleStart = $now->copy()->startOfMonth()->toDateString();
+        $cycleEnd   = $now->copy()->endOfMonth()->toDateString();
 
         // Interruptor maestro: hasta que el usuario lo active, la tarea agendada NO
         // hace envíos masivos. Se permiten igual las pruebas dirigidas a un cliente
@@ -98,7 +110,7 @@ class SendBillingNotifications extends Command
             return self::SUCCESS;
         }
 
-        $this->line("Corrida para <info>{$today->toDateString()}</info> (ciclo {$cycleKey}, día {$today->day}).");
+        $this->line("Corrida para <info>{$now->toDateTimeString()}</info> {$tz} (ciclo {$cycleKey}, día {$now->day}).");
         if ($dryRun) {
             $this->warn('— DRY RUN — no se enviará ningún mensaje (sí se registra el plan).');
         }
@@ -168,6 +180,21 @@ class SendBillingNotifications extends Command
                 ->all();
 
             foreach ($billings as $billing) {
+                $runInvoice  = $this->timeReached($billing['create_day'], $billing['create_time'], $now);
+                $runReminder = $billing['payment_reminder_enabled']
+                    && $this->timeReached($billing['reminder_day'], $billing['reminder_time'], $now);
+
+                $this->line("  ↳ billing #{$billing['billing_id']} ({$billing['router_names']}) — "
+                    . 'factura(' . $this->describeWhen($billing['create_day'], $billing['create_time']) . ($runInvoice ? ' ✓' : ' ·') . ') '
+                    . 'recordatorio(' . $this->describeWhen($billing['reminder_day'], $billing['reminder_time']) . ($runReminder ? ' ✓' : ' ·') . ')');
+
+                // Nada llegó a su hora todavía: NO traemos la lista de clientes.
+                // La tarea corre cada minuto; este corto-circuito evita un query
+                // pesado a ispwatch en cada tic cuando no hay nada que enviar.
+                if (! $runInvoice && ! $runReminder) {
+                    continue;
+                }
+
                 $rows = $ispwatch->cycleCustomersForBilling(
                     (int) $tenant->ispwatch_tenant_id,
                     $billing['billing_id'],
@@ -179,15 +206,6 @@ class SendBillingNotifications extends Command
                 if ($customer !== null) {
                     $rows = array_values(array_filter($rows, fn ($r) => $r['customer_user_id'] === $customer));
                 }
-
-                $runInvoice  = $this->dayReached($billing['create_day'], $today->day, $daysInMon);
-                $runReminder = $billing['payment_reminder_enabled']
-                    && $this->dayReached($billing['reminder_day'], $today->day, $daysInMon);
-
-                $this->line("  ↳ billing #{$billing['billing_id']} ({$billing['router_names']}) — "
-                    . count($rows) . ' cliente(s) · '
-                    . 'factura(día ' . ($billing['create_day'] ?? '–') . ($runInvoice ? '✓' : '·') . ') '
-                    . 'recordatorio(día ' . ($billing['reminder_day'] ?? '–') . ($runReminder ? '✓' : '·') . ')');
 
                 foreach (
                     [
@@ -313,13 +331,67 @@ class SendBillingNotifications extends Command
         return 'failed';
     }
 
-    /** Día configurado alcanzado (catch-up: hoy >= día, con clamp a fin de mes). */
-    private function dayReached(?int $day, int $todayDay, int $daysInMonth): bool
+    /**
+     * ¿Estamos DENTRO de la ventana de envío del aviso (día + hora) para ESTE
+     * ciclo? La ventana es [hora configurada, fin de ESE día], en la zona local
+     * de `$now`:
+     *
+     *   - Antes de la hora del día configurado  → false (aún no toca).
+     *   - El día configurado, pasada la hora     → true (envía; reintenta cada
+     *     minuto hasta fin del día ante fallos, la idempotencia evita duplicar).
+     *   - Cualquier día posterior                → false (NO arrastra avisos
+     *     viejos de días pasados; decisión del ISP sobre el catch-up).
+     *
+     * Día acotado a fin de mes (día 31 en un mes de 30 ⇒ se evalúa el 30). Hora
+     * ausente/ilegible ⇒ medianoche.
+     */
+    private function timeReached(?int $day, ?string $time, Carbon $now): bool
     {
         if ($day === null) {
             return false;
         }
-        return $todayDay >= min($day, $daysInMonth);
+
+        $scheduledDay = min($day, $now->daysInMonth);
+        [$h, $m, $s]  = $this->parseTime($time);
+
+        $scheduled = $now->copy()
+            ->setDate($now->year, $now->month, $scheduledDay)
+            ->setTime($h, $m, $s);
+
+        // Solo el día configurado y a partir de la hora: ni antes, ni días después.
+        return $now->day === $scheduledDay && $now->greaterThanOrEqualTo($scheduled);
+    }
+
+    /**
+     * Parsea 'HH:MM' o 'HH:MM:SS' (o null) a [hora, min, seg], acotado a un reloj
+     * válido. Cualquier valor no parseable cae a 00:00:00 — nunca lanza, para no
+     * tumbar una corrida masiva por un dato sucio en ispwatch.
+     *
+     * @return array{0:int,1:int,2:int}
+     */
+    private function parseTime(?string $time): array
+    {
+        if (! $time || ! preg_match('/^\s*(\d{1,2}):(\d{2})(?::(\d{2}))?\s*$/', $time, $mch)) {
+            return [0, 0, 0];
+        }
+
+        return [
+            min(23, max(0, (int) $mch[1])),
+            min(59, max(0, (int) $mch[2])),
+            min(59, max(0, (int) ($mch[3] ?? 0))),
+        ];
+    }
+
+    /** "día 6 09:00" para la línea de bitácora de consola (· nunca lanza). */
+    private function describeWhen(?int $day, ?string $time): string
+    {
+        if ($day === null) {
+            return 'día –';
+        }
+
+        [$h, $m] = $this->parseTime($time);
+
+        return sprintf('día %d %02d:%02d', $day, $h, $m);
     }
 
     /**
