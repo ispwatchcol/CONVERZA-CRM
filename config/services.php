@@ -47,5 +47,11 @@ return [
         // Default false: la tarea agendada NO envía nada hasta activarlo. Las pruebas
         // dirigidas (--customer) y los --dry-run siguen funcionando con esto en false.
         'billing_notify_enabled' => env('WHATSAPP_BILLING_NOTIFY_ENABLED', false),
+        // Zona horaria en la que el admin del ISP escribe los días/horas de
+        // ispwatch (billing.create_invoice_time / payment_reminder_time son
+        // `time without time zone`, hora de pared local). La app corre en UTC,
+        // así que el comando convierte "ahora" a esta zona antes de comparar.
+        // Cámbiala por env si el ISP no es de Colombia.
+        'billing_notify_timezone' => env('WHATSAPP_BILLING_NOTIFY_TIMEZONE', 'America/Bogota'),
     ],
 ];
