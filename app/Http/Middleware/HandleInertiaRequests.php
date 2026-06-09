@@ -20,11 +20,30 @@ class HandleInertiaRequests extends Middleware
     /**
      * Determines the current asset version.
      *
+     * Además de la versión de assets, la atamos a la IDENTIDAD de la sesión
+     * (user + tenant). El navegador comparte UNA sola cookie de sesión entre
+     * todas sus pestañas/ventanas (salvo incógnito): si en ese navegador se
+     * cambia de cuenta, una pestaña "vieja" seguiría haciendo polling con la
+     * cookie nueva y mezclaría datos de otro tenant. Al incluir la identidad en
+     * la versión, cualquier petición Inertia de esa pestaña vieja llega con una
+     * versión que ya no coincide; Inertia responde 409 + X-Inertia-Location y el
+     * navegador hace una recarga dura, dejando la pestaña consistente con la
+     * única cuenta en la que el navegador está logueado ahora.
+     *
      * @see https://inertiajs.com/asset-versioning
      */
     public function version(Request $request): ?string
     {
-        return parent::version($request);
+        $assetVersion = (string) parent::version($request);
+
+        $user     = $request->user();
+        // tenant_id se toma del propio usuario (no del binding app('tenant'),
+        // que ResolveTenant fija DESPUÉS de este middleware).
+        $identity = $user
+            ? $user->getAuthIdentifier() . ':' . ($user->tenant_id ?? '0')
+            : 'guest';
+
+        return hash('xxh128', $assetVersion . '|' . $identity);
     }
 
     /**
