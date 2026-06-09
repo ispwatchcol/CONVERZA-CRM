@@ -28,13 +28,44 @@ class ProcessIncomingWhatsAppMessage implements ShouldQueue
 
     public function handle(WhatsAppService $whatsapp): void
     {
-        $tenant = $this->resolveTenant();
+        // `queue:work` mantiene UN mismo container de Laravel vivo durante toda la
+        // vida del worker (no se reconstruye entre jobs). Un binding 'tenant' que
+        // dejara un job anterior se filtraría a éste y archivaría el mensaje en el
+        // TENANT EQUIVOCADO: una fuga grave de mensajes entre clientes distintos.
+        //
+        // Por eso aquí: (1) descartamos cualquier binding previo; (2) resolvemos
+        // SIEMPRE desde $this->tenantId, que el webhook fijó según el
+        // phone_number_id del mensaje; (3) limpiamos el binding al terminar, pase
+        // lo que pase, para no contaminar el siguiente job del mismo worker.
+        app()->forgetInstance('tenant');
 
+        $tenant = $this->tenantId
+            ? Tenant::find($this->tenantId)
+            : Tenant::where('slug', 'default')->first();
+
+        if ($tenant) {
+            app()->instance('tenant', $tenant);
+        }
+
+        try {
+            $this->process($whatsapp, $tenant);
+        } finally {
+            app()->forgetInstance('tenant');
+        }
+    }
+
+    private function process(WhatsAppService $whatsapp, ?Tenant $tenant): void
+    {
         // Aseguramos que las descargas de media usen las credenciales del tenant
         // dueño del phone_number_id que recibió el mensaje, no las del .env.
         if ($tenant) {
             $whatsapp = $whatsapp->forTenant($tenant);
         }
+
+        // tenant_id explícito en todas las escrituras: defensa en profundidad
+        // sobre el global scope, para que el aislamiento no dependa solo del
+        // binding del container.
+        $tenantId = $tenant?->id;
 
         $phone       = $this->normalizePhone($this->message['from'] ?? '');
         $waMessageId = $this->message['id'] ?? null;
@@ -48,13 +79,14 @@ class ProcessIncomingWhatsAppMessage implements ShouldQueue
         $contactName = $this->contacts[0]['profile']['name'] ?? null;
 
         $contact = Contact::firstOrCreate(
-            ['phone' => $phone],
-            ['name'  => $contactName],
+            ['phone' => $phone, 'tenant_id' => $tenantId],
+            ['name'  => $contactName, 'tenant_id' => $tenantId],
         );
 
         // Reabrir la conversación más reciente si estaba cerrada, en lugar de crear una nueva.
         // Evita duplicar chats del mismo contacto en la lista.
-        $conversation = Conversation::where('contact_id', $contact->id)
+        $conversation = Conversation::where('tenant_id', $tenantId)
+            ->where('contact_id', $contact->id)
             ->orderByDesc('updated_at')
             ->first();
 
@@ -63,10 +95,11 @@ class ProcessIncomingWhatsAppMessage implements ShouldQueue
                 $conversation->update(['status' => 'open']);
             }
         } else {
-            $conversation = Conversation::create(['contact_id' => $contact->id]);
+            $conversation = Conversation::create(['contact_id' => $contact->id, 'tenant_id' => $tenantId]);
         }
 
         $attributes = $this->buildAttributes($waMessageId, $type, $contact, $conversation, $whatsapp);
+        $attributes['tenant_id'] = $tenantId;
 
         try {
             Message::create($attributes);
@@ -190,26 +223,6 @@ class ProcessIncomingWhatsAppMessage implements ShouldQueue
                 ]);
             }
         }
-    }
-
-    private function resolveTenant(): ?Tenant
-    {
-        if (app()->bound('tenant')) {
-            $bound = app('tenant');
-            if ($bound instanceof Tenant) {
-                return $bound;
-            }
-        }
-
-        $tenant = $this->tenantId
-            ? Tenant::find($this->tenantId)
-            : Tenant::where('slug', 'default')->first();
-
-        if ($tenant) {
-            app()->instance('tenant', $tenant);
-        }
-
-        return $tenant;
     }
 
     private function normalizePhone(string $phone): string
