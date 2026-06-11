@@ -1,11 +1,13 @@
 <script setup>
-import { Head, useForm } from '@inertiajs/vue3';
-import { ref } from 'vue';
+import { Head, useForm, usePage, router } from '@inertiajs/vue3';
+import { ref, onMounted, onUnmounted } from 'vue';
 import Logo from '@/Components/Logo.vue';
 
 defineProps({
     status: String,
 });
+
+const page = usePage();
 
 const form = useForm({
     email: '',
@@ -17,9 +19,33 @@ const showPassword = ref(false);
 
 const submit = () => {
     form.post(route('login'), {
+        onSuccess: () => {
+            // Notifica a otras pestañas que ya hay una sesión activa
+            localStorage.setItem('converza-tab-login', Date.now().toString());
+        },
         onFinish: () => form.reset('password'),
     });
 };
+
+function handleTabAuth(e) {
+    // Otra pestaña completó el login: si seguimos en /login, vamos al dashboard
+    if (e.key === 'converza-tab-login') {
+        router.visit('/');
+    }
+}
+
+onMounted(() => {
+    // Página de login cargada con sesión ya activa (cache / navegación directa)
+    if (page.props.auth?.user) {
+        router.visit('/');
+        return;
+    }
+    window.addEventListener('storage', handleTabAuth);
+});
+
+onUnmounted(() => {
+    window.removeEventListener('storage', handleTabAuth);
+});
 </script>
 
 <template>

@@ -94,6 +94,15 @@ class ChatController extends Controller
         $activeConversation = null;
         $activeAssignedTo = null;
 
+        // En full page loads el elseif auto-selecciona la primera conversación cuando
+        // no hay ?conversation= en la URL. En partial reloads (polling) ese auto-select
+        // debe bloquearse: sin el param la respuesta devolvería mensajes de otra
+        // conversación (cross-contamination). El frontend ahora siempre incluye el param
+        // explícitamente en cada poll (construido desde props.activeConversationId),
+        // por lo que en condiciones normales el bloque if siempre se ejecuta y el elseif
+        // nunca se alcanza en polls — pero el guard queda como defensa en profundidad.
+        $isPartialReload = $request->hasHeader('X-Inertia-Partial-Data');
+
         if ($activeConversationId) {
             $convQuery = Conversation::with(['contact', 'assignee.user'])
                 ->where('tenant_id', $tenantId);
@@ -102,7 +111,18 @@ class ChatController extends Controller
                 $convQuery->where('assigned_to', $myStaffMember->id);
             }
             $activeConversation = $convQuery->find($activeConversationId);
-        } elseif ($conversations->isNotEmpty()) {
+
+            // Agente reasignado en mitad de la sesión: el scope assigned_to ya no
+            // resuelve la conversación. En partial reloads no blanqueamos el hilo —
+            // caemos a scope de tenant para mantener los mensajes visibles (solo lectura;
+            // las acciones de escritura siguen bloqueadas en sus propios endpoints).
+            if (!$activeConversation && $isPartialReload && $isAgent) {
+                $activeConversation = Conversation::with(['contact', 'assignee.user'])
+                    ->where('tenant_id', $tenantId)
+                    ->find($activeConversationId);
+            }
+        } elseif ($conversations->isNotEmpty() && !$isPartialReload) {
+            // Auto-select solo en carga completa de página, nunca en polling.
             $firstId = $conversations->first()['id'];
             $activeConversation = Conversation::with(['contact', 'assignee.user'])
                 ->where('tenant_id', $tenantId)
