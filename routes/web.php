@@ -17,6 +17,8 @@ use App\Http\Controllers\SettingsController;
 use App\Http\Controllers\MediaController;
 use App\Http\Controllers\WhatsAppController;
 use App\Http\Controllers\ManualController;
+use App\Http\Controllers\CampaignController;
+use App\Http\Controllers\Brain;
 
 // ── Auth (guest only) ────────────────────────────────────────────────────────
 Route::middleware('guest')->group(function () {
@@ -80,6 +82,31 @@ Route::middleware('auth')->group(function () {
     Route::patch('/templates/{template}/toggle', [TemplateController::class, 'toggleActive'])->name('templates.toggle');
     Route::delete('/templates/{template}', [TemplateController::class, 'destroy'])->name('templates.destroy');
 
+    // Campañas masivas de WhatsApp — ver es para todos; crear/lanzar/pausar/
+    // cancelar/etc. es de admin (afecta el quality rating del número).
+    Route::get('/campaigns', [CampaignController::class, 'index'])->name('campaigns.index');
+    Route::middleware('role:admin')->group(function () {
+        // Rutas con segmento ESTÁTICO van antes del wildcard {campaign} para que
+        // /campaigns/create no se interprete como un ID (además del whereNumber).
+        Route::get('/campaigns/create', [CampaignController::class, 'create'])->name('campaigns.create');
+        Route::post('/campaigns/preview-audience', [CampaignController::class, 'previewAudience'])->name('campaigns.preview-audience');
+        Route::post('/campaigns/preview-message', [CampaignController::class, 'previewMessage'])->name('campaigns.preview-message');
+        Route::post('/campaigns', [CampaignController::class, 'store'])->name('campaigns.store');
+    });
+    Route::get('/campaigns/{campaign}', [CampaignController::class, 'show'])->whereNumber('campaign')->name('campaigns.show');
+    Route::get('/campaigns/{campaign}/export', [CampaignController::class, 'export'])->whereNumber('campaign')->name('campaigns.export');
+    Route::middleware('role:admin')->group(function () {
+        Route::put('/campaigns/{campaign}', [CampaignController::class, 'update'])->whereNumber('campaign')->name('campaigns.update');
+        Route::post('/campaigns/{campaign}/launch', [CampaignController::class, 'launch'])->whereNumber('campaign')->name('campaigns.launch');
+        Route::post('/campaigns/{campaign}/pause', [CampaignController::class, 'pause'])->whereNumber('campaign')->name('campaigns.pause');
+        Route::post('/campaigns/{campaign}/resume', [CampaignController::class, 'resume'])->whereNumber('campaign')->name('campaigns.resume');
+        Route::post('/campaigns/{campaign}/cancel', [CampaignController::class, 'cancel'])->whereNumber('campaign')->name('campaigns.cancel');
+        Route::post('/campaigns/{campaign}/test', [CampaignController::class, 'test'])->whereNumber('campaign')->name('campaigns.test');
+        Route::post('/campaigns/{campaign}/retry-failed', [CampaignController::class, 'retryFailed'])->whereNumber('campaign')->name('campaigns.retry-failed');
+        Route::post('/campaigns/{campaign}/duplicate', [CampaignController::class, 'duplicate'])->whereNumber('campaign')->name('campaigns.duplicate');
+        Route::delete('/campaigns/{campaign}', [CampaignController::class, 'destroy'])->whereNumber('campaign')->name('campaigns.destroy');
+    });
+
     // Staff — la lista es de solo lectura para todos; gestionar staff es de admin.
     Route::get('/staff', [StaffController::class, 'index'])->name('staff.index');
     Route::middleware('role:admin')->group(function () {
@@ -128,6 +155,42 @@ Route::middleware('auth')->group(function () {
     // Manual de Usuario
     Route::get('/manual', [ManualController::class, 'index'])->name('manual.index');
 
+    // ── Core Brain (equipo interno) ──────────────────────────────────────────
+    Route::middleware('internal')->prefix('brain')->name('brain.')->group(function () {
+        Route::get('/', [Brain\CockpitController::class, 'index'])->name('cockpit');
+
+        // Cuentas (ISPs clientes)
+        Route::get('/accounts', [Brain\AccountController::class, 'index'])->name('accounts.index');
+        Route::post('/accounts', [Brain\AccountController::class, 'store'])->name('accounts.store');
+        Route::get('/accounts/{account}', [Brain\AccountController::class, 'show'])->name('accounts.show');
+        Route::put('/accounts/{account}', [Brain\AccountController::class, 'update'])->name('accounts.update');
+        Route::delete('/accounts/{account}', [Brain\AccountController::class, 'destroy'])->name('accounts.destroy');
+
+        // Productos de la cuenta
+        Route::post('/accounts/{account}/products', [Brain\AccountController::class, 'storeProduct'])->name('accounts.products.store');
+        Route::put('/accounts/{account}/products/{product}', [Brain\AccountController::class, 'updateProduct'])->name('accounts.products.update');
+        Route::delete('/accounts/{account}/products/{product}', [Brain\AccountController::class, 'destroyProduct'])->name('accounts.products.destroy');
+
+        // Cobros
+        Route::post('/accounts/{account}/invoices', [Brain\BillingController::class, 'storeInvoice'])->name('accounts.invoices.store');
+        Route::put('/accounts/{account}/invoices/{invoice}', [Brain\BillingController::class, 'updateInvoice'])->name('accounts.invoices.update');
+        Route::patch('/accounts/{account}/invoices/{invoice}/void', [Brain\BillingController::class, 'voidInvoice'])->name('accounts.invoices.void');
+        Route::post('/accounts/{account}/payments', [Brain\BillingController::class, 'storePayment'])->name('accounts.payments.store');
+        Route::delete('/accounts/{account}/payments/{payment}', [Brain\BillingController::class, 'destroyPayment'])->name('accounts.payments.destroy');
+
+        // Soporte — Tickets
+        Route::post('/accounts/{account}/tickets', [Brain\TicketController::class, 'storeTicket'])->name('accounts.tickets.store');
+        Route::put('/accounts/{account}/tickets/{ticket}', [Brain\TicketController::class, 'updateTicket'])->name('accounts.tickets.update');
+        Route::post('/accounts/{account}/tickets/{ticket}/events', [Brain\TicketController::class, 'addEvent'])->name('accounts.tickets.events.store');
+        Route::delete('/accounts/{account}/tickets/{ticket}', [Brain\TicketController::class, 'destroyTicket'])->name('accounts.tickets.destroy');
+
+        // Soporte — Notas
+        Route::post('/accounts/{account}/notes', [Brain\TicketController::class, 'storeNote'])->name('accounts.notes.store');
+        Route::put('/accounts/{account}/notes/{note}', [Brain\TicketController::class, 'updateNote'])->name('accounts.notes.update');
+        Route::delete('/accounts/{account}/notes/{note}', [Brain\TicketController::class, 'destroyNote'])->name('accounts.notes.destroy');
+        Route::patch('/accounts/{account}/notes/{note}/pin', [Brain\TicketController::class, 'pinNote'])->name('accounts.notes.pin');
+    });
+
     // Settings
     Route::get('/settings', [SettingsController::class, 'index'])->name('settings.index');
     Route::put('/settings/profile', [SettingsController::class, 'updateProfile'])->name('settings.profile.update');
@@ -135,6 +198,7 @@ Route::middleware('auth')->group(function () {
     Route::put('/settings/notifications', [SettingsController::class, 'updateNotifications'])->name('settings.notifications.update');
     Route::put('/settings/assignment', [SettingsController::class, 'updateAssignment'])->middleware('role:admin')->name('settings.assignment.update');
     Route::post('/settings/whatsapp/test', [SettingsController::class, 'testWhatsAppConnection'])->name('settings.whatsapp.test');
+    Route::get('/settings/whatsapp/health', [SettingsController::class, 'whatsappHealth'])->name('settings.whatsapp.health');
     Route::get('/settings/ispwatch/status', [SettingsController::class, 'ispwatchStatus'])->name('settings.ispwatch.status');
     // La vinculación con ispwatch NO es editable desde la UI: se hace con
     // `php artisan tenant:link` por el admin del SaaS.

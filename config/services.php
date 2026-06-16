@@ -59,5 +59,16 @@ return [
         // 0 = solo el día agendado (comportamiento anterior). La idempotencia por
         // ciclo impide reenviar a quien ya recibió, sin importar la fecha.
         'billing_notify_catchup_days' => (int) env('WHATSAPP_BILLING_NOTIFY_CATCHUP_DAYS', 2),
+        // Pacing del envío masivo: máximo de avisos a ENVIAR por tenant en cada
+        // corrida (la tarea corre cada minuto), para no salir en ráfaga y proteger
+        // la calidad/tier del número en Meta. Con 40 y la idempotencia + catch-up,
+        // 200 avisos se drenan solos en ~5 min sin perder a nadie. 0 = sin tope
+        // (comportamiento antiguo de ráfaga). El flag --limit lo sobreescribe.
+        'billing_notify_per_minute' => (int) env('WHATSAPP_BILLING_NOTIFY_PER_MINUTE', 40),
+        // Micro-espaciado en milisegundos entre cada envío real dentro de una
+        // corrida, para que ni siquiera el lote de un minuto salga en el mismo
+        // segundo. 250ms × 40 ≈ 10s, holgado dentro del lock withoutOverlapping(10).
+        // 0 = sin pausa entre mensajes.
+        'billing_notify_gap_ms' => (int) env('WHATSAPP_BILLING_NOTIFY_GAP_MS', 250),
     ],
 ];

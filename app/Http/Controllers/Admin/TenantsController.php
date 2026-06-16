@@ -39,11 +39,20 @@ class TenantsController extends Controller
             });
         }
 
-        $tenants = $query->orderByDesc('created_at')->get()->map(function (Tenant $t) {
-            // Status del link ISPWatch (lookup en vivo si tiene)
+        $allTenants = $query->orderByDesc('created_at')->get();
+
+        // Resolver TODOS los links de ispwatch en un solo batch (3 queries),
+        // en vez de 3 queries por cada tenant dentro del map (N+1 remoto).
+        $ispwatchIds   = $allTenants->pluck('ispwatch_tenant_id')->filter()->all();
+        $ispwatchInfos = $ispwatchIds !== []
+            ? $this->ispwatch->tenantInfoBatch($ispwatchIds)
+            : [];
+
+        $tenants = $allTenants->map(function (Tenant $t) use ($ispwatchInfos) {
+            // Status del link ISPWatch (resuelto en el batch previo)
             $ispwatchStatus = null;
             if ($t->ispwatch_tenant_id) {
-                $info = $this->ispwatch->tenantInfo((int) $t->ispwatch_tenant_id);
+                $info = $ispwatchInfos[(int) $t->ispwatch_tenant_id] ?? null;
                 $ispwatchStatus = $info
                     ? ['connected' => true, 'name' => $info['name'], 'customers' => $info['customers_count']]
                     : ['connected' => false, 'message' => "Tenant #{$t->ispwatch_tenant_id} no existe en ispwatch"];

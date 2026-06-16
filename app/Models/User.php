@@ -25,6 +25,7 @@ class User extends Authenticatable
         'email',
         'password',
         'is_superadmin',
+        'internal_role',
     ];
 
     /**
@@ -89,5 +90,27 @@ class User extends Authenticatable
         $rank = ['viewer' => 0, 'agent' => 1, 'admin' => 2];
 
         return ($rank[$this->staffRole()] ?? 0) >= ($rank[$minRole] ?? 99);
+    }
+
+    // ── Core Brain ────────────────────────────────────────────────────────────
+
+    public function canAccessBrain(): bool
+    {
+        return $this->is_superadmin || $this->internal_role !== null;
+    }
+
+    /** Rol efectivo en el Brain: owner > viewer. */
+    public function internalRole(): string
+    {
+        if ($this->is_superadmin) {
+            return 'owner';
+        }
+
+        return $this->internal_role ?? 'viewer';
+    }
+
+    public function isBrainOwner(): bool
+    {
+        return $this->is_superadmin || $this->internal_role === 'owner';
     }
 }

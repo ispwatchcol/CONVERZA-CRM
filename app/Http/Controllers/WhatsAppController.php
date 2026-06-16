@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Jobs\ProcessIncomingWhatsAppMessage;
+use App\Jobs\ProcessWhatsAppStatusUpdate;
 use App\Models\Tenant;
 use App\Services\WhatsAppService;
 use Illuminate\Http\Request;
@@ -67,21 +68,23 @@ class WhatsAppController extends Controller
             foreach ($entry['changes'] ?? [] as $change) {
                 $value         = $change['value'] ?? [];
                 $messages      = $value['messages'] ?? [];
+                $statuses      = $value['statuses'] ?? [];
                 $contacts      = $value['contacts'] ?? [];
                 $phoneNumberId = $value['metadata']['phone_number_id'] ?? null;
 
-                if (empty($messages)) {
-                    continue; // statuses, errors, account_alerts, etc. — ignorados por ahora
+                if (empty($messages) && empty($statuses)) {
+                    continue; // errors, account_alerts, etc. — ignorados por ahora
                 }
 
                 $tenant = $this->resolveTenantFromPayload($phoneNumberId, $wabaId);
 
                 if (! $tenant) {
-                    $skippedNoTenant += count($messages);
+                    $skippedNoTenant += count($messages) + count($statuses);
                     Log::warning('Webhook: ningún tenant coincide con phone_number_id/WABA', [
                         'phone_number_id' => $phoneNumberId,
                         'waba_id'         => $wabaId,
                         'message_count'   => count($messages),
+                        'status_count'    => count($statuses),
                     ]);
                     continue;
                 }
@@ -89,6 +92,13 @@ class WhatsAppController extends Controller
                 foreach ($messages as $message) {
                     ProcessIncomingWhatsAppMessage::dispatch($message, $contacts, $tenant->id);
                     $dispatched++;
+                }
+
+                if ($statuses !== []) {
+                    // sent/delivered/read/failed — alimenta el seguimiento de
+                    // entregas de las campañas masivas y el estado del chat.
+                    ProcessWhatsAppStatusUpdate::dispatch($statuses, $tenant->id);
+                    $dispatched += count($statuses);
                 }
             }
         }

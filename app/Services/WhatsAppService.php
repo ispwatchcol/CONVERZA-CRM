@@ -69,6 +69,73 @@ class WhatsAppService
     }
 
     /**
+     * Salud del número en Meta: tier de mensajería (cuántos destinatarios únicos
+     * iniciados por ti puedes contactar cada 24h) y quality rating (verde/amarillo/
+     * rojo). Es lo que de verdad rige los baneos y los topes de campañas masivas.
+     *
+     * Consulta el nodo del phone_number_id en el Graph API. Cacheado 10 min por
+     * tenant porque el tier/calidad cambian de forma lenta y no queremos pegarle
+     * a Meta en cada carga de Configuración.
+     *
+     * Devuelve null si el número no está configurado. Si Meta no expone el tier
+     * en esta cuenta, `messaging_limit_tier` viene null y la UI muestra "—".
+     *
+     * @return array{
+     *     quality_rating: ?string,
+     *     messaging_limit_tier: ?string,
+     *     display_phone_number: ?string,
+     *     verified_name: ?string,
+     *     name_status: ?string,
+     *     checked_at: string,
+     * }|null
+     */
+    public function accountHealth(bool $fresh = false): ?array
+    {
+        $baseUrl = $this->baseUrl();
+        $token   = $this->token();
+
+        if (empty($baseUrl) || empty($token)) {
+            return null;
+        }
+
+        $cacheKey = 'whatsapp.account_health.' . ($this->resolveTenant()?->id ?? 'env');
+
+        if ($fresh) {
+            Cache::forget($cacheKey);
+        }
+
+        return Cache::remember($cacheKey, 600, function () use ($baseUrl, $token) {
+            try {
+                $response = Http::withToken($token)
+                    ->timeout(8)
+                    ->get($baseUrl, [
+                        'fields' => 'display_phone_number,verified_name,quality_rating,messaging_limit_tier,name_status',
+                    ]);
+
+                if (! $response->successful()) {
+                    Log::warning('WhatsApp accountHealth failed', [
+                        'status' => $response->status(),
+                        'body'   => $response->body(),
+                    ]);
+                    return null;
+                }
+
+                return [
+                    'quality_rating'       => $response->json('quality_rating'),
+                    'messaging_limit_tier' => $response->json('messaging_limit_tier'),
+                    'display_phone_number' => $response->json('display_phone_number'),
+                    'verified_name'        => $response->json('verified_name'),
+                    'name_status'          => $response->json('name_status'),
+                    'checked_at'           => now()->toIso8601String(),
+                ];
+            } catch (\Throwable $e) {
+                Log::warning('WhatsApp accountHealth exception: ' . $e->getMessage());
+                return null;
+            }
+        });
+    }
+
+    /**
      * Tenant used to resolve credentials: explicit override first, then the
      * container binding, then null (forces .env fallback).
      */

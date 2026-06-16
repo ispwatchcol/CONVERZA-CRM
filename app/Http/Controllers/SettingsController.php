@@ -6,7 +6,9 @@ use App\Models\Template;
 use App\Models\TenantNotificationRoute;
 use App\Services\Ispwatch\IspwatchRepository;
 use App\Services\Notifications\EventCatalog;
+use App\Services\WhatsAppService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Validation\Rule;
 use Inertia\Inertia;
@@ -205,7 +207,7 @@ class SettingsController extends Controller
             $response = Http::withToken($accessToken)
                 ->timeout(10)
                 ->get("https://graph.facebook.com/v20.0/{$tenant->wa_phone_number_id}", [
-                    'fields' => 'display_phone_number,verified_name,quality_rating',
+                    'fields' => 'display_phone_number,verified_name,quality_rating,messaging_limit_tier',
                 ]);
         } catch (\Throwable $e) {
             return response()->json([
@@ -217,11 +219,15 @@ class SettingsController extends Controller
         if ($response->successful()) {
             $tenant->update(['wa_status' => 'connected']);
 
+            // Refresca la caché del indicador de salud con lo que acabamos de leer.
+            Cache::forget('whatsapp.account_health.' . $tenant->id);
+
             return response()->json([
-                'ok'             => true,
-                'phone'          => $response->json('display_phone_number'),
-                'verified_name'  => $response->json('verified_name'),
-                'quality_rating' => $response->json('quality_rating'),
+                'ok'                   => true,
+                'phone'                => $response->json('display_phone_number'),
+                'verified_name'        => $response->json('verified_name'),
+                'quality_rating'       => $response->json('quality_rating'),
+                'messaging_limit_tier' => $response->json('messaging_limit_tier'),
             ]);
         }
 
@@ -232,6 +238,33 @@ class SettingsController extends Controller
             'message' => $response->json('error.message') ?? 'Meta devolvió código ' . $response->status(),
             'code'    => $response->status(),
         ]);
+    }
+
+    /**
+     * Salud del número en Meta (tier de mensajería + quality rating) para el
+     * indicador de Configuración. Cacheado en el servicio; ?fresh=1 fuerza relectura.
+     */
+    public function whatsappHealth(Request $request, WhatsAppService $whatsapp)
+    {
+        $tenant = app('tenant');
+
+        if (blank($tenant->wa_phone_number_id) || blank($tenant->getRawOriginal('wa_access_token'))) {
+            return response()->json(['configured' => false]);
+        }
+
+        $health = $whatsapp->forTenant($tenant)->accountHealth(
+            fresh: $request->boolean('fresh'),
+        );
+
+        if ($health === null) {
+            return response()->json([
+                'configured' => true,
+                'ok'         => false,
+                'message'    => 'No se pudo leer la salud del número desde Meta.',
+            ]);
+        }
+
+        return response()->json(['configured' => true, 'ok' => true, ...$health]);
     }
 
     /**

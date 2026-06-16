@@ -2,6 +2,9 @@
 
 namespace App\Jobs;
 
+use App\Models\Campaign;
+use App\Models\CampaignOptOut;
+use App\Models\CampaignRecipient;
 use App\Models\Contact;
 use App\Models\Conversation;
 use App\Models\Message;
@@ -107,6 +110,10 @@ class ProcessIncomingWhatsAppMessage implements ShouldQueue
         } catch (UniqueConstraintViolationException) {
             // Meta retried the webhook — message already stored, nothing to do.
             Log::info('Duplicate webhook job ignored', ['wa_message_id' => $waMessageId]);
+        }
+
+        if ($tenantId) {
+            $this->handleCampaignSignals($tenantId, $phone, $type === 'text' ? ($attributes['body'] ?? '') : '');
         }
 
         // Auto-asignación "al menos ocupado": si el tenant la activó y la
@@ -223,6 +230,60 @@ class ProcessIncomingWhatsAppMessage implements ShouldQueue
                 ]);
             }
         }
+    }
+
+    /**
+     * Cierra el loop con las campañas masivas para este teléfono:
+     *   - Opt-out: si el texto coincide con una palabra clave configurada
+     *     (STOP/BAJA/CANCELAR/...), lo agrega a campaign_opt_outs (futuras
+     *     campañas lo saltan) y saca cualquier envío pendiente/en cola.
+     *   - Conversión: si responde, marca el último CampaignRecipient de este
+     *     teléfono sin replied_at como respondido (señal de campaña efectiva).
+     */
+    private function handleCampaignSignals(int $tenantId, string $phone, string $body): void
+    {
+        if ($this->isOptOutMessage($body)) {
+            CampaignOptOut::firstOrCreate(
+                ['tenant_id' => $tenantId, 'phone' => $phone],
+                ['reason' => 'Palabra clave de baja: "' . trim($body) . '"'],
+            );
+
+            CampaignRecipient::where('tenant_id', $tenantId)
+                ->where('phone', $phone)
+                ->whereIn('status', [CampaignRecipient::STATUS_PENDING, CampaignRecipient::STATUS_QUEUED])
+                ->update(['status' => CampaignRecipient::STATUS_OPTED_OUT, 'skip_reason' => 'El contacto se dio de baja (opt-out)']);
+
+            return;
+        }
+
+        $recipient = CampaignRecipient::where('tenant_id', $tenantId)
+            ->where('phone', $phone)
+            ->whereIn('status', [CampaignRecipient::STATUS_SENT, CampaignRecipient::STATUS_DELIVERED, CampaignRecipient::STATUS_READ])
+            ->whereNull('replied_at')
+            ->orderByDesc('id')
+            ->first();
+
+        if ($recipient) {
+            $recipient->update(['replied_at' => now()]);
+            Campaign::where('tenant_id', $tenantId)->where('id', $recipient->campaign_id)->increment('replied_count');
+        }
+    }
+
+    private function isOptOutMessage(string $body): bool
+    {
+        $normalized = mb_strtoupper(trim($body));
+
+        if ($normalized === '') {
+            return false;
+        }
+
+        foreach (config('campaigns.opt_out_keywords', []) as $keyword) {
+            if (str_contains($normalized, mb_strtoupper($keyword))) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function normalizePhone(string $phone): string

@@ -172,6 +172,77 @@ class IspwatchRepository
     }
 
     /**
+     * Versión batch de tenantInfo(): resuelve varios tenants de ispwatch en
+     * 3 consultas agrupadas (en vez de 3 por tenant). Reutiliza y rellena la
+     * misma caché por-tenant que tenantInfo(), así ambos métodos son
+     * intercambiables y consistentes.
+     *
+     * @param  array<int, int|string>  $ispwatchTenantIds
+     * @return array<int, array{name: string, customers_count: int, invoices_count: int}|null>
+     *         Mapa [tenantId => info|null]. null = no existe en ispwatch.
+     */
+    public function tenantInfoBatch(array $ispwatchTenantIds): array
+    {
+        $ids = array_values(array_unique(array_filter(array_map('intval', $ispwatchTenantIds))));
+
+        $result  = [];
+        $missing = [];
+
+        // 1) Reutilizar lo que ya esté cacheado por tenantInfo()
+        foreach ($ids as $id) {
+            $cached = Cache::get("ispwatch:tenant_info:{$id}");
+            if ($cached !== null) {
+                $result[$id] = $cached;
+            } else {
+                $missing[] = $id;
+            }
+        }
+
+        if ($missing === []) {
+            return $result;
+        }
+
+        // 2) Una consulta agrupada por cada dato (3 en total, no 3 por tenant)
+        $names = \App\Models\Ispwatch\IspwatchTenant::query()
+            ->whereIn('id', $missing)
+            ->pluck('name', 'id');
+
+        $customers = \DB::connection('ispwatch')
+            ->table('users as u')
+            ->join('customer_profile as cp', 'cp.user_id', '=', 'u.id')
+            ->whereIn('u.tenant_id', $missing)
+            ->groupBy('u.tenant_id')
+            ->selectRaw('u.tenant_id as tid, count(*) as c')
+            ->pluck('c', 'tid');
+
+        $invoices = \DB::connection('ispwatch')
+            ->table('invoices')
+            ->whereIn('tenant_id', $missing)
+            ->groupBy('tenant_id')
+            ->selectRaw('tenant_id as tid, count(*) as c')
+            ->pluck('c', 'tid');
+
+        // 3) Ensamblar y cachear bajo la misma clave que tenantInfo()
+        foreach ($missing as $id) {
+            if (! isset($names[$id])) {
+                $result[$id] = null; // no existe en ispwatch
+                continue;
+            }
+
+            $info = [
+                'name'            => $names[$id],
+                'customers_count' => (int) ($customers[$id] ?? 0),
+                'invoices_count'  => (int) ($invoices[$id] ?? 0),
+            ];
+
+            $result[$id] = $info;
+            Cache::put("ispwatch:tenant_info:{$id}", $info, self::CACHE_TTL_SECONDS);
+        }
+
+        return $result;
+    }
+
+    /**
      * Facturas con saldo pendiente del cliente dado dentro del tenant ispwatch.
      * Ordenadas por `due_date` ascendente (más vencidas primero).
      *
@@ -386,6 +457,49 @@ class IspwatchRepository
             'invoice_status'   => $r->invoice_status,
             'due_date'         => $r->due_date,
         ], $rows);
+    }
+
+    /**
+     * Salud agregada de un tenant de ispwatch para el Core Brain.
+     * Devuelve: clientes activos/suspendidos, facturas vencidas.
+     * Sin caché: se usa en la ficha de cuenta (una sola llamada).
+     *
+     * @return array{active_customers: int, suspended_customers: int, overdue_invoices: int}|null
+     */
+    public function tenantHealth(int $ispwatchTenantId): ?array
+    {
+        try {
+            $today = now()->toDateString();
+
+            $activeCustomers = \DB::connection('ispwatch')
+                ->table('customer_profile as cp')
+                ->join('users as u', 'u.id', '=', 'cp.user_id')
+                ->where('u.tenant_id', $ispwatchTenantId)
+                ->where('cp.status', true)
+                ->count();
+
+            $suspendedCustomers = \DB::connection('ispwatch')
+                ->table('customer_profile as cp')
+                ->join('users as u', 'u.id', '=', 'cp.user_id')
+                ->where('u.tenant_id', $ispwatchTenantId)
+                ->where('cp.status', false)
+                ->count();
+
+            $overdueInvoices = IspwatchInvoice::query()
+                ->where('tenant_id', $ispwatchTenantId)
+                ->where('balance_due', '>', 0)
+                ->whereNotIn('status', ['paid', 'void', 'cancelled'])
+                ->whereDate('due_date', '<=', $today)
+                ->count();
+
+            return [
+                'active_customers'    => (int) $activeCustomers,
+                'suspended_customers' => (int) $suspendedCustomers,
+                'overdue_invoices'    => (int) $overdueInvoices,
+            ];
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     /**

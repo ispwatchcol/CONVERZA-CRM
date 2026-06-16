@@ -11,6 +11,7 @@ use App\Models\Tenant;
 use App\Models\TenantNotificationRoute;
 use App\Services\Ispwatch\IspwatchRepository;
 use App\Services\Notifications\EventCatalog;
+use App\Services\Templates\TemplateRenderer;
 use App\Services\WhatsAppService;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
@@ -41,6 +42,16 @@ use Illuminate\Support\Facades\Log;
  * quien ya recibió). En los días de catch-up una compuerta LOCAL barata evita el
  * query pesado a ispwatch cuando ya no queda nada pendiente. Pasada la ventana,
  * el reenvío es solo manual.
+ *
+ * Pacing (anti-baneo): la corrida envía como máximo
+ * `services.whatsapp.billing_notify_per_minute` (default 40) avisos por tenant.
+ * Como la tarea corre cada minuto y es idempotente con catch-up, un lote grande
+ * se drena solo en varios minutos sin salir en ráfaga ni perder a nadie (los no
+ * enviados por el tope no se registran, así el siguiente minuto los reintenta).
+ * Además un micro-espaciado (`billing_notify_gap_ms`, default 250ms) separa cada
+ * envío real. Ambos protegen la calidad/tier del número en Meta. `--limit` manda
+ * sobre el tope; el día agendado siempre drena (la compuerta de recursos solo
+ * aplica en días de catch-up), así que con horario normal todo sale el mismo día.
  *
  * Todo intento queda registrado (sent / skipped+motivo / failed) para la
  * bitácora del sidebar.
@@ -85,8 +96,18 @@ class SendBillingNotifications extends Command
     public function handle(IspwatchRepository $ispwatch, WhatsAppService $whatsapp): int
     {
         $dryRun   = (bool) $this->option('dry-run');
-        $limit    = $this->option('limit') !== null ? max(0, (int) $this->option('limit')) : null;
         $customer = $this->option('customer') !== null ? (int) $this->option('customer') : null;
+
+        // Pacing: tope de envíos por tenant POR CORRIDA. --limit lo sobreescribe.
+        // Sin --limit usamos el default de config (40); en dry-run no capamos para
+        // mostrar el plan completo. config=0 ⇒ sin tope (ráfaga, opt-out explícito).
+        $configCap = max(0, (int) config('services.whatsapp.billing_notify_per_minute', 40));
+        $limit = $this->option('limit') !== null
+            ? max(0, (int) $this->option('limit'))
+            : (($dryRun || $configCap === 0) ? null : $configCap);
+
+        // Micro-espaciado entre cada envío real, en milisegundos.
+        $gapMs = max(0, (int) config('services.whatsapp.billing_notify_gap_ms', 250));
 
         // Hora local del ISP: los días/horas de ispwatch están en esta zona, y la
         // app corre en UTC. Comparamos día y hora SIEMPRE en esta zona.
@@ -266,6 +287,13 @@ class SendBillingNotifications extends Command
 
                         $stats[$result]++;
                         $grand[$result]++;
+
+                        // Micro-espaciado tras un envío REAL (no dry-run, no
+                        // omitidos/ya enviados): evita salir en ráfaga dentro del
+                        // mismo segundo y protege la calidad del número.
+                        if (! $dryRun && $result === 'sent' && $gapMs > 0) {
+                            usleep($gapMs * 1000);
+                        }
                     }
                 }
             }
@@ -533,30 +561,14 @@ class SendBillingNotifications extends Command
 
     /**
      * Reconstruye el texto final (para el eco en el chat). Soporta variables
-     * nombradas (mapa) y posicionales (lista).
+     * nombradas (mapa) y posicionales (lista). Lógica compartida con las
+     * campañas masivas, ver {@see TemplateRenderer::renderBody()}.
      *
      * @param  array<int|string, string>  $params
      */
     private function renderBody(Template $tpl, array $params): string
     {
-        $body = (string) $tpl->body;
-
-        if (! array_is_list($params)) {
-            foreach ($params as $name => $value) {
-                // callback evita que un '$' en el valor se interprete como backreference.
-                $body = preg_replace_callback(
-                    '/\{\{\s*' . preg_quote((string) $name, '/') . '\s*\}\}/',
-                    fn () => $value,
-                    $body,
-                );
-            }
-            return $body;
-        }
-
-        foreach ($params as $i => $value) {
-            $body = str_replace('{{' . ($i + 1) . '}}', $value, $body);
-        }
-        return $body;
+        return TemplateRenderer::renderBody($tpl, $params);
     }
 
     private function formatAmount($amount): string
