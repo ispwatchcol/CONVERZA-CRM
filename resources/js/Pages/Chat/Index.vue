@@ -60,6 +60,19 @@ onMounted(() => {
         form.conversation_id = props.activeConversationId;
         scrollToBottom();
     }
+    // Cuando el servidor auto-selecciona la primera conversación (carga inicial sin
+    // ?conversation= en la URL), la URL queda sin el param. El polling hace GET a
+    // esa URL y el backend vuelve a elegir first() — que puede cambiar si llega un
+    // mensaje nuevo. Resultado: activeChat se actualiza a otra conversación mientras
+    // activeName/activeConversationId siguen en la anterior (no están en el only list).
+    // Solución: fijar silenciosamente la URL para que todos los polls incluyan el param.
+    if (props.activeConversationId) {
+        const url = new URL(window.location.href);
+        if (!url.searchParams.has('conversation')) {
+            url.searchParams.set('conversation', String(props.activeConversationId));
+            window.history.replaceState(history.state, '', url.toString());
+        }
+    }
     // Inicializar el rastreo del scroll inteligente con el estado actual,
     // así el primer polling no arrastra al usuario hacia abajo.
     trackedConvForScroll = props.activeConversationId;
@@ -697,9 +710,27 @@ onMounted(() => {
         // No recargar mientras hay un envío en curso: un router.reload cancelaría
         // el request en vuelo (por eso una imagen podía "quedarse" sin enviarse).
         if (sending.value) return;
+
+        // URL construida desde estado reactivo — nunca desde window.location.href,
+        // que puede contener params obsoletos o no haberse sincronizado con replaceState.
+        const pollUrl = new URL(window.location.pathname, window.location.origin);
+        if (props.filter) {
+            pollUrl.searchParams.set('filter', props.filter);
+        }
+        if (props.activeConversationId) {
+            pollUrl.searchParams.set('conversation', String(props.activeConversationId));
+        }
+
         // 'presence' + 'staffMembers' también registran el heartbeat de presencia
         // en el backend (el partial reload ejecuta ChatController::index completo).
-        router.reload({ only: ['conversations', 'activeChat', 'staffMembers', 'presence'], preserveScroll: true, preserveState: true });
+        router.visit(pollUrl.toString(), {
+            only: ['conversations', 'activeChat', 'staffMembers', 'presence'],
+            preserveScroll: true,
+            preserveState: true,
+            replace: true,
+            async: true,
+            headers: { 'Cache-Control': 'no-cache' },
+        });
     }, 5000);
 });
 onUnmounted(() => { if (pollingInterval) clearInterval(pollingInterval); });
