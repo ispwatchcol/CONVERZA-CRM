@@ -103,6 +103,7 @@ const navItems = [
     { name: 'Etiquetas', route: 'labels.index', icon: 'labels' },
     { name: 'Chat', route: 'chat.index', icon: 'chat' },
     { name: 'Plantillas', route: 'templates.index', icon: 'templates' },
+    { name: 'Campañas', route: 'campaigns.index', icon: 'campaigns' },
     { name: 'Notificaciones', route: 'notifications.index', icon: 'bell' },
     { name: 'Staff', route: 'staff.index', icon: 'staff' },
     { name: 'Equipos', route: 'teams.index', icon: 'teams' },
@@ -119,6 +120,17 @@ const superadminNavItems = [
 ];
 
 const isSuperadmin = computed(() => authUser.value?.is_superadmin === true);
+const canBrain     = computed(() => authUser.value?.can_brain === true);
+
+// Items del Core Brain (equipo interno del founder).
+const brainNavItems = [
+    { name: 'Cockpit', route: 'brain.cockpit', activePrefix: 'brain.cockpit', icon: 'brain-cockpit' },
+    { name: 'Cuentas', route: 'brain.accounts.index', activePrefix: 'brain.accounts', icon: 'brain-accounts' },
+];
+
+function isBrainActive(prefix) {
+    return currentRoute.value?.startsWith(prefix);
+}
 
 function isActive(routeName) {
     return currentRoute.value?.startsWith(routeName.split('.')[0]);
@@ -220,6 +232,7 @@ onUnmounted(() => {
                         <svg v-else-if="item.icon === 'labels'" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9.568 3H5.25A2.25 2.25 0 003 5.25v4.318c0 .597.237 1.17.659 1.591l9.581 9.581c.699.699 1.78.872 2.607.33a18.095 18.095 0 005.223-5.223c.542-.827.369-1.908-.33-2.607L11.16 3.66A2.25 2.25 0 009.568 3z" /><path stroke-linecap="round" stroke-linejoin="round" d="M6 6h.008v.008H6V6z" /></svg>
                         <svg v-else-if="item.icon === 'chat'" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M20.25 8.511c.884.284 1.5 1.128 1.5 2.097v4.286c0 1.136-.847 2.1-1.98 2.193-.34.027-.68.052-1.02.072v3.091l-3-3c-1.354 0-2.694-.055-4.02-.163a2.115 2.115 0 01-.825-.242m9.345-8.334a2.126 2.126 0 00-.476-.095 48.64 48.64 0 00-8.048 0c-1.131.094-1.976 1.057-1.976 2.192v4.286c0 .837.46 1.58 1.155 1.951m9.345-8.334V6.637c0-1.621-1.152-3.026-2.76-3.235A48.455 48.455 0 0011.25 3c-2.115 0-4.198.137-6.24.402-1.608.209-2.76 1.614-2.76 3.235v6.226c0 1.621 1.152 3.026 2.76 3.235.577.075 1.157.14 1.74.194V21l4.155-4.155" /></svg>
                         <svg v-else-if="item.icon === 'templates'" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" /></svg>
+        <svg v-else-if="item.icon === 'campaigns'" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" /></svg>
                         <svg v-else-if="item.icon === 'bell'" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0" /></svg>
                         <svg v-else-if="item.icon === 'staff'" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" /></svg>
                         <svg v-else-if="item.icon === 'teams'" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M18 18.72a9.094 9.094 0 003.741-.479 3 3 0 00-4.682-2.72m.94 3.198l.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0112 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 016 18.719m12 0a5.971 5.971 0 00-.941-3.197m0 0A5.995 5.995 0 0012 12.75a5.995 5.995 0 00-5.058 2.772m0 0a3 3 0 00-4.681 2.72 8.986 8.986 0 003.74.477m.94-3.197a5.971 5.971 0 00-.94 3.197M15 6.75a3 3 0 11-6 0 3 3 0 016 0zm6 3a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0zm-13.5 0a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0z" /></svg>
@@ -232,8 +245,8 @@ onUnmounted(() => {
                     <span v-show="sidebarOpen" class="truncate">{{ item.name }}</span>
                 </Link>
 
-                <!-- ── Sección Superadmin SaaS ────────────────────────────── -->
-                <template v-if="isSuperadmin">
+                <!-- ── SaaS Admin + Core Brain (sección unificada) ────────── -->
+                <template v-if="isSuperadmin || canBrain">
                     <div class="mt-4 mb-2 px-3" :class="!sidebarOpen && 'flex justify-center px-0'">
                         <div v-if="sidebarOpen" class="flex items-center gap-2">
                             <div class="h-px bg-white/10 flex-1"></div>
@@ -242,21 +255,43 @@ onUnmounted(() => {
                         </div>
                         <div v-else class="h-px bg-white/10 w-8"></div>
                     </div>
+
+                    <!-- Tenants (solo superadmin) -->
                     <Link
-                        v-for="item in superadminNavItems"
+                        v-if="isSuperadmin"
+                        :href="route('admin.tenants.index')"
+                        class="group flex items-center rounded-lg font-medium transition-all duration-200"
+                        :class="[
+                            sidebarOpen ? 'px-3 py-2.5 text-sm w-full' : 'p-3 justify-center w-12 h-12',
+                            isActive('admin.tenants.index')
+                                ? (sidebarOpen ? 'bg-amber-500/20 text-amber-100 border-l-[3px] border-amber-400' : 'bg-amber-500/20 text-amber-100')
+                                : 'text-amber-200/70 hover:bg-amber-500/10 hover:text-amber-100'
+                        ]"
+                        :title="!sidebarOpen ? 'Tenants' : ''"
+                    >
+                        <span class="shrink-0 flex items-center justify-center transition-transform group-hover:scale-110" :class="sidebarOpen ? 'w-5 h-5 mr-3' : 'w-6 h-6'">
+                            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 21h19.5m-18-18v18m10.5-18v18m6-13.5V21M6.75 6.75h.75m-.75 3h.75m-.75 3h.75m3-6h.75m-.75 3h.75m-.75 3h.75M6.75 21v-3.375c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21M3 3h12m-.75 4.5H21m-3.75 3.75h.008v.008h-.008v-.008zm0 3h.008v.008h-.008v-.008zm0 3h.008v.008h-.008v-.008z"/></svg>
+                        </span>
+                        <span v-show="sidebarOpen" class="truncate">Tenants</span>
+                    </Link>
+
+                    <!-- Core Brain items -->
+                    <Link
+                        v-for="item in brainNavItems"
                         :key="item.route"
                         :href="route(item.route)"
                         class="group flex items-center rounded-lg font-medium transition-all duration-200"
                         :class="[
                             sidebarOpen ? 'px-3 py-2.5 text-sm w-full' : 'p-3 justify-center w-12 h-12',
-                            isActive(item.route)
+                            isBrainActive(item.activePrefix)
                                 ? (sidebarOpen ? 'bg-amber-500/20 text-amber-100 border-l-[3px] border-amber-400' : 'bg-amber-500/20 text-amber-100')
                                 : 'text-amber-200/70 hover:bg-amber-500/10 hover:text-amber-100'
                         ]"
                         :title="!sidebarOpen ? item.name : ''"
                     >
                         <span class="shrink-0 flex items-center justify-center transition-transform group-hover:scale-110" :class="sidebarOpen ? 'w-5 h-5 mr-3' : 'w-6 h-6'">
-                            <svg v-if="item.icon === 'tenants'" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 21h19.5m-18-18v18m10.5-18v18m6-13.5V21M6.75 6.75h.75m-.75 3h.75m-.75 3h.75m3-6h.75m-.75 3h.75m-.75 3h.75M6.75 21v-3.375c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21M3 3h12m-.75 4.5H21m-3.75 3.75h.008v.008h-.008v-.008zm0 3h.008v.008h-.008v-.008zm0 3h.008v.008h-.008v-.008z"/></svg>
+                            <svg v-if="item.icon === 'brain-cockpit'" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M7.5 14.25v2.25m3-4.5v4.5m3-6.75v6.75m3-9v9M6 20.25h12A2.25 2.25 0 0020.25 18V6A2.25 2.25 0 0018 3.75H6A2.25 2.25 0 003.75 6v12A2.25 2.25 0 006 20.25z" /></svg>
+                            <svg v-else-if="item.icon === 'brain-accounts'" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 21h16.5M4.5 3h15M5.25 3v18m13.5-18v18M9 6.75h1.5m-1.5 3h1.5m-1.5 3h1.5m3-6H15m-1.5 3H15m-1.5 3H15M9 21v-3.375c0-.621.504-1.125 1.125-1.125h3.75c.621 0 1.125.504 1.125 1.125V21" /></svg>
                         </span>
                         <span v-show="sidebarOpen" class="truncate">{{ item.name }}</span>
                     </Link>
@@ -296,7 +331,10 @@ onUnmounted(() => {
                         <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" /></svg>
                     </button>
                     <h2 class="text-base font-semibold text-gray-800 truncate">
-                        {{ navItems.find(i => isActive(i.route))?.name || 'Dashboard' }}
+                        {{ navItems.find(i => isActive(i.route))?.name
+                            || superadminNavItems.find(i => isActive(i.route))?.name
+                            || brainNavItems.find(i => isBrainActive(i.activePrefix))?.name
+                            || 'Dashboard' }}
                     </h2>
                 </div>
 

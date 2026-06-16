@@ -1,7 +1,7 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
 import { useForm, Head, Link, usePage } from '@inertiajs/vue3';
-import { ref, computed } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import axios from 'axios';
 
 const props = defineProps({
@@ -125,6 +125,49 @@ async function testWhatsApp() {
         testing.value = false;
     }
 }
+
+// ── Salud del número en Meta (tier + calidad) ────────────────────────────────
+const waHealth = ref(null);
+const healthLoading = ref(false);
+
+async function loadWaHealth(fresh = false) {
+    if (!props.tenant.has_whatsapp) return;
+    healthLoading.value = true;
+    try {
+        const { data } = await axios.get(route('settings.whatsapp.health'), { params: fresh ? { fresh: 1 } : {} });
+        waHealth.value = data;
+    } catch (e) {
+        waHealth.value = { configured: true, ok: false, message: 'Error de red al consultar Meta.' };
+    } finally {
+        healthLoading.value = false;
+    }
+}
+
+onMounted(() => loadWaHealth());
+
+// Tier de mensajería: Meta lo devuelve como TIER_250 / TIER_1K / TIER_10K / …
+const tierLabel = computed(() => {
+    const t = waHealth.value?.messaging_limit_tier;
+    if (!t) return null;
+    return {
+        TIER_50: '50 / 24h',
+        TIER_250: '250 / 24h',
+        TIER_1K: '1.000 / 24h',
+        TIER_10K: '10.000 / 24h',
+        TIER_100K: '100.000 / 24h',
+        TIER_UNLIMITED: 'Ilimitado',
+    }[t] || t.replace('TIER_', '');
+});
+
+// Quality rating: GREEN / YELLOW / RED / UNKNOWN.
+const qualityBadge = computed(() => {
+    const q = (waHealth.value?.quality_rating || '').toUpperCase();
+    return {
+        GREEN:  { label: 'Alta (verde)',     cls: 'bg-emerald-100 text-emerald-700', dot: 'bg-emerald-500' },
+        YELLOW: { label: 'Media (amarilla)', cls: 'bg-amber-100 text-amber-700',     dot: 'bg-amber-500' },
+        RED:    { label: 'Baja (roja)',      cls: 'bg-red-100 text-red-700',         dot: 'bg-red-500' },
+    }[q] || { label: q ? q : 'Desconocida', cls: 'bg-gray-100 text-gray-600', dot: 'bg-gray-400' };
+});
 
 // ── ISPWatch live status refresh ─────────────────────────────────────────────
 const refreshing = ref(false);
@@ -365,11 +408,51 @@ const waBadge = computed(() => {
                             </div>
                         </div>
 
+                        <!-- Salud del número en Meta (tier + calidad) -->
+                        <div v-if="tenant.has_whatsapp" class="rounded-xl bg-gray-50 border border-gray-100 p-3">
+                            <div class="flex items-center justify-between mb-2">
+                                <p class="text-xs font-semibold text-gray-600 uppercase tracking-wider">Salud del número en Meta</p>
+                                <button type="button" @click="loadWaHealth(true)" :disabled="healthLoading"
+                                        class="text-xs text-accent hover:underline disabled:opacity-50">
+                                    {{ healthLoading ? 'Actualizando…' : 'Actualizar' }}
+                                </button>
+                            </div>
+
+                            <div v-if="healthLoading && !waHealth" class="text-xs text-gray-400">Consultando a Meta…</div>
+
+                            <template v-else-if="waHealth && waHealth.ok">
+                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    <!-- Tier -->
+                                    <div class="bg-white rounded-lg border border-gray-100 p-3">
+                                        <p class="text-[11px] text-gray-500 mb-0.5">Límite de mensajería (tier)</p>
+                                        <p class="text-sm font-semibold text-gray-900">{{ tierLabel || '—' }}</p>
+                                        <p class="text-[11px] text-gray-400 mt-0.5">destinatarios únicos por 24h</p>
+                                    </div>
+                                    <!-- Calidad -->
+                                    <div class="bg-white rounded-lg border border-gray-100 p-3">
+                                        <p class="text-[11px] text-gray-500 mb-1">Calidad del número</p>
+                                        <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium" :class="qualityBadge.cls">
+                                            <span class="w-1.5 h-1.5 rounded-full" :class="qualityBadge.dot"></span>
+                                            {{ qualityBadge.label }}
+                                        </span>
+                                        <p class="text-[11px] text-gray-400 mt-1.5">si baja a roja, Meta puede limitar o bloquear el número</p>
+                                    </div>
+                                </div>
+                                <p class="text-[11px] text-gray-400 mt-2">
+                                    Meta sube el tier automáticamente con buen volumen y calidad. Cuida la calidad: envía solo a quien espera tus mensajes y respeta el ritmo de las campañas.
+                                </p>
+                            </template>
+
+                            <p v-else-if="waHealth && !waHealth.ok" class="text-xs text-amber-700">
+                                {{ waHealth.message || 'No se pudo leer la salud del número.' }}
+                            </p>
+                        </div>
+
                         <!-- Test result -->
                         <div v-if="testResult" class="rounded-xl p-3 text-sm" :class="testResult.ok ? 'bg-emerald-50 border border-emerald-100 text-emerald-900' : 'bg-red-50 border border-red-100 text-red-900'">
                             <template v-if="testResult.ok">
                                 <p class="font-semibold">✓ Credenciales válidas</p>
-                                <p class="text-xs mt-1">Número {{ testResult.phone }} · Nombre verificado: <span class="font-medium">{{ testResult.verified_name || '—' }}</span><span v-if="testResult.quality_rating"> · Calidad: {{ testResult.quality_rating }}</span></p>
+                                <p class="text-xs mt-1">Número {{ testResult.phone }} · Nombre verificado: <span class="font-medium">{{ testResult.verified_name || '—' }}</span><span v-if="testResult.quality_rating"> · Calidad: {{ testResult.quality_rating }}</span><span v-if="testResult.messaging_limit_tier"> · Tier: {{ testResult.messaging_limit_tier }}</span></p>
                             </template>
                             <template v-else>
                                 <p class="font-semibold">✗ No se pudo verificar</p>

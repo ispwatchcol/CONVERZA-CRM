@@ -63,9 +63,11 @@ class HandleInertiaRequests extends Middleware
                         $request->user()->only('id', 'name', 'email'),
                         [
                             'is_superadmin' => (bool) $request->user()->is_superadmin,
-                            // Rol efectivo en el tenant (viewer < agent < admin) para
-                            // que la UI oculte acciones que el backend ya bloquea.
                             'role'          => $request->user()->staffRole(),
+                            'can_brain'     => $request->user()->canAccessBrain(),
+                            'internal_role' => $request->user()->canAccessBrain()
+                                ? $request->user()->internalRole()
+                                : null,
                         ]
                     )
                     : null,

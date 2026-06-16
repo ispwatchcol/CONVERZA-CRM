@@ -33,3 +33,13 @@ Schedule::command('whatsapp:billing-notify')
     ->everyMinute()
     ->withoutOverlapping(10)
     ->onOneServer();
+
+// ── Campañas masivas de WhatsApp ──────────────────────────────────────────
+// Corre cada minuto: promueve campañas agendadas cuya hora llegó y despacha
+// el siguiente lote (throttle_per_minute) de cada campaña en envío. Barato
+// cuando no hay campañas activas (un par de queries cortas). withoutOverlapping
+// corto porque cada tick solo encola, no envía sincrónicamente.
+Schedule::command('campaigns:tick')
+    ->everyMinute()
+    ->withoutOverlapping(2)
+    ->onOneServer();
