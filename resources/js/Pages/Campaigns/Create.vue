@@ -9,6 +9,7 @@ const props = defineProps({
     labels: { type: Array, default: () => [] },
     defaultThrottle: { type: Number, default: 20 },
     tierThresholds: { type: Array, default: () => [250, 1000, 10000, 100000] },
+    sendConditions: { type: Array, default: () => ['always', 'if_not_replied', 'if_not_read', 'if_not_delivered'] },
 });
 
 const step = ref(1);
@@ -190,6 +191,57 @@ const mappingComplete = computed(() =>
     })
 );
 
+// ═══════════════ Seguimientos (pasos 2+) ═══════════════
+const conditionLabels = {
+    always: 'siempre',
+    if_not_replied: 'si no respondió',
+    if_not_read: 'si no leyó el anterior',
+    if_not_delivered: 'si no se entregó el anterior',
+};
+// El paso 1 siempre se envía; los seguimientos son condicionales.
+const followUpConditions = computed(() => props.sendConditions.filter(c => c !== 'always'));
+
+const followUps = ref([]);
+
+function addFollowUp() {
+    followUps.value.push({ template_id: '', variables: [], mapping: {}, delay_days: 2, delay_hours: 0, send_condition: 'if_not_replied' });
+}
+
+function removeFollowUp(i) {
+    followUps.value.splice(i, 1);
+}
+
+async function onFollowUpTemplate(i) {
+    const f = followUps.value[i];
+    if (!f.template_id) { f.variables = []; f.mapping = {}; return; }
+    try {
+        const { data } = await axios.post(route('campaigns.preview-message'), {
+            template_id: f.template_id,
+            mapping: {},
+            row: sampleRow.value?.variables ?? {},
+            name: sampleRow.value?.name,
+            phone: sampleRow.value?.phone,
+        });
+        const next = {};
+        for (const v of data.variables) next[v] = f.mapping[v] ?? guessMapping(v);
+        f.mapping = next;          // poblar el mapeo ANTES de las variables (el v-for las usa)
+        f.variables = data.variables;
+    } catch {
+        f.variables = [];
+    }
+}
+
+// Total de horas de espera de un seguimiento (la UI lo pide en días + horas).
+function followUpDelayHours(f) {
+    return (Number(f.delay_days) || 0) * 24 + (Number(f.delay_hours) || 0);
+}
+
+const followUpsValid = computed(() => followUps.value.every(f =>
+    f.template_id &&
+    followUpDelayHours(f) >= 1 &&
+    f.variables.every(v => { const m = f.mapping[v]; return m && String(m.value ?? '').trim() !== ''; })
+));
+
 // ═══════════════ Paso 3: Revisar y enviar ═══════════════
 const form = useForm({
     name: '',
@@ -200,6 +252,7 @@ const form = useForm({
     throttle_per_minute: props.defaultThrottle,
     scheduled_at: '',
     rows: [],
+    steps: [],
 });
 
 function goToStep3() {
@@ -215,6 +268,12 @@ function goToStep3() {
                 : {};
     form.variable_mapping = mapping.value;
     form.rows = audiencePreview.value?.rows ?? [];
+    form.steps = followUps.value.map(f => ({
+        template_id: f.template_id,
+        variable_mapping: f.mapping,
+        delay_hours: followUpDelayHours(f),
+        send_condition: f.send_condition,
+    }));
     step.value = 3;
 }
 
@@ -429,11 +488,12 @@ function backTo(n) {
                 <div class="mb-4">
                     <label class="block text-sm font-medium text-gray-700 mb-1">Plantilla <span class="text-red-500">*</span></label>
                     <select v-model="templateId" class="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-accent/30 focus:border-accent">
-                        <option value="">Elige una plantilla aprobada…</option>
+                        <option value="">Elige una plantilla de Marketing…</option>
                         <option v-for="t in templates" :key="t.id" :value="t.id">{{ t.name }}</option>
                     </select>
+                    <p class="text-[11px] text-gray-400 mt-1.5">Solo se listan plantillas de categoría <strong>Marketing</strong> (publicidad/ventas): es la única que Meta permite para campañas.</p>
                     <p v-if="!templates.length" class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2 mt-2">
-                        No tienes plantillas aprobadas y activas. Crea o sincroniza una en la sección de Plantillas antes de continuar.
+                        No tienes plantillas <strong>Marketing</strong> aprobadas y activas. Crea o sincroniza una (categoría publicidad/ventas) en la sección de Plantillas antes de continuar.
                     </p>
                 </div>
 
@@ -472,9 +532,69 @@ function backTo(n) {
                     </div>
                 </div>
 
+                <!-- Seguimientos automáticos (pasos 2+) -->
+                <div v-if="templateId" class="mb-4 border-t border-gray-100 pt-4">
+                    <div class="flex items-center justify-between mb-1">
+                        <p class="text-sm font-medium text-gray-700">Seguimientos automáticos <span class="text-gray-400 font-normal">(opcional)</span></p>
+                        <button @click="addFollowUp" type="button" class="text-xs font-medium text-accent hover:underline">+ Agregar paso</button>
+                    </div>
+                    <p class="text-xs text-gray-400 mb-3">Reintenta de a pocos a quienes no respondieron o no leyeron, esperando unos días. Una respuesta detiene la secuencia automáticamente.</p>
+
+                    <div v-for="(f, i) in followUps" :key="i" class="bg-gray-50 rounded-xl p-3 mb-2 space-y-2">
+                        <div class="flex items-center justify-between">
+                            <span class="text-xs font-semibold text-gray-600">Paso {{ i + 2 }}</span>
+                            <button @click="removeFollowUp(i)" type="button" class="text-[11px] text-red-500 hover:underline">Quitar</button>
+                        </div>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <div>
+                                <label class="block text-[10px] font-medium text-gray-500 uppercase mb-1">Plantilla</label>
+                                <select v-model="f.template_id" @change="onFollowUpTemplate(i)" class="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-xs bg-white">
+                                    <option value="">Elige plantilla…</option>
+                                    <option v-for="t in templates" :key="t.id" :value="t.id">{{ t.name }}</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-[10px] font-medium text-gray-500 uppercase mb-1">Enviar este paso</label>
+                                <select v-model="f.send_condition" class="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-xs bg-white">
+                                    <option v-for="c in followUpConditions" :key="c" :value="c">{{ conditionLabels[c] }}</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div>
+                            <label class="block text-[10px] font-medium text-gray-500 uppercase mb-1">Esperar tras el paso anterior</label>
+                            <div class="flex items-center gap-1.5">
+                                <input v-model.number="f.delay_days" type="number" min="0" class="w-16 px-2 py-1.5 border border-gray-200 rounded-lg text-xs">
+                                <span class="text-xs text-gray-500">días</span>
+                                <input v-model.number="f.delay_hours" type="number" min="0" max="23" class="w-16 px-2 py-1.5 border border-gray-200 rounded-lg text-xs ml-2">
+                                <span class="text-xs text-gray-500">horas</span>
+                            </div>
+                        </div>
+                        <div v-if="f.variables.length" class="space-y-1.5 pt-1">
+                            <p class="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">Variables del paso</p>
+                            <div v-for="v in f.variables" :key="v" class="flex items-center gap-2">
+                                <span class="shrink-0 px-2 py-1 bg-white border border-gray-200 rounded font-mono text-[10px] text-gray-700 w-24 truncate" :title="v">{{ '{' + '{' + v + '}' + '}' }}</span>
+                                <select v-model="f.mapping[v].type" class="px-2 py-1 border border-gray-200 rounded text-[11px] bg-white">
+                                    <option value="column">Columna</option>
+                                    <option value="contact_field">Contacto</option>
+                                    <option value="static">Texto</option>
+                                </select>
+                                <select v-if="f.mapping[v].type === 'column'" v-model="f.mapping[v].value" class="flex-1 px-2 py-1 border border-gray-200 rounded text-[11px] bg-white">
+                                    <option value="">Columna…</option>
+                                    <option v-for="c in columns" :key="c" :value="c">{{ c }}</option>
+                                </select>
+                                <select v-else-if="f.mapping[v].type === 'contact_field'" v-model="f.mapping[v].value" class="flex-1 px-2 py-1 border border-gray-200 rounded text-[11px] bg-white">
+                                    <option value="name">Nombre</option>
+                                    <option value="phone">Teléfono</option>
+                                </select>
+                                <input v-else v-model="f.mapping[v].value" type="text" placeholder="Texto fijo…" class="flex-1 px-2 py-1 border border-gray-200 rounded text-[11px]">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="flex justify-between mt-5">
                     <button @click="step = 1" class="px-5 py-2.5 text-sm text-gray-600 hover:bg-gray-100 rounded-xl transition">Atrás</button>
-                    <button @click="goToStep3" :disabled="!templateId || !mappingComplete"
+                    <button @click="goToStep3" :disabled="!templateId || !mappingComplete || !followUpsValid"
                             class="px-5 py-2.5 bg-accent text-white rounded-xl text-sm font-medium hover:bg-accent-hover transition disabled:opacity-50 disabled:cursor-not-allowed">
                         Siguiente
                     </button>
@@ -532,6 +652,10 @@ function backTo(n) {
                 <div class="bg-gray-50 rounded-xl p-3 mb-5 text-xs text-gray-600">
                     <p><span class="text-gray-400">Plantilla:</span> <span class="font-mono">{{ selectedTemplate?.name }}</span></p>
                     <p class="mt-1"><span class="text-gray-400">Fuente:</span> {{ sourceTabs.find(t => t.value === sourceType)?.label }}</p>
+                    <p class="mt-1">
+                        <span class="text-gray-400">Secuencia:</span>
+                        {{ followUps.length ? `Envío inicial + ${followUps.length} seguimiento${followUps.length > 1 ? 's' : ''}` : 'Solo envío inicial (sin seguimientos)' }}
+                    </p>
                 </div>
 
                 <p v-if="form.errors.rows" class="text-red-500 text-xs mb-3">{{ form.errors.rows }}</p>

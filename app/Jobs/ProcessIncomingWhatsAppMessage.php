@@ -5,6 +5,7 @@ namespace App\Jobs;
 use App\Models\Campaign;
 use App\Models\CampaignOptOut;
 use App\Models\CampaignRecipient;
+use App\Models\CampaignSend;
 use App\Models\Contact;
 use App\Models\Conversation;
 use App\Models\Message;
@@ -236,9 +237,9 @@ class ProcessIncomingWhatsAppMessage implements ShouldQueue
      * Cierra el loop con las campañas masivas para este teléfono:
      *   - Opt-out: si el texto coincide con una palabra clave configurada
      *     (STOP/BAJA/CANCELAR/...), lo agrega a campaign_opt_outs (futuras
-     *     campañas lo saltan) y saca cualquier envío pendiente/en cola.
-     *   - Conversión: si responde, marca el último CampaignRecipient de este
-     *     teléfono sin replied_at como respondido (señal de campaña efectiva).
+     *     campañas lo saltan) y detiene cualquier secuencia en curso.
+     *   - Conversión: si responde, DETIENE la secuencia (no más seguimientos) y
+     *     marca la respuesta en el destinatario y en su último envío.
      */
     private function handleCampaignSignals(int $tenantId, string $phone, string $body): void
     {
@@ -250,23 +251,51 @@ class ProcessIncomingWhatsAppMessage implements ShouldQueue
 
             CampaignRecipient::where('tenant_id', $tenantId)
                 ->where('phone', $phone)
-                ->whereIn('status', [CampaignRecipient::STATUS_PENDING, CampaignRecipient::STATUS_QUEUED])
-                ->update(['status' => CampaignRecipient::STATUS_OPTED_OUT, 'skip_reason' => 'El contacto se dio de baja (opt-out)']);
+                ->whereIn('enrollment_status', [CampaignRecipient::ENROLLMENT_ACTIVE, CampaignRecipient::ENROLLMENT_SENDING])
+                ->update([
+                    'enrollment_status' => CampaignRecipient::ENROLLMENT_OPTED_OUT,
+                    'status' => CampaignRecipient::STATUS_OPTED_OUT,
+                    'skip_reason' => 'El contacto se dio de baja (opt-out)',
+                    'next_action_at' => null,
+                ]);
 
             return;
         }
 
+        // La respuesta del prospecto = conversión: corta la secuencia (activa, en
+        // vuelo o recién completada) para no seguir mandando seguimientos.
         $recipient = CampaignRecipient::where('tenant_id', $tenantId)
             ->where('phone', $phone)
-            ->whereIn('status', [CampaignRecipient::STATUS_SENT, CampaignRecipient::STATUS_DELIVERED, CampaignRecipient::STATUS_READ])
+            ->whereIn('enrollment_status', [
+                CampaignRecipient::ENROLLMENT_ACTIVE,
+                CampaignRecipient::ENROLLMENT_SENDING,
+                CampaignRecipient::ENROLLMENT_COMPLETED,
+            ])
             ->whereNull('replied_at')
             ->orderByDesc('id')
             ->first();
 
-        if ($recipient) {
-            $recipient->update(['replied_at' => now()]);
-            Campaign::where('tenant_id', $tenantId)->where('id', $recipient->campaign_id)->increment('replied_count');
+        if (! $recipient) {
+            return;
         }
+
+        $recipient->update([
+            'replied_at' => now(),
+            'enrollment_status' => CampaignRecipient::ENROLLMENT_REPLIED,
+            'next_action_at' => null,
+        ]);
+
+        // Marca la respuesta en el último envío que recibió (Postgres no permite
+        // ORDER BY/LIMIT en UPDATE, así que se busca y se actualiza por modelo).
+        $lastSend = CampaignSend::where('recipient_id', $recipient->id)
+            ->whereIn('status', [CampaignSend::STATUS_SENT, CampaignSend::STATUS_DELIVERED, CampaignSend::STATUS_READ])
+            ->whereNull('replied_at')
+            ->orderByDesc('step_order')
+            ->first();
+
+        $lastSend?->update(['replied_at' => now()]);
+
+        Campaign::where('tenant_id', $tenantId)->where('id', $recipient->campaign_id)->increment('replied_count');
     }
 
     private function isOptOutMessage(string $body): bool

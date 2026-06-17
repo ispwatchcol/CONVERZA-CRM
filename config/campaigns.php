@@ -20,4 +20,24 @@ return [
         explode(',', env('CAMPAIGNS_OPT_OUT_KEYWORDS', 'STOP,BAJA,CANCELAR,NO MAS,NO MÁS,UNSUBSCRIBE')),
     )),
 
+    // Categoría de plantilla EXIGIDA para campañas masivas. Meta requiere
+    // MARKETING (publicidad/ventas) para envío promocional en frío; usar utility
+    // o authentication para esto viola la política y arriesga el número. En la BD
+    // la categoría se guarda en minúscula (ver TemplateController), por eso 'marketing'.
+    'template_category' => env('CAMPAIGNS_TEMPLATE_CATEGORY', 'marketing'),
+
+    // Defaults del "calentamiento" (warm-up) del número: una rampa de volumen
+    // diario que sube de a poco para no quemar el quality rating. Estos son solo
+    // los valores con que se inicializa cada tenant; cada uno ajusta los suyos
+    // desde la UI (CampaignWarmup). Ver App\Services\Campaigns\WarmupBudget.
+    //
+    // OJO: 'enabled' arranca en false a propósito (opt-in). Encenderlo aquí por
+    // defecto caparía de golpe las campañas de TODOS los tenants existentes.
+    'warmup' => [
+        'enabled' => (bool) env('CAMPAIGNS_WARMUP_ENABLED', false),
+        'start_per_day' => (int) env('CAMPAIGNS_WARMUP_START_PER_DAY', 50),
+        'daily_increment' => (int) env('CAMPAIGNS_WARMUP_DAILY_INCREMENT', 50),
+        'max_per_day' => (int) env('CAMPAIGNS_WARMUP_MAX_PER_DAY', 1000),
+    ],
+
 ];
