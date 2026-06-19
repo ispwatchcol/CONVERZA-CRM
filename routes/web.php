@@ -91,6 +91,7 @@ Route::middleware('auth')->group(function () {
         Route::get('/campaigns/create', [CampaignController::class, 'create'])->name('campaigns.create');
         Route::post('/campaigns/preview-audience', [CampaignController::class, 'previewAudience'])->name('campaigns.preview-audience');
         Route::post('/campaigns/preview-message', [CampaignController::class, 'previewMessage'])->name('campaigns.preview-message');
+        Route::put('/campaigns/warmup', [CampaignController::class, 'updateWarmup'])->name('campaigns.warmup.update');
         Route::post('/campaigns', [CampaignController::class, 'store'])->name('campaigns.store');
     });
     Route::get('/campaigns/{campaign}', [CampaignController::class, 'show'])->whereNumber('campaign')->name('campaigns.show');

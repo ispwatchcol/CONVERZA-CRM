@@ -54,9 +54,24 @@ class Campaign extends Model
         return $this->hasMany(CampaignRecipient::class);
     }
 
-    /** ¿Quedan destinatarios sin enviar o en vuelo? */
+    public function steps(): HasMany
+    {
+        return $this->hasMany(CampaignStep::class)->orderBy('step_order');
+    }
+
+    public function sends(): HasMany
+    {
+        return $this->hasMany(CampaignSend::class);
+    }
+
+    /** ¿Quedan inscripciones activas o en vuelo dentro de la secuencia? */
     public function hasPendingWork(): bool
     {
-        return $this->recipients()->whereIn('status', ['pending', 'queued'])->exists();
+        return $this->recipients()
+            ->whereIn('enrollment_status', [
+                CampaignRecipient::ENROLLMENT_ACTIVE,
+                CampaignRecipient::ENROLLMENT_SENDING,
+            ])
+            ->exists();
     }
 }

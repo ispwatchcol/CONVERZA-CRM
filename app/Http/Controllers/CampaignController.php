@@ -5,10 +5,14 @@ namespace App\Http\Controllers;
 use App\Models\Campaign;
 use App\Models\CampaignOptOut;
 use App\Models\CampaignRecipient;
+use App\Models\CampaignSend;
+use App\Models\CampaignStep;
+use App\Models\CampaignWarmup;
 use App\Models\Label;
 use App\Models\Template;
 use App\Services\Campaigns\AudienceBuilder;
 use App\Services\Campaigns\CampaignMessageBuilder;
+use App\Services\Campaigns\WarmupBudget;
 use App\Services\WhatsAppService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -21,6 +25,7 @@ class CampaignController extends Controller
         private readonly AudienceBuilder $audience,
         private readonly CampaignMessageBuilder $messageBuilder,
         private readonly WhatsAppService $whatsapp,
+        private readonly WarmupBudget $warmupBudget,
     ) {}
 
     public function index(Request $request)
@@ -34,9 +39,22 @@ class CampaignController extends Controller
             ->paginate(20)
             ->withQueryString();
 
+        $warmup = CampaignWarmup::forTenant($tenantId);
+
         return Inertia::render('Campaigns/Index', [
             'campaigns' => $campaigns,
             'tierThresholds' => config('campaigns.tier_warn_thresholds'),
+            'canManage' => $request->user()->hasStaffRole('admin'),
+            'warmup' => [
+                'enabled' => $warmup->enabled,
+                'start_per_day' => $warmup->start_per_day,
+                'daily_increment' => $warmup->daily_increment,
+                'max_per_day' => $warmup->max_per_day,
+                'started_on' => $warmup->started_on?->toDateString(),
+                'used_last_24h' => $this->warmupBudget->usedLast24h($tenantId),
+                // Solo tiene sentido mostrar el tope cuando el warm-up está activo.
+                'allowance_today' => $warmup->enabled ? $this->warmupBudget->allowance($warmup) : null,
+            ],
         ]);
     }
 
@@ -45,15 +63,13 @@ class CampaignController extends Controller
         $tenantId = app('tenant')->id;
 
         return Inertia::render('Campaigns/Create', [
-            'templates' => Template::query()
-                ->where('tenant_id', $tenantId)
-                ->where('status', 'approved')
-                ->where('is_active', true)
+            'templates' => $this->eligibleTemplates($tenantId)
                 ->orderBy('name')
                 ->get(['id', 'name', 'language', 'category', 'body']),
             'labels' => Label::query()->where('tenant_id', $tenantId)->orderBy('name')->get(['id', 'name', 'color']),
             'defaultThrottle' => config('campaigns.default_throttle_per_minute'),
             'tierThresholds' => config('campaigns.tier_warn_thresholds'),
+            'sendConditions' => CampaignStep::CONDITIONS,
         ]);
     }
 
@@ -69,9 +85,44 @@ class CampaignController extends Controller
             ->paginate(50)
             ->withQueryString();
 
+        // Embudo por paso: una fila por step_order con sus conteos (count(col)
+        // ignora los null en Postgres, así que cuenta solo los que llegaron a
+        // ese estado). `read` es palabra reservada → alias read_count.
+        $funnel = CampaignSend::where('campaign_id', $campaign->id)
+            ->selectRaw("step_order,
+                count(*) as total,
+                count(sent_at) as sent,
+                count(delivered_at) as delivered,
+                count(read_at) as read_count,
+                count(replied_at) as replied,
+                sum(case when status = 'failed' then 1 else 0 end) as failed")
+            ->groupBy('step_order')
+            ->get()
+            ->keyBy('step_order');
+
+        $steps = $campaign->steps()->with('template:id,name')->get()->map(function (CampaignStep $s) use ($funnel) {
+            $m = $funnel->get($s->step_order);
+
+            return [
+                'step_order' => $s->step_order,
+                'template' => $s->template?->name,
+                'delay_hours' => $s->delay_hours,
+                'send_condition' => $s->send_condition,
+                'metrics' => [
+                    'total' => (int) ($m->total ?? 0),
+                    'sent' => (int) ($m->sent ?? 0),
+                    'delivered' => (int) ($m->delivered ?? 0),
+                    'read' => (int) ($m->read_count ?? 0),
+                    'replied' => (int) ($m->replied ?? 0),
+                    'failed' => (int) ($m->failed ?? 0),
+                ],
+            ];
+        });
+
         return Inertia::render('Campaigns/Show', [
             'campaign' => $campaign->load('template:id,name', 'creator:id,name'),
             'recipients' => $recipients,
+            'steps' => $steps,
             'filters' => ['status' => $status],
         ]);
     }
@@ -163,16 +214,30 @@ class CampaignController extends Controller
             'rows.*.variables' => ['nullable', 'array'],
             'rows.*.valid' => ['required', 'boolean'],
             'rows.*.skip_reason' => ['nullable', 'string'],
+            // Pasos de seguimiento (la plantilla inicial es el paso 1, aparte).
+            'steps' => ['nullable', 'array'],
+            'steps.*.template_id' => ['required', 'integer'],
+            'steps.*.variable_mapping' => ['nullable', 'array'],
+            'steps.*.delay_hours' => ['required', 'integer', 'min:1', 'max:8760'],
+            'steps.*.send_condition' => ['required', Rule::in(CampaignStep::CONDITIONS)],
         ]);
 
-        $template = Template::query()
-            ->where('tenant_id', $tenant->id)
-            ->where('status', 'approved')
-            ->where('is_active', true)
-            ->find($data['template_id']);
+        $template = $this->eligibleTemplates($tenant->id)->find($data['template_id']);
 
         if (! $template) {
-            return back()->withErrors(['template_id' => 'La plantilla elegida debe estar aprobada y activa.']);
+            return back()->withErrors(['template_id' => 'La plantilla elegida debe estar aprobada, activa y de categoría Marketing (publicidad/ventas).']);
+        }
+
+        // Cada paso de seguimiento debe usar también una plantilla Marketing aprobada+activa.
+        $followUps = [];
+        foreach ($data['steps'] ?? [] as $s) {
+            $stepTemplate = $this->eligibleTemplates($tenant->id)->find($s['template_id']);
+
+            if (! $stepTemplate) {
+                return back()->withErrors(['steps' => 'Cada paso de seguimiento debe usar una plantilla aprobada, activa y de categoría Marketing (publicidad/ventas).']);
+            }
+
+            $followUps[] = $s;
         }
 
         $now = now();
@@ -201,6 +266,12 @@ class CampaignController extends Controller
                 'contact_id' => $row['contact_id'] ?? null,
                 'variables' => json_encode($row['variables'] ?? []),
                 'status' => $status,
+                'current_step' => 1,
+                'enrollment_status' => match ($status) {
+                    CampaignRecipient::STATUS_PENDING => CampaignRecipient::ENROLLMENT_ACTIVE,
+                    CampaignRecipient::STATUS_OPTED_OUT => CampaignRecipient::ENROLLMENT_OPTED_OUT,
+                    default => CampaignRecipient::ENROLLMENT_COMPLETED,
+                },
                 'skip_reason' => $status === CampaignRecipient::STATUS_PENDING ? null : ($row['skip_reason'] ?? null),
                 'created_at' => $now,
                 'updated_at' => $now,
@@ -213,7 +284,7 @@ class CampaignController extends Controller
             return back()->withErrors(['rows' => 'No hay destinatarios válidos para crear la campaña.']);
         }
 
-        $campaign = DB::transaction(function () use ($tenant, $template, $data, $toInsert, $pendingCount) {
+        $campaign = DB::transaction(function () use ($tenant, $template, $data, $toInsert, $pendingCount, $followUps) {
             $campaign = Campaign::create([
                 'tenant_id' => $tenant->id,
                 'template_id' => $template->id,
@@ -232,6 +303,8 @@ class CampaignController extends Controller
             foreach (array_chunk($toInsert, 500) as $chunk) {
                 CampaignRecipient::insert(array_map(fn ($r) => $r + ['campaign_id' => $campaign->id], $chunk));
             }
+
+            $this->syncSteps($campaign, $template->id, $data['variable_mapping'], $followUps);
 
             return $campaign;
         });
@@ -253,26 +326,42 @@ class CampaignController extends Controller
             'variable_mapping' => ['required', 'array'],
             'throttle_per_minute' => ['nullable', 'integer', 'min:1', 'max:1000'],
             'scheduled_at' => ['nullable', 'date'],
+            'steps' => ['nullable', 'array'],
+            'steps.*.template_id' => ['required', 'integer'],
+            'steps.*.variable_mapping' => ['nullable', 'array'],
+            'steps.*.delay_hours' => ['required', 'integer', 'min:1', 'max:8760'],
+            'steps.*.send_condition' => ['required', Rule::in(CampaignStep::CONDITIONS)],
         ]);
 
-        $template = Template::query()
-            ->where('tenant_id', $campaign->tenant_id)
-            ->where('status', 'approved')
-            ->where('is_active', true)
-            ->find($data['template_id']);
+        $template = $this->eligibleTemplates($campaign->tenant_id)->find($data['template_id']);
 
         if (! $template) {
-            return back()->withErrors(['template_id' => 'La plantilla elegida debe estar aprobada y activa.']);
+            return back()->withErrors(['template_id' => 'La plantilla elegida debe estar aprobada, activa y de categoría Marketing (publicidad/ventas).']);
         }
 
-        $campaign->update([
-            'name' => $data['name'],
-            'template_id' => $template->id,
-            'variable_mapping' => $data['variable_mapping'],
-            'throttle_per_minute' => $data['throttle_per_minute'] ?? $campaign->throttle_per_minute,
-            'scheduled_at' => $data['scheduled_at'] ?? null,
-            'status' => $data['scheduled_at'] ? Campaign::STATUS_SCHEDULED : Campaign::STATUS_DRAFT,
-        ]);
+        $followUps = [];
+        foreach ($data['steps'] ?? [] as $s) {
+            $ok = $this->eligibleTemplates($campaign->tenant_id)->whereKey($s['template_id'])->exists();
+
+            if (! $ok) {
+                return back()->withErrors(['steps' => 'Cada paso de seguimiento debe usar una plantilla aprobada, activa y de categoría Marketing (publicidad/ventas).']);
+            }
+
+            $followUps[] = $s;
+        }
+
+        DB::transaction(function () use ($campaign, $template, $data, $followUps) {
+            $campaign->update([
+                'name' => $data['name'],
+                'template_id' => $template->id,
+                'variable_mapping' => $data['variable_mapping'],
+                'throttle_per_minute' => $data['throttle_per_minute'] ?? $campaign->throttle_per_minute,
+                'scheduled_at' => $data['scheduled_at'] ?? null,
+                'status' => $data['scheduled_at'] ? Campaign::STATUS_SCHEDULED : Campaign::STATUS_DRAFT,
+            ]);
+
+            $this->syncSteps($campaign, $template->id, $data['variable_mapping'], $followUps);
+        });
 
         return back()->with('success', 'Campaña actualizada.');
     }
@@ -287,6 +376,21 @@ class CampaignController extends Controller
 
         if (! $campaign->hasPendingWork()) {
             return back()->withErrors(['status' => 'La campaña no tiene destinatarios pendientes.']);
+        }
+
+        // Última línea de defensa: Meta exige plantillas Marketing (publicidad/
+        // ventas) para campañas. Si algún paso quedó con otra categoría o perdió
+        // la aprobación (p. ej. un borrador viejo), no dejar lanzar.
+        $badStep = $campaign->steps()
+            ->whereDoesntHave('template', fn ($q) => $q
+                ->where('status', 'approved')
+                ->where('is_active', true)
+                ->where('category', config('campaigns.template_category')))
+            ->orderBy('step_order')
+            ->first();
+
+        if ($badStep) {
+            return back()->withErrors(['status' => "El paso {$badStep->step_order} usa una plantilla que no es de categoría Marketing aprobada y activa. Meta lo exige para campañas (publicidad/ventas)."]);
         }
 
         if ($campaign->scheduled_at && $campaign->scheduled_at->isFuture()) {
@@ -339,8 +443,13 @@ class CampaignController extends Controller
 
         DB::transaction(function () use ($campaign) {
             $campaign->recipients()
-                ->whereIn('status', [CampaignRecipient::STATUS_PENDING, CampaignRecipient::STATUS_QUEUED])
-                ->update(['status' => CampaignRecipient::STATUS_SKIPPED, 'skip_reason' => 'Campaña cancelada']);
+                ->whereIn('enrollment_status', [CampaignRecipient::ENROLLMENT_ACTIVE, CampaignRecipient::ENROLLMENT_SENDING])
+                ->update([
+                    'enrollment_status' => CampaignRecipient::ENROLLMENT_COMPLETED,
+                    'status' => CampaignRecipient::STATUS_SKIPPED,
+                    'skip_reason' => 'Campaña cancelada',
+                    'next_action_at' => null,
+                ]);
 
             $campaign->update(['status' => Campaign::STATUS_CANCELLED]);
         });
@@ -382,9 +491,11 @@ class CampaignController extends Controller
     {
         $this->authorizeTenantOwnership($campaign);
 
-        $count = $campaign->recipients()->where('status', CampaignRecipient::STATUS_FAILED)->update([
+        $count = $campaign->recipients()->where('enrollment_status', CampaignRecipient::ENROLLMENT_FAILED)->update([
+            'enrollment_status' => CampaignRecipient::ENROLLMENT_ACTIVE,
             'status' => CampaignRecipient::STATUS_PENDING,
             'error' => null,
+            'next_action_at' => null,
         ]);
 
         if ($count > 0 && in_array($campaign->status, [Campaign::STATUS_COMPLETED, Campaign::STATUS_FAILED], true)) {
@@ -412,6 +523,18 @@ class CampaignController extends Controller
                 'total_recipients' => 0,
             ]);
 
+            foreach ($campaign->steps as $step) {
+                CampaignStep::create([
+                    'tenant_id' => $copy->tenant_id,
+                    'campaign_id' => $copy->id,
+                    'step_order' => $step->step_order,
+                    'template_id' => $step->template_id,
+                    'variable_mapping' => $step->variable_mapping,
+                    'delay_hours' => $step->delay_hours,
+                    'send_condition' => $step->send_condition,
+                ]);
+            }
+
             $pending = 0;
             $campaign->recipients()
                 ->whereIn('status', ['pending', 'queued', 'sent', 'delivered', 'read', 'failed'])
@@ -426,6 +549,8 @@ class CampaignController extends Controller
                             'name' => $r->name,
                             'variables' => json_encode($r->variables ?? []),
                             'status' => CampaignRecipient::STATUS_PENDING,
+                            'current_step' => 1,
+                            'enrollment_status' => CampaignRecipient::ENROLLMENT_ACTIVE,
                             'created_at' => $now,
                             'updated_at' => $now,
                         ];
@@ -482,6 +607,93 @@ class CampaignController extends Controller
 
             fclose($out);
         }, $filename, ['Content-Type' => 'text/csv']);
+    }
+
+    /**
+     * Configura el "calentamiento" (warm-up) del número de WhatsApp del tenant:
+     * la rampa de volumen diario compartida por todas sus campañas. Solo admin
+     * (afecta el quality rating del número, igual que lanzar/pausar).
+     */
+    public function updateWarmup(Request $request)
+    {
+        $tenant = app('tenant');
+
+        $data = $request->validate([
+            'enabled' => ['required', 'boolean'],
+            'start_per_day' => ['required', 'integer', 'min:1', 'max:100000'],
+            'daily_increment' => ['required', 'integer', 'min:0', 'max:100000'],
+            'max_per_day' => ['required', 'integer', 'min:1', 'max:100000'],
+        ]);
+
+        if ($data['max_per_day'] < $data['start_per_day']) {
+            return back()->withErrors(['max_per_day' => 'El tope diario no puede ser menor que el envío inicial.']);
+        }
+
+        $warmup = CampaignWarmup::forTenant($tenant->id);
+        $wasEnabled = (bool) $warmup->getOriginal('enabled');
+
+        $warmup->fill($data);
+        $warmup->tenant_id = $tenant->id;
+
+        // Al encender (o re-encender) la rampa, reinicia el día 0 a hoy: así no
+        // salta a un tope alto por los días que el warm-up estuvo apagado.
+        if ($data['enabled'] && ! $wasEnabled) {
+            $warmup->started_on = now()->toDateString();
+        }
+
+        $warmup->save();
+
+        return back()->with('success', 'Configuración de calentamiento guardada.');
+    }
+
+    /**
+     * Reescribe los pasos de la campaña: paso 1 (envío inicial con la plantilla
+     * principal, condición `always`) + los seguimientos en orden. Usado al crear
+     * y al editar (borra los pasos anteriores; seguro porque solo se edita en
+     * borrador/agendada, sin envíos aún).
+     *
+     * @param  array<int, array{template_id:int, variable_mapping?:array, delay_hours:int, send_condition:string}>  $followUps
+     */
+    private function syncSteps(Campaign $campaign, int $step1TemplateId, array $step1Mapping, array $followUps): void
+    {
+        $campaign->steps()->delete();
+
+        CampaignStep::create([
+            'tenant_id' => $campaign->tenant_id,
+            'campaign_id' => $campaign->id,
+            'step_order' => 1,
+            'template_id' => $step1TemplateId,
+            'variable_mapping' => $step1Mapping,
+            'delay_hours' => 0,
+            'send_condition' => CampaignStep::CONDITION_ALWAYS,
+        ]);
+
+        $order = 2;
+        foreach ($followUps as $s) {
+            CampaignStep::create([
+                'tenant_id' => $campaign->tenant_id,
+                'campaign_id' => $campaign->id,
+                'step_order' => $order++,
+                'template_id' => $s['template_id'],
+                'variable_mapping' => $s['variable_mapping'] ?? [],
+                'delay_hours' => $s['delay_hours'],
+                'send_condition' => $s['send_condition'],
+            ]);
+        }
+    }
+
+    /**
+     * Query base de plantillas elegibles para campañas: aprobadas, activas y de
+     * la categoría que Meta exige (Marketing / publicidad-ventas). Centralizar
+     * esto evita que se cuele una utility/authentication en cualquier paso.
+     */
+    private function eligibleTemplates(int $tenantId)
+    {
+        return Template::query()
+            ->where('tenant_id', $tenantId)
+            ->where('status', 'approved')
+            ->where('is_active', true)
+            ->where('category', config('campaigns.template_category'));
     }
 
     private function authorizeTenantOwnership(Campaign $campaign): void

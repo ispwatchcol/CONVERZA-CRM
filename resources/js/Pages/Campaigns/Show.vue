@@ -6,6 +6,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue';
 const props = defineProps({
     campaign: { type: Object, required: true },
     recipients: { type: Object, default: () => ({ data: [], links: [] }) },
+    steps: { type: Array, default: () => [] },
     filters: { type: Object, default: () => ({ status: '' }) },
 });
 
@@ -14,7 +15,7 @@ let pollTimer = null;
 onMounted(() => {
     if (props.campaign.status === 'sending') {
         pollTimer = setInterval(() => {
-            router.reload({ only: ['campaign', 'recipients'], preserveScroll: true, preserveState: true });
+            router.reload({ only: ['campaign', 'recipients', 'steps'], preserveScroll: true, preserveState: true });
         }, 6000);
     }
 });
@@ -60,6 +61,20 @@ function formatDateTime(iso) {
     return new Intl.DateTimeFormat('es-CO', {
         day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
     }).format(new Date(iso));
+}
+
+function conditionLabel(cond) {
+    return {
+        always: 'Envío inicial', if_not_replied: 'Si no respondió',
+        if_not_read: 'Si no leyó', if_not_delivered: 'Si no se entregó',
+    }[cond] || cond;
+}
+
+function delayLabel(hours) {
+    if (!hours) return 'inmediato';
+    const d = Math.floor(hours / 24);
+    const h = hours % 24;
+    return [d ? `${d}d` : null, h ? `${h}h` : null].filter(Boolean).join(' ') || 'inmediato';
 }
 
 const c = computed(() => props.campaign);
@@ -247,11 +262,37 @@ function sendTest() {
                 <p v-if="campaign.failed_count" class="text-[11px] text-red-600 mt-2">{{ campaign.failed_count }} fallidos · {{ campaign.skipped_count }} saltados</p>
             </div>
 
-            <!-- Embudo -->
+            <!-- Embudo (totales de la campaña, sumando todos los pasos) -->
             <div class="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-6">
                 <div v-for="f in funnel" :key="f.label" class="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 text-center">
                     <p class="text-2xl font-bold" :class="f.color.split(' ')[1]">{{ f.value }}</p>
                     <p class="text-[10px] text-gray-500 uppercase tracking-wider font-semibold mt-1">{{ f.label }}</p>
+                </div>
+            </div>
+
+            <!-- Secuencia: embudo por paso (solo si hay seguimientos) -->
+            <div v-if="steps.length > 1" class="bg-white rounded-2xl shadow-sm border border-gray-100 mb-6 p-4">
+                <p class="text-sm font-medium text-gray-700 mb-3">Secuencia · {{ steps.length }} pasos</p>
+                <div class="space-y-2">
+                    <div v-for="s in steps" :key="s.step_order" class="border border-gray-100 rounded-xl p-3">
+                        <div class="flex items-center justify-between gap-2 mb-2 flex-wrap">
+                            <div class="flex items-center gap-2 min-w-0">
+                                <span class="w-6 h-6 rounded-full bg-accent/10 text-accent text-[11px] font-bold flex items-center justify-center shrink-0">{{ s.step_order }}</span>
+                                <span class="text-xs font-medium text-gray-700 truncate font-mono">{{ s.template || '—' }}</span>
+                            </div>
+                            <div class="flex items-center gap-1.5 text-[10px] text-gray-500">
+                                <span class="px-2 py-0.5 bg-gray-100 rounded-full">{{ s.step_order === 1 ? 'Envío inicial' : conditionLabel(s.send_condition) }}</span>
+                                <span v-if="s.step_order > 1" class="px-2 py-0.5 bg-gray-100 rounded-full">Espera {{ delayLabel(s.delay_hours) }}</span>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-3 sm:grid-cols-5 gap-2 text-center">
+                            <div><p class="text-sm font-bold text-amber-700">{{ s.metrics.sent }}</p><p class="text-[9px] text-gray-400 uppercase">Enviados</p></div>
+                            <div><p class="text-sm font-bold text-cyan-700">{{ s.metrics.delivered }}</p><p class="text-[9px] text-gray-400 uppercase">Entregados</p></div>
+                            <div><p class="text-sm font-bold text-emerald-700">{{ s.metrics.read }}</p><p class="text-[9px] text-gray-400 uppercase">Leídos</p></div>
+                            <div><p class="text-sm font-bold text-purple-700">{{ s.metrics.replied }}</p><p class="text-[9px] text-gray-400 uppercase">Respondieron</p></div>
+                            <div><p class="text-sm font-bold text-red-600">{{ s.metrics.failed }}</p><p class="text-[9px] text-gray-400 uppercase">Fallidos</p></div>
+                        </div>
+                    </div>
                 </div>
             </div>
 

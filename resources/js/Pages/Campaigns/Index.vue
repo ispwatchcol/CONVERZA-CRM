@@ -1,12 +1,42 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
-import { Head, Link, router } from '@inertiajs/vue3';
-import { ref } from 'vue';
+import { Head, Link, router, useForm } from '@inertiajs/vue3';
+import { computed, ref } from 'vue';
 
 const props = defineProps({
     campaigns: { type: Object, default: () => ({ data: [], links: [] }) },
     tierThresholds: { type: Array, default: () => [250, 1000, 10000, 100000] },
+    canManage: { type: Boolean, default: false },
+    warmup: {
+        type: Object,
+        default: () => ({
+            enabled: false, start_per_day: 50, daily_increment: 50,
+            max_per_day: 1000, started_on: null, used_last_24h: 0, allowance_today: null,
+        }),
+    },
 });
+
+// ── Calentamiento (warm-up) del número ──────────────────────────────────────
+const showWarmupForm = ref(false);
+
+const warmupForm = useForm({
+    enabled: props.warmup.enabled,
+    start_per_day: props.warmup.start_per_day,
+    daily_increment: props.warmup.daily_increment,
+    max_per_day: props.warmup.max_per_day,
+});
+
+const warmupUsedPct = computed(() => {
+    if (!props.warmup.enabled || !props.warmup.allowance_today) return 0;
+    return Math.min(100, Math.round((props.warmup.used_last_24h / props.warmup.allowance_today) * 100));
+});
+
+function saveWarmup() {
+    warmupForm.put(route('campaigns.warmup.update'), {
+        preserveScroll: true,
+        onSuccess: () => { showWarmupForm.value = false; },
+    });
+}
 
 function statusBadge(status) {
     return {
@@ -97,6 +127,81 @@ function deleteCampaign(c) {
             <div class="mb-6 flex items-start gap-2.5 px-4 py-2.5 bg-blue-50 border border-blue-200 rounded-xl text-sm text-blue-900">
                 <svg class="w-4 h-4 text-blue-600 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z"/></svg>
                 <span>Meta limita los destinatarios únicos por 24h según el tier de tu número ({{ tierThresholds.join(' / ') }}). Manda envíos de prueba y respeta el ritmo configurado para proteger tu calidad.</span>
+            </div>
+
+            <!-- Calentamiento (warm-up) del número -->
+            <div class="mb-6 bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+                <div class="flex items-start justify-between gap-3">
+                    <div class="min-w-0">
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <span class="inline-flex items-center gap-1.5 text-sm font-semibold text-gray-900">
+                                <svg class="w-4 h-4 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15.362 5.214A8.252 8.252 0 0112 21 8.25 8.25 0 016.038 7.048 8.287 8.287 0 009 9.6a8.983 8.983 0 013.361-6.867 8.21 8.21 0 003 2.48z"/><path stroke-linecap="round" stroke-linejoin="round" d="M12 18a3.75 3.75 0 00.495-7.467 5.99 5.99 0 00-1.925 3.546 5.974 5.974 0 01-2.133-1A3.75 3.75 0 0012 18z"/></svg>
+                                Calentamiento del número
+                            </span>
+                            <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wide"
+                                  :class="warmup.enabled ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500'">
+                                {{ warmup.enabled ? 'Activo' : 'Apagado' }}
+                            </span>
+                        </div>
+                        <p class="text-xs text-gray-500 mt-1">
+                            Sube el volumen de a poco para cuidar el quality rating y que Meta te promueva de tier.
+                        </p>
+                    </div>
+                    <button v-if="canManage" @click="showWarmupForm = !showWarmupForm"
+                            class="text-xs font-medium text-accent hover:underline shrink-0">
+                        {{ showWarmupForm ? 'Cerrar' : 'Configurar' }}
+                    </button>
+                </div>
+
+                <!-- Uso de las últimas 24h -->
+                <div v-if="warmup.enabled" class="mt-3">
+                    <div class="flex items-center justify-between text-[11px] text-gray-500 mb-1">
+                        <span>Contactados (últimas 24h): <strong class="text-gray-700">{{ warmup.used_last_24h }}</strong> / {{ warmup.allowance_today }} permitidos hoy</span>
+                        <span v-if="warmup.used_last_24h >= warmup.allowance_today" class="text-amber-600 font-medium">Tope de hoy alcanzado</span>
+                    </div>
+                    <div class="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                        <div class="h-full transition-all" :class="warmupUsedPct >= 100 ? 'bg-amber-500' : 'bg-emerald-500'" :style="{ width: warmupUsedPct + '%' }"></div>
+                    </div>
+                </div>
+                <p v-else class="mt-2 text-xs text-gray-400">
+                    Apagado: las campañas envían al ritmo de su throttle, sin tope diario.
+                </p>
+
+                <!-- Formulario (solo admin) -->
+                <div v-if="showWarmupForm && canManage" class="mt-4 pt-4 border-t border-gray-100 space-y-3">
+                    <label class="flex items-center gap-2 text-sm text-gray-700">
+                        <input type="checkbox" v-model="warmupForm.enabled" class="rounded border-gray-300 text-accent focus:ring-accent" />
+                        Activar calentamiento para este número
+                    </label>
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div>
+                            <label class="block text-[11px] font-medium text-gray-500 mb-1">Envíos el primer día</label>
+                            <input type="number" min="1" v-model.number="warmupForm.start_per_day" class="w-full rounded-lg border-gray-300 text-sm focus:border-accent focus:ring-accent" />
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-medium text-gray-500 mb-1">Aumento por día</label>
+                            <input type="number" min="0" v-model.number="warmupForm.daily_increment" class="w-full rounded-lg border-gray-300 text-sm focus:border-accent focus:ring-accent" />
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-medium text-gray-500 mb-1">Tope diario</label>
+                            <input type="number" min="1" v-model.number="warmupForm.max_per_day" class="w-full rounded-lg border-gray-300 text-sm focus:border-accent focus:ring-accent" />
+                        </div>
+                    </div>
+                    <p class="text-[11px] text-gray-400">
+                        Ejemplo: 50 el primer día, +50 cada día, hasta 1.000/día. La rampa arranca el día que lo activas.
+                        El tope es del número (lo comparten todas tus campañas) y se mide sobre las últimas 24h.
+                    </p>
+                    <div v-if="Object.keys(warmupForm.errors).length" class="text-xs text-red-600">
+                        {{ Object.values(warmupForm.errors)[0] }}
+                    </div>
+                    <div class="flex justify-end gap-2">
+                        <button @click="showWarmupForm = false" class="px-3 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition">Cancelar</button>
+                        <button @click="saveWarmup" :disabled="warmupForm.processing"
+                                class="px-4 py-2 text-sm font-medium text-white bg-accent hover:bg-accent-hover rounded-lg transition disabled:opacity-50">
+                            Guardar
+                        </button>
+                    </div>
+                </div>
             </div>
 
             <!-- Lista -->
