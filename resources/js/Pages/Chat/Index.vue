@@ -414,20 +414,37 @@ function blinkTitle(count) {
     }, 1000);
 }
 
-function clearNotifications() {
+// Limpia SOLO las alertas globales que piden atención: el contador y el
+// parpadeo del título. NO toca unreadConvIds — el puntito de "nuevo" de cada
+// chat se quita únicamente al ABRIR ese chat (ver selectConversation). Antes
+// el foco de la ventana borraba todos los puntitos de golpe.
+function clearAlerts() {
     _unreadTotal = 0;
-    unreadConvIds.value = {};
     if (titleBlinker) { clearInterval(titleBlinker); titleBlinker = null; }
     document.title = docTitle;
 }
 
+// Reset completo, incluyendo marcar todo como leído. Solo al desmontar.
+function clearNotifications() {
+    clearAlerts();
+    unreadConvIds.value = {};
+}
+
 watch(() => props.conversations, (newConvs) => {
+    const activeId = props.activeConversationId;
+    const focused = typeof document !== 'undefined' && document.hasFocus();
     let incoming = 0;
     newConvs.forEach(c => {
         const prev = prevConvTimestamps.value[c.id];
-        if (prev !== undefined && c.last_message_at !== prev && c.last_message_status !== 'sent') {
-            incoming++;
-            unreadConvIds.value[c.id] = true;
+        const isNewIncoming = prev !== undefined && c.last_message_at !== prev && c.last_message_status !== 'sent';
+        if (isNewIncoming) {
+            // No marcamos como "nuevo" (ni alertamos por) la conversación que el
+            // agente ya está viendo con la ventana enfocada: la está leyendo.
+            const viewingThis = c.id === activeId && focused;
+            if (!viewingThis) {
+                incoming++;
+                unreadConvIds.value[c.id] = true;
+            }
         }
         prevConvTimestamps.value[c.id] = c.last_message_at;
     });
@@ -441,11 +458,13 @@ watch(() => props.conversations, (newConvs) => {
 onMounted(() => {
     props.conversations.forEach(c => { prevConvTimestamps.value[c.id] = c.last_message_at; });
     document.addEventListener('click', unlockAudio, { once: true });
-    window.addEventListener('focus', clearNotifications);
+    // Al recuperar el foco solo silenciamos las alertas globales; los chats no
+    // leídos siguen marcados hasta que el agente los abra uno por uno.
+    window.addEventListener('focus', clearAlerts);
 });
 
 onUnmounted(() => {
-    window.removeEventListener('focus', clearNotifications);
+    window.removeEventListener('focus', clearAlerts);
     clearNotifications();
 });
 // ─────────────────────────────────────────────────────────────────────────────
@@ -665,19 +684,49 @@ function googleMapsUrl(body) {
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Polling
+// ── Polling ───────────────────────────────────────────────────────────────────
+// Pausa el polling mientras hay CUALQUIER visita de Inertia en vuelo (clic en un
+// chat, cambio de filtro, asignación, envío…). Sin esto, el router.reload del
+// poll podía dispararse justo durante tu navegación, cancelarla y "devolverte"
+// al chat anterior — el clásico "se cambia de chat solo". Contador (no booleano)
+// para tolerar visitas solapadas.
+const navInFlight = ref(0);
+let stopNavStart = null;
+let stopNavFinish = null;
+
 let pollingInterval = null;
 onMounted(() => {
+    stopNavStart = router.on('start', () => { navInFlight.value++; });
+    stopNavFinish = router.on('finish', () => { navInFlight.value = Math.max(0, navInFlight.value - 1); });
+
     pollingInterval = setInterval(() => {
-        // No recargar mientras hay un envío en curso: un router.reload cancelaría
-        // el request en vuelo (por eso una imagen podía "quedarse" sin enviarse).
-        if (sending.value) return;
+        // No recargar mientras hay un envío o una navegación en curso: un
+        // router.reload cancelaría el request en vuelo (por eso una imagen podía
+        // "quedarse" sin enviarse, y el chat se cambiaba solo al hacer clic).
+        if (sending.value || navInFlight.value > 0) return;
+        // Anclamos SIEMPRE la conversación activa (y el filtro) en la recarga. Si
+        // la URL no llevara ?conversation=, el backend elegiría "la más reciente"
+        // y el panel de mensajes saltaría solo a otra conversación al entrar un
+        // mensaje. replace:true evita ensuciar el historial cada 5s.
+        const reloadData = {};
+        if (props.activeConversationId) reloadData.conversation = props.activeConversationId;
+        if (props.filter && props.filter !== 'all') reloadData.filter = props.filter;
         // 'presence' + 'staffMembers' también registran el heartbeat de presencia
         // en el backend (el partial reload ejecuta ChatController::index completo).
-        router.reload({ only: ['conversations', 'activeChat', 'staffMembers', 'presence'], preserveScroll: true, preserveState: true });
+        router.reload({
+            only: ['conversations', 'activeChat', 'staffMembers', 'presence'],
+            data: reloadData,
+            replace: true,
+            preserveScroll: true,
+            preserveState: true,
+        });
     }, 5000);
 });
-onUnmounted(() => { if (pollingInterval) clearInterval(pollingInterval); });
+onUnmounted(() => {
+    if (pollingInterval) clearInterval(pollingInterval);
+    if (stopNavStart) stopNavStart();
+    if (stopNavFinish) stopNavFinish();
+});
 
 // Cerrar el drawer del cliente al pasar de mobile a desktop para evitar
 // que el backdrop quede atrapado en una capa que ya no debería verse.
