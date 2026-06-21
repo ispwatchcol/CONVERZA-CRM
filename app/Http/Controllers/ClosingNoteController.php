@@ -4,8 +4,10 @@ namespace App\Http\Controllers;
 
 use App\Models\ClosingNote;
 use App\Models\Conversation;
+use App\Models\Message;
 use App\Models\User;
 use App\Services\Ispwatch\IspwatchRepository;
+use App\Services\WhatsAppService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Validation\Rule;
@@ -13,7 +15,10 @@ use Inertia\Inertia;
 
 class ClosingNoteController extends Controller
 {
-    public function __construct(protected IspwatchRepository $ispwatch) {}
+    public function __construct(
+        protected IspwatchRepository $ispwatch,
+        protected WhatsAppService $whatsappService,
+    ) {}
 
     public function index(Request $request)
     {
@@ -103,6 +108,24 @@ class ClosingNoteController extends Controller
             'close_conversation' => ['nullable', 'boolean'],
         ]);
 
+        // Solo el asesor asignado puede cerrar el chat. Los admins siempre pueden.
+        if ($validated['close_conversation'] ?? true) {
+            $conversation = Conversation::where('id', $validated['conversation_id'])
+                ->where('tenant_id', $tenant->id)
+                ->first();
+
+            if ($conversation) {
+                $user    = $request->user();
+                $isAdmin = $user->staffRole() === 'admin';
+
+                if (! $isAdmin) {
+                    $staffMember = $user->staffMember;
+                    $isAssigned  = $staffMember && $conversation->assigned_to === $staffMember->id;
+                    abort_if(! $isAssigned, 403, 'Solo el asesor asignado puede cerrar este chat.');
+                }
+            }
+        }
+
         ClosingNote::create([
             'tenant_id'       => $tenant->id,
             'conversation_id' => $validated['conversation_id'],
@@ -114,6 +137,38 @@ class ClosingNoteController extends Controller
             Conversation::where('id', $validated['conversation_id'])
                 ->where('tenant_id', $tenant->id)
                 ->update(['status' => 'closed']);
+
+            // Enviar mensaje de cierre al cliente solo si la conversación estaba abierta.
+            // Si ya estaba cerrada (doble cierre), $conversation->status !== 'open' y no se envía.
+            // El try-catch protege el cierre: si WA falla, la nota y el cambio de status ya están
+            // persistidos — no revertimos por eso.
+            if (isset($conversation) && $conversation->status === 'open') {
+                $conversation->loadMissing('contact');
+                $phone = $conversation->contact?->phone;
+
+                if ($phone) {
+                    try {
+                        $closeMsg = 'La conversación ha finalizado. Gracias por comunicarse con nosotros.';
+                        $waResult = $this->whatsappService->sendMessage($phone, $closeMsg);
+
+                        Message::create([
+                            'tenant_id'       => $tenant->id,
+                            'conversation_id' => $conversation->id,
+                            'contact_id'      => $conversation->contact_id,
+                            'body'            => $closeMsg,
+                            'status'          => 'sent',
+                            'sent_by_user_id' => $request->user()->id,
+                            'wa_message_id'   => $waResult['data']['messages'][0]['id'] ?? null,
+                        ]);
+                    } catch (\Throwable $e) {
+                        \Log::warning('ClosingNoteController@store: WA closing message failed', [
+                            'conversation_id' => $conversation->id,
+                            'phone'           => $phone,
+                            'error'           => $e->getMessage(),
+                        ]);
+                    }
+                }
+            }
         }
 
         return back()->with('success', 'Nota de cierre guardada.');

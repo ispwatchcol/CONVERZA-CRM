@@ -11,10 +11,43 @@ const flashType = ref('success');
 // ─── User ─────────────────────────────────────────────────────────────────────
 const authUser = computed(() => page.props.auth?.user ?? null);
 const userInitial = computed(() => (authUser.value?.name?.[0] ?? 'U').toUpperCase());
+
+// Session identity guard: detects when another tab replaces the shared session cookie
+// by logging in as a different user. Uses flush:'sync' so the flag is set BEFORE Vue
+// flushes DOM updates — the blocking screen renders instead of the new tenant's data.
+// Also watches tenant.slug as defense-in-depth (tenant change without user change
+// should be impossible architecturally, but we guard it anyway).
+const mountedUserId = page.props.auth?.user?.id ?? null;
+const mountedTenantSlug = page.props.tenant?.slug ?? null;
+const isSessionValid = ref(true);
+watch(
+    () => [page.props.auth?.user?.id, page.props.tenant?.slug],
+    ([newUserId, newTenantSlug]) => {
+        if (mountedUserId === null) return;
+        if (
+            newUserId !== mountedUserId ||
+            (mountedTenantSlug !== null && newTenantSlug !== mountedTenantSlug)
+        ) {
+            isSessionValid.value = false;
+            window.location.href = '/login';
+        }
+    },
+    { flush: 'sync' }
+);
 const showUserMenu = ref(false);
 
 function logout() {
+    // Notifica a otras pestañas para que cierren la sesión antes de que el
+    // servidor la invalide — así el estado visual es inmediato.
+    localStorage.setItem('converza-tab-logout', Date.now().toString());
     router.post(route('logout'));
+}
+
+function handleTabLogout(e) {
+    if (e.key === 'converza-tab-logout') {
+        // Otra pestaña cerró sesión → hard-redirect para limpiar todo el estado
+        window.location.href = '/login';
+    }
 }
 
 // ─── Theme ────────────────────────────────────────────────────────────────────
@@ -137,16 +170,27 @@ function isActive(routeName) {
 }
 
 // ─── Flash ────────────────────────────────────────────────────────────────────
+// Sin { deep: true }: Vue usa Object.is() para comparar el valor retornado por
+// el getter. El polling reutiliza la misma referencia del objeto flash (Inertia
+// solo hace spread del top-level page.props), así que Object.is retorna true y
+// el callback NO se dispara. Una respuesta real del servidor siempre produce un
+// objeto nuevo desde JSON → referencia distinta → callback sí se dispara.
+// lastShownFlash es defensa adicional: si por alguna razón el watcher sí
+// dispara con la misma referencia, la comparación === lo descarta.
+let flashTimeout = null;
+let lastShownFlash = null;
 watch(() => page.props.flash, (flash) => {
-    if (flash?.success) {
-        flashMessage.value = flash.success; flashType.value = 'success';
-        setTimeout(() => { flashMessage.value = null; }, 4000);
-    }
-    if (flash?.error) {
-        flashMessage.value = flash.error; flashType.value = 'error';
-        setTimeout(() => { flashMessage.value = null; }, 4000);
-    }
-}, { deep: true, immediate: true });
+    const msg = flash?.success || flash?.error;
+    if (!msg || flash === lastShownFlash) return;
+    lastShownFlash = flash;
+    if (flashTimeout) clearTimeout(flashTimeout);
+    flashMessage.value = msg;
+    flashType.value = flash?.success ? 'success' : 'error';
+    flashTimeout = setTimeout(() => {
+        flashMessage.value = null;
+        flashTimeout = null;
+    }, 4000);
+}, { immediate: true });
 
 watch(currentRoute, () => { 
     if (typeof window !== 'undefined' && window.innerWidth < 768) {
@@ -166,15 +210,23 @@ function handleEsc(e) {
 onMounted(() => {
     document.addEventListener('keydown', handleEsc);
     document.addEventListener('mousedown', handleDocumentClick);
+    window.addEventListener('storage', handleTabLogout);
 });
 onUnmounted(() => {
     document.removeEventListener('keydown', handleEsc);
     document.removeEventListener('mousedown', handleDocumentClick);
+    window.removeEventListener('storage', handleTabLogout);
 });
 </script>
 
 <template>
-    <div class="h-screen flex overflow-hidden bg-gray-100">
+    <!-- Session invalidation screen: shown synchronously before any DOM update when
+         another tab replaces the session cookie. Prevents rendering sensitive data. -->
+    <div v-if="!isSessionValid" class="h-screen flex items-center justify-center bg-gray-50">
+        <p class="text-gray-400 text-sm">Redirigiendo…</p>
+    </div>
+
+    <div v-else class="h-screen flex overflow-hidden bg-gray-100">
 
         <!-- Mobile overlay -->
         <div v-if="sidebarOpen" class="fixed inset-0 z-40 bg-black/50 md:hidden" @click="sidebarOpen = false"></div>
