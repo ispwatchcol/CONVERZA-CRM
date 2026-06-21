@@ -435,20 +435,37 @@ function blinkTitle(count) {
     }, 1000);
 }
 
-function clearNotifications() {
+// Limpia SOLO las alertas globales que piden atención: el contador y el
+// parpadeo del título. NO toca unreadConvIds — el puntito de "nuevo" de cada
+// chat se quita únicamente al ABRIR ese chat (ver selectConversation). Antes
+// el foco de la ventana borraba todos los puntitos de golpe.
+function clearAlerts() {
     _unreadTotal = 0;
-    unreadConvIds.value = {};
     if (titleBlinker) { clearInterval(titleBlinker); titleBlinker = null; }
     document.title = docTitle;
 }
 
+// Reset completo, incluyendo marcar todo como leído. Solo al desmontar.
+function clearNotifications() {
+    clearAlerts();
+    unreadConvIds.value = {};
+}
+
 watch(() => props.conversations, (newConvs) => {
+    const activeId = props.activeConversationId;
+    const focused = typeof document !== 'undefined' && document.hasFocus();
     let incoming = 0;
     newConvs.forEach(c => {
         const prev = prevConvTimestamps.value[c.id];
-        if (prev !== undefined && c.last_message_at !== prev && c.last_message_status !== 'sent') {
-            incoming++;
-            unreadConvIds.value[c.id] = true;
+        const isNewIncoming = prev !== undefined && c.last_message_at !== prev && c.last_message_status === 'received';
+        if (isNewIncoming) {
+            // No marcamos como "nuevo" (ni alertamos por) la conversación que el
+            // agente ya está viendo con la ventana enfocada: la está leyendo.
+            const viewingThis = c.id === activeId && focused;
+            if (!viewingThis) {
+                incoming++;
+                unreadConvIds.value[c.id] = true;
+            }
         }
         prevConvTimestamps.value[c.id] = c.last_message_at;
     });
@@ -462,11 +479,13 @@ watch(() => props.conversations, (newConvs) => {
 onMounted(() => {
     props.conversations.forEach(c => { prevConvTimestamps.value[c.id] = c.last_message_at; });
     document.addEventListener('click', unlockAudio, { once: true });
-    window.addEventListener('focus', clearNotifications);
+    // Al recuperar el foco solo silenciamos las alertas globales; los chats no
+    // leídos siguen marcados hasta que el agente los abra uno por uno.
+    window.addEventListener('focus', clearAlerts);
 });
 
 onUnmounted(() => {
-    window.removeEventListener('focus', clearNotifications);
+    window.removeEventListener('focus', clearAlerts);
     clearNotifications();
 });
 // ─────────────────────────────────────────────────────────────────────────────
@@ -703,37 +722,59 @@ function googleMapsUrl(body) {
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Polling
+// ── Dirección del mensaje ─────────────────────────────────────────────────────
+// En WhatsApp solo los mensajes ENTRANTES del contacto quedan con status
+// 'received'. Todo lo demás (sent/delivered/read/failed) es saliente nuestro.
+// Derivar la dirección de un status puntual como 'sent' era el bug: cuando Meta
+// confirmaba la entrega ('delivered'/'read'), el mensaje propio dejaba de cumplir
+// `status === 'sent'` y "saltaba" al lado del cliente como si lo hubiera escrito él.
+const isOutgoing = (msg) => msg?.status !== 'received';
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── Polling ───────────────────────────────────────────────────────────────────
+// Pausa el polling mientras hay CUALQUIER visita de Inertia en vuelo (clic en un
+// chat, cambio de filtro, asignación, envío…). Sin esto, el router.reload del
+// poll podía dispararse justo durante tu navegación, cancelarla y "devolverte"
+// al chat anterior — el clásico "se cambia de chat solo". Contador (no booleano)
+// para tolerar visitas solapadas.
+const navInFlight = ref(0);
+let stopNavStart = null;
+let stopNavFinish = null;
+
 let pollingInterval = null;
 onMounted(() => {
+    stopNavStart = router.on('start', () => { navInFlight.value++; });
+    stopNavFinish = router.on('finish', () => { navInFlight.value = Math.max(0, navInFlight.value - 1); });
+
     pollingInterval = setInterval(() => {
-        // No recargar mientras hay un envío en curso: un router.reload cancelaría
-        // el request en vuelo (por eso una imagen podía "quedarse" sin enviarse).
-        if (sending.value) return;
-
-        // URL construida desde estado reactivo — nunca desde window.location.href,
-        // que puede contener params obsoletos o no haberse sincronizado con replaceState.
-        const pollUrl = new URL(window.location.pathname, window.location.origin);
-        if (props.filter) {
-            pollUrl.searchParams.set('filter', props.filter);
-        }
-        if (props.activeConversationId) {
-            pollUrl.searchParams.set('conversation', String(props.activeConversationId));
-        }
-
+        // No recargar mientras hay un envío o una navegación en curso: un
+        // router.reload cancelaría el request en vuelo (por eso una imagen podía
+        // "quedarse" sin enviarse, y el chat se cambiaba solo al hacer clic).
+        if (sending.value || navInFlight.value > 0) return;
+        // Anclamos SIEMPRE la conversación activa (y el filtro) en la recarga. Si
+        // la URL no llevara ?conversation=, el backend elegiría "la más reciente"
+        // y el panel de mensajes saltaría solo a otra conversación al entrar un
+        // mensaje. replace:true evita ensuciar el historial cada 5s.
+        const reloadData = {};
+        if (props.activeConversationId) reloadData.conversation = props.activeConversationId;
+        if (props.filter && props.filter !== 'all') reloadData.filter = props.filter;
         // 'presence' + 'staffMembers' también registran el heartbeat de presencia
         // en el backend (el partial reload ejecuta ChatController::index completo).
-        router.visit(pollUrl.toString(), {
+        router.reload({
             only: ['conversations', 'activeChat', 'staffMembers', 'presence'],
+            data: reloadData,
+            replace: true,
             preserveScroll: true,
             preserveState: true,
-            replace: true,
-            async: true,
             headers: { 'Cache-Control': 'no-cache' },
         });
     }, 5000);
 });
-onUnmounted(() => { if (pollingInterval) clearInterval(pollingInterval); });
+onUnmounted(() => {
+    if (pollingInterval) clearInterval(pollingInterval);
+    if (stopNavStart) stopNavStart();
+    if (stopNavFinish) stopNavFinish();
+});
 
 // Cerrar el drawer del cliente al pasar de mobile a desktop para evitar
 // que el backdrop quede atrapado en una capa que ya no debería verse.
@@ -830,7 +871,7 @@ onUnmounted(() => document.removeEventListener('mousedown', handleAssignOutsideC
                                         </div>
                                     </div>
                                     <p class="text-xs truncate" :class="unreadConvIds[conv.id] ? 'text-gray-900 font-semibold' : 'text-gray-500'">
-                                        <span v-if="conv.last_message_status === 'sent'" class="mr-1">
+                                        <span v-if="conv.last_message_status !== 'received'" class="mr-1">
                                             <svg class="h-3 w-3 inline text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
                                         </span>
                                         {{ conv.last_message || 'Sin mensajes' }}
@@ -955,7 +996,7 @@ onUnmounted(() => document.removeEventListener('mousedown', handleAssignOutsideC
                     <!-- Messages -->
                     <div ref="messagesContainer" class="flex-1 overflow-y-auto p-4 space-y-2 z-0 relative">
                         <div v-for="msg in activeChat" :key="msg.id" class="flex animate-fade-in"
-                             :class="{ 'justify-end': msg.status === 'sent' && msg.type !== 'system' && msg.type !== 'note', 'justify-center': msg.type === 'system' || msg.type === 'note' }">
+                             :class="{ 'justify-end': isOutgoing(msg) && msg.type !== 'system' && msg.type !== 'note', 'justify-center': msg.type === 'system' || msg.type === 'note' }">
 
                             <!-- ─── Sistema (transferencias / eventos) ──────────────── -->
                             <div v-if="msg.type === 'system'" class="max-w-[85%] my-1">
@@ -981,14 +1022,14 @@ onUnmounted(() => document.removeEventListener('mousedown', handleAssignOutsideC
                             </div>
 
                             <!-- ─── Sticker (badge mínimo, no se descarga) ──────────── -->
-                            <div v-else-if="msg.type === 'sticker'" class="max-w-[75%] flex flex-col" :class="msg.status === 'sent' ? 'items-end' : 'items-start'">
+                            <div v-else-if="msg.type === 'sticker'" class="max-w-[75%] flex flex-col" :class="isOutgoing(msg) ? 'items-end' : 'items-start'">
                                 <div class="inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 shadow-sm text-xs text-gray-500 italic"
-                                     :class="msg.status === 'sent' ? 'bg-[#d9fdd3]' : 'bg-white'">
+                                     :class="isOutgoing(msg) ? 'bg-[#d9fdd3]' : 'bg-white'">
                                     <span>🎭</span><span>Sticker</span>
                                 </div>
                                 <div class="mt-1 flex items-center gap-1 px-1">
                                     <span class="text-[10px] text-gray-400">{{ formatTime(msg.created_at) }}</span>
-                                    <svg v-if="msg.status === 'sent'" class="h-3 w-3 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+                                    <svg v-if="isOutgoing(msg)" class="h-3 w-3 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
                                 </div>
                             </div>
 
@@ -996,9 +1037,9 @@ onUnmounted(() => document.removeEventListener('mousedown', handleAssignOutsideC
                             <div
                                 v-else-if="msg.type === 'image'"
                                 class="max-w-[75%] rounded-2xl shadow-sm overflow-hidden"
-                                :class="msg.status === 'sent' ? 'bg-[#d9fdd3] rounded-tr-sm' : 'bg-white rounded-tl-sm'"
+                                :class="isOutgoing(msg) ? 'bg-[#d9fdd3] rounded-tr-sm' : 'bg-white rounded-tl-sm'"
                             >
-                                <p v-if="msg.status === 'sent' && msg.sender_name" class="px-3 pt-1.5 text-[11px] font-semibold text-emerald-600">
+                                <p v-if="isOutgoing(msg) && msg.sender_name" class="px-3 pt-1.5 text-[11px] font-semibold text-emerald-600">
                                     {{ msg.sender_name }}
                                 </p>
                                 <!-- Imagen disponible y sin error de carga -->
@@ -1013,7 +1054,7 @@ onUnmounted(() => document.removeEventListener('mousedown', handleAssignOutsideC
                                     </a>
                                     <div v-if="!msg.caption" class="absolute bottom-2 right-2 inline-flex items-center space-x-1 bg-black/55 backdrop-blur-sm rounded-full px-2 py-0.5">
                                         <span class="text-[10px] text-white/95">{{ formatTime(msg.created_at) }}</span>
-                                        <svg v-if="msg.status === 'sent'" class="h-3 w-3 text-blue-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+                                        <svg v-if="isOutgoing(msg)" class="h-3 w-3 text-blue-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
                                     </div>
                                 </div>
                                 <!-- Imagen no disponible o error de carga -->
@@ -1028,13 +1069,13 @@ onUnmounted(() => document.removeEventListener('mousedown', handleAssignOutsideC
                                     <p class="text-sm text-gray-900 whitespace-pre-wrap break-words">{{ msg.caption }}</p>
                                     <div class="flex items-center justify-end space-x-1 mt-0.5">
                                         <span class="text-[10px] text-gray-500">{{ formatTime(msg.created_at) }}</span>
-                                        <svg v-if="msg.status === 'sent'" class="h-3.5 w-3.5 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+                                        <svg v-if="isOutgoing(msg)" class="h-3.5 w-3.5 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
                                     </div>
                                 </div>
                                 <!-- Hora sola cuando no hay caption y la imagen falló -->
                                 <div v-else-if="!msg.media_url || imgErrors[msg.id]" class="flex items-center justify-end gap-1 px-3 pb-1.5">
                                     <span class="text-[10px] text-gray-500">{{ formatTime(msg.created_at) }}</span>
-                                    <svg v-if="msg.status === 'sent'" class="h-3.5 w-3.5 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+                                    <svg v-if="isOutgoing(msg)" class="h-3.5 w-3.5 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
                                 </div>
                             </div>
 
@@ -1042,9 +1083,9 @@ onUnmounted(() => document.removeEventListener('mousedown', handleAssignOutsideC
                             <div
                                 v-else-if="msg.type === 'video'"
                                 class="max-w-[75%] rounded-2xl shadow-sm overflow-hidden"
-                                :class="msg.status === 'sent' ? 'bg-[#d9fdd3] rounded-tr-sm' : 'bg-white rounded-tl-sm'"
+                                :class="isOutgoing(msg) ? 'bg-[#d9fdd3] rounded-tr-sm' : 'bg-white rounded-tl-sm'"
                             >
-                                <p v-if="msg.status === 'sent' && msg.sender_name" class="px-3 pt-1.5 text-[11px] font-semibold text-emerald-600">
+                                <p v-if="isOutgoing(msg) && msg.sender_name" class="px-3 pt-1.5 text-[11px] font-semibold text-emerald-600">
                                     {{ msg.sender_name }}
                                 </p>
                                 <a
@@ -1054,7 +1095,7 @@ onUnmounted(() => document.removeEventListener('mousedown', handleAssignOutsideC
                                     class="flex items-center gap-2.5 px-3 py-2.5 hover:bg-black/5 transition min-w-[200px]"
                                 >
                                     <div class="w-10 h-10 rounded-full flex items-center justify-center shrink-0"
-                                         :class="msg.status === 'sent' ? 'bg-green-500' : 'bg-accent'">
+                                         :class="isOutgoing(msg) ? 'bg-green-500' : 'bg-accent'">
                                         <svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" /></svg>
                                     </div>
                                     <div class="min-w-0 flex-1">
@@ -1074,7 +1115,7 @@ onUnmounted(() => document.removeEventListener('mousedown', handleAssignOutsideC
                                 </div>
                                 <div class="flex items-center justify-end gap-1 px-3 pb-1.5">
                                     <span class="text-[10px] text-gray-500">{{ formatTime(msg.created_at) }}</span>
-                                    <svg v-if="msg.status === 'sent'" class="h-3.5 w-3.5 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+                                    <svg v-if="isOutgoing(msg)" class="h-3.5 w-3.5 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
                                 </div>
                             </div>
 
@@ -1082,10 +1123,10 @@ onUnmounted(() => document.removeEventListener('mousedown', handleAssignOutsideC
                             <div
                                 v-else
                                 class="max-w-[75%] rounded-2xl shadow-sm overflow-hidden"
-                                :class="msg.status === 'sent' ? 'bg-[#d9fdd3] rounded-tr-sm' : 'bg-white rounded-tl-sm'"
+                                :class="isOutgoing(msg) ? 'bg-[#d9fdd3] rounded-tr-sm' : 'bg-white rounded-tl-sm'"
                             >
                                 <!-- Nombre del asesor que envió (solo mensajes salientes) -->
-                                <p v-if="msg.status === 'sent' && msg.sender_name" class="px-4 pt-1.5 text-[11px] font-semibold text-emerald-600">
+                                <p v-if="isOutgoing(msg) && msg.sender_name" class="px-4 pt-1.5 text-[11px] font-semibold text-emerald-600">
                                     {{ msg.sender_name }}
                                 </p>
 
@@ -1112,7 +1153,7 @@ onUnmounted(() => document.removeEventListener('mousedown', handleAssignOutsideC
                                             v-if="msg.media_url && !audioState(msg.id).error"
                                             @click="toggleAudio(msg.id)"
                                             class="w-10 h-10 rounded-full flex items-center justify-center shrink-0 transition"
-                                            :class="msg.status === 'sent' ? 'bg-green-500 hover:bg-green-600' : 'bg-accent hover:bg-accent-hover'"
+                                            :class="isOutgoing(msg) ? 'bg-green-500 hover:bg-green-600' : 'bg-accent hover:bg-accent-hover'"
                                         >
                                             <svg v-if="!audioState(msg.id).playing" class="w-5 h-5 text-white ml-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
                                             <svg v-else class="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
@@ -1132,15 +1173,15 @@ onUnmounted(() => document.removeEventListener('mousedown', handleAssignOutsideC
                                         <div class="flex-1 min-w-0">
                                             <!-- Barra clicable para adelantar/retroceder (seek) -->
                                             <div class="relative h-3 flex items-center cursor-pointer" @click="seekAudio(msg.id, $event)">
-                                                <div class="relative w-full h-1.5 rounded-full overflow-hidden" :class="msg.status === 'sent' ? 'bg-green-200' : 'bg-gray-200'">
+                                                <div class="relative w-full h-1.5 rounded-full overflow-hidden" :class="isOutgoing(msg) ? 'bg-green-200' : 'bg-gray-200'">
                                                     <div
                                                         class="absolute inset-y-0 left-0 rounded-full transition-all duration-100"
-                                                        :class="msg.status === 'sent' ? 'bg-green-600' : 'bg-accent'"
+                                                        :class="isOutgoing(msg) ? 'bg-green-600' : 'bg-accent'"
                                                         :style="{ width: audioProgress(msg.id) + '%' }"
                                                     />
                                                 </div>
                                             </div>
-                                            <p class="text-[10px] mt-1" :class="msg.status === 'sent' ? 'text-green-700' : 'text-gray-500'">
+                                            <p class="text-[10px] mt-1" :class="isOutgoing(msg) ? 'text-green-700' : 'text-gray-500'">
                                                 <span v-if="audioState(msg.id).error && msg.media_url">
                                                     <a :href="msg.media_url" target="_blank" class="underline hover:text-accent">Descargar audio</a>
                                                 </span>
@@ -1156,7 +1197,7 @@ onUnmounted(() => document.removeEventListener('mousedown', handleAssignOutsideC
                                             type="button"
                                             @click="cyclePlaybackRate"
                                             class="shrink-0 text-[11px] font-semibold px-1.5 py-0.5 rounded-md tabular-nums transition"
-                                            :class="msg.status === 'sent' ? 'text-green-700 hover:bg-green-200/70' : 'text-gray-500 hover:bg-gray-200'"
+                                            :class="isOutgoing(msg) ? 'text-green-700 hover:bg-green-200/70' : 'text-gray-500 hover:bg-gray-200'"
                                             title="Velocidad de reproducción"
                                         >{{ playbackRate }}×</button>
 
@@ -1165,7 +1206,7 @@ onUnmounted(() => document.removeEventListener('mousedown', handleAssignOutsideC
                                            class="shrink-0 p-1 rounded-full hover:bg-black/5 transition" title="Descargar">
                                             <svg class="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3"/></svg>
                                         </a>
-                                        <svg v-else class="w-4 h-4 shrink-0" :class="msg.status === 'sent' ? 'text-green-600' : 'text-gray-400'" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z"/></svg>
+                                        <svg v-else class="w-4 h-4 shrink-0" :class="isOutgoing(msg) ? 'text-green-600' : 'text-gray-400'" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z"/></svg>
                                     </div>
                                 </template>
 
@@ -1177,7 +1218,7 @@ onUnmounted(() => document.removeEventListener('mousedown', handleAssignOutsideC
                                         class="flex items-center gap-2.5 px-3 py-2.5 hover:bg-black/5 transition min-w-[220px]"
                                     >
                                         <div class="w-10 h-10 rounded-full flex items-center justify-center shrink-0"
-                                             :class="msg.status === 'sent' ? 'bg-green-500' : 'bg-accent'">
+                                             :class="isOutgoing(msg) ? 'bg-green-500' : 'bg-accent'">
                                             <svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1115 0z"/></svg>
                                         </div>
                                         <div class="min-w-0 flex-1">
@@ -1215,7 +1256,7 @@ onUnmounted(() => document.removeEventListener('mousedown', handleAssignOutsideC
 
                                 <div class="flex items-center justify-end space-x-1 px-3 pb-1.5">
                                     <span class="text-[10px] text-gray-500">{{ formatTime(msg.created_at) }}</span>
-                                    <svg v-if="msg.status === 'sent'" class="h-3.5 w-3.5 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+                                    <svg v-if="isOutgoing(msg)" class="h-3.5 w-3.5 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
                                 </div>
                             </div>
                         </div>

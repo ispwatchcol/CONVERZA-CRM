@@ -157,13 +157,17 @@ class ProcessIncomingWhatsAppMessage implements ShouldQueue
                 break;
 
             case $type === 'unsupported':
-                // Meta sends this for polls, view-once, contact cards, deleted messages,
-                // or any client feature not yet supported by Cloud API.
+                // Meta envía esto para encuestas, view-once, tarjetas de contacto,
+                // mensajes borrados y —caso típico aquí— códigos de verificación de
+                // Meta/Facebook que llegan con botón "Copiar código". En todos estos
+                // el CONTENIDO no viaja en el webhook: Meta solo manda el error, así
+                // que el código real no es recuperable desde el chat.
                 $errors = $this->message['errors'] ?? [];
                 $detail = $errors[0]['title'] ?? $errors[0]['details'] ?? 'Tipo de mensaje no soportado';
-                $attributes['body'] = '[' . $detail . ']';
+                $attributes['body'] = '[Mensaje no compatible con WhatsApp API: ' . $detail . ']';
                 Log::info('Unsupported WhatsApp message received', [
                     'wa_message_id' => $waMessageId,
+                    'error_code'    => $errors[0]['code'] ?? null,
                     'errors'        => $errors,
                 ]);
                 break;
@@ -191,11 +195,80 @@ class ProcessIncomingWhatsAppMessage implements ShouldQueue
                 $this->applyMediaAttributes($attributes, $type, $whatsapp);
                 break;
 
+            case $type === 'button':
+                // El contacto tocó un botón de respuesta rápida (quick reply):
+                // el texto visible del botón es su respuesta.
+                $btn = $this->message['button'] ?? [];
+                $attributes['body'] = $btn['text'] ?? $btn['payload'] ?? '[Botón]';
+                break;
+
+            case $type === 'interactive':
+                // Respuesta a un mensaje interactivo (botones o lista).
+                $interactive = $this->message['interactive'] ?? [];
+                $attributes['body'] = $interactive['button_reply']['title']
+                    ?? $interactive['list_reply']['title']
+                    ?? $interactive['list_reply']['description']
+                    ?? '[Respuesta interactiva]';
+                break;
+
             default:
-                $attributes['body'] = '[' . $type . ']';
+                // Tipo sin case propio (formatos nuevos de Meta). Antes de rendirnos
+                // con un placeholder, intentamos rescatar cualquier texto legible del
+                // payload para no perder contenido (p. ej. un código que llegue en un
+                // formato distinto a `text`).
+                $attributes['body'] = $this->extractReadableText($type) ?? '[' . $type . ']';
         }
 
         return $attributes;
+    }
+
+    /**
+     * Rescate best-effort de texto legible para un mensaje cuyo `type` no tiene un
+     * case propio. Recorre el sub-objeto del payload buscando los campos donde Meta
+     * suele poner contenido (cuerpo, caption, título...). Devuelve el primer string
+     * no vacío, o null si no hay nada presentable. Cubre estructuras anidadas como
+     * interactive.button_reply.title.
+     */
+    private function extractReadableText(string $type): ?string
+    {
+        $payload = $this->message[$type] ?? null;
+
+        if (is_string($payload)) {
+            $payload = trim($payload);
+            return $payload !== '' ? $payload : null;
+        }
+
+        if (! is_array($payload)) {
+            return null;
+        }
+
+        $found = $this->findFirstText($payload, ['body', 'text', 'caption', 'title', 'description', 'name', 'payload']);
+
+        return $found !== '' ? $found : null;
+    }
+
+    /**
+     * Devuelve el primer valor string no vacío cuya clave esté en $keys, mirando
+     * primero este nivel (en el orden de $keys) y luego descendiendo a sub-arrays.
+     */
+    private function findFirstText(array $data, array $keys): string
+    {
+        foreach ($keys as $key) {
+            if (isset($data[$key]) && is_string($data[$key]) && trim($data[$key]) !== '') {
+                return trim($data[$key]);
+            }
+        }
+
+        foreach ($data as $value) {
+            if (is_array($value)) {
+                $nested = $this->findFirstText($value, $keys);
+                if ($nested !== '') {
+                    return $nested;
+                }
+            }
+        }
+
+        return '';
     }
 
     private function applyMediaAttributes(array &$attributes, string $type, WhatsAppService $whatsapp): void
