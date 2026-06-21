@@ -836,9 +836,15 @@ onUnmounted(() => document.removeEventListener('mousedown', handleAssignOutsideC
                             :key="conv.id"
                             class="relative group border-b border-gray-50"
                         >
+                            <!-- preserve-state: sin esto, Inertia recrea el componente al
+                                 volver la respuesta (~1s) y mobileShowChat se reinicia a
+                                 false → en celular el chat se abría y "rebotaba" de vuelta
+                                 a la lista. preserve-scroll evita que la lista salte arriba. -->
                             <Link
                                 :href="route('chat.index', { conversation: conv.id })"
                                 @click="selectConversation(conv)"
+                                preserve-state
+                                preserve-scroll
                                 class="flex items-center p-3 hover:bg-gray-50 cursor-pointer transition pr-9"
                                 :class="{ 'bg-accent/5 border-l-3 border-l-accent': activeConversationId === conv.id }"
                             >
