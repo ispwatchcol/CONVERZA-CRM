@@ -77,6 +77,7 @@ Route::middleware('auth')->group(function () {
     // Templates (Plantillas Meta de WhatsApp)
     Route::get('/templates', [TemplateController::class, 'index'])->name('templates.index');
     Route::post('/templates', [TemplateController::class, 'store'])->name('templates.store');
+    Route::post('/templates/{template}/submit', [TemplateController::class, 'submitToMeta'])->name('templates.submit');
     Route::post('/templates/sync', [TemplateController::class, 'sync'])->name('templates.sync');
     Route::put('/templates/{template}', [TemplateController::class, 'update'])->name('templates.update');
     Route::patch('/templates/{template}/toggle', [TemplateController::class, 'toggleActive'])->name('templates.toggle');

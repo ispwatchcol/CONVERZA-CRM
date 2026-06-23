@@ -132,6 +132,70 @@ class TemplateController extends Controller
         return back()->with('success', "Plantilla enviada a revisión de Meta (estado: {$result['status']}). Usa Sincronizar para actualizar el estado cuando Meta la apruebe.");
     }
 
+    /**
+     * Envía a revisión de Meta una plantilla que ya existe como borrador local
+     * (creada sin credenciales). Reusa la misma lógica que store(): resuelve las
+     * muestras, valida coherencia evento↔variables y crea la plantilla en Meta.
+     *
+     * Solo aplica a borradores sin meta_id; las que ya están en Meta se actualizan
+     * vía Sincronizar.
+     */
+    public function submitToMeta(Request $request, Template $template)
+    {
+        $this->authorizeTenantOwnership($template);
+
+        if ($template->meta_id) {
+            return back()->withErrors(['meta' => 'Esta plantilla ya está en Meta. Usa Sincronizar para actualizar su estado.']);
+        }
+
+        if (! $this->isMetaConfigured()) {
+            return back()->withErrors(['meta' => 'Falta configurar Business Account ID o Access Token en Configuración → WhatsApp.']);
+        }
+
+        $validated = $request->validate([
+            'variable_examples'   => ['nullable', 'array'],
+            'variable_examples.*' => ['nullable', 'string', 'max:1024'],
+        ]);
+
+        // Coherencia evento ↔ variables nombradas (mismo criterio que store()).
+        if ($err = $this->bodyVariableErrors($template->body, $template->event_key)) {
+            return back()->withErrors(['meta' => $err]);
+        }
+
+        // Las muestras de variables nombradas se autocompletan del catálogo; las
+        // posicionales ({{1}}) vienen del formulario de envío.
+        $submitted = $this->normalizeExamples($validated['variable_examples'] ?? []);
+        $examples  = $this->resolveExamples($template->body, $template->event_key, $submitted);
+
+        $missing = $this->missingVariableExamples($template->body, $examples);
+        if ($missing) {
+            return back()->withErrors([
+                'meta' => 'Faltan muestras para las variables: ' . implode(', ', $missing) . '. Meta exige un valor de ejemplo por cada variable.',
+            ]);
+        }
+
+        $tenant = app('tenant');
+
+        $data = $template->only([
+            'name', 'category', 'language', 'body',
+            'header_text', 'footer_text', 'button_text', 'button_url',
+        ]);
+
+        $result = $this->submitTemplateToMeta($tenant, $data, $examples);
+
+        if (! $result['ok']) {
+            return back()->withErrors(['meta' => $result['error']]);
+        }
+
+        $template->update([
+            'meta_id'        => $result['meta_id'],
+            'status'         => $result['status'],
+            'last_synced_at' => now(),
+        ]);
+
+        return back()->with('success', "Plantilla enviada a revisión de Meta (estado: {$result['status']}). Usa Sincronizar para actualizar el estado cuando Meta la apruebe.");
+    }
+
     public function update(Request $request, Template $template)
     {
         $this->authorizeTenantOwnership($template);

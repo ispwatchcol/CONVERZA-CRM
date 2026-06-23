@@ -246,6 +246,41 @@ function syncWithMeta() {
     });
 }
 
+// ── Enviar borrador local a revisión de Meta ──────────────────────────────────
+// Solo para plantillas sin meta_id (borradores creados sin credenciales). Meta
+// exige una muestra por cada variable posicional {{n}} del body; las nombradas se
+// autocompletan en el backend desde el catálogo del evento.
+const showSubmit = ref(false);
+const submitTarget = ref(null);
+const submitForm = useForm({ variable_examples: {} });
+
+const submitVarNumbers = computed(() => {
+    const nums = [...(submitTarget.value?.body || '').matchAll(/\{\{\s*(\d+)\s*\}\}/g)].map(m => parseInt(m[1], 10));
+    return [...new Set(nums)].sort((a, b) => a - b);
+});
+
+const submitExamplesIncomplete = computed(() =>
+    submitVarNumbers.value.some(n => !String(submitForm.variable_examples[n] ?? '').trim())
+);
+
+function openSubmit(t) {
+    submitTarget.value = t;
+    submitForm.reset();
+    submitForm.clearErrors();
+    const next = {};
+    [...(t.body || '').matchAll(/\{\{\s*(\d+)\s*\}\}/g)].forEach((m) => { next[parseInt(m[1], 10)] = ''; });
+    submitForm.variable_examples = next;
+    showSubmit.value = true;
+    showDetail.value = false;
+}
+
+function confirmSubmit() {
+    submitForm.post(route('templates.submit', submitTarget.value.id), {
+        preserveScroll: true,
+        onSuccess: () => { showSubmit.value = false; submitTarget.value = null; },
+    });
+}
+
 // ── Drawer de detalle ────────────────────────────────────────────────────────
 const showDetail = ref(false);
 const selected = ref(null);
@@ -507,15 +542,78 @@ const placeholderExample = 'Hola {{nombre_cliente}}, tu factura {{numero_factura
 
                         <!-- Acciones -->
                         <div class="flex flex-col sm:flex-row gap-2">
-                            <button v-if="!selected.meta_id" @click="openEdit(selected)" class="flex-1 px-4 py-2.5 bg-accent text-white rounded-xl text-sm font-medium hover:bg-accent-hover transition">
+                            <!-- Borrador local: enviar a revisión de Meta (primario si hay credenciales) -->
+                            <button v-if="!selected.meta_id && metaConfigured" @click="openSubmit(selected)"
+                                    class="flex-1 px-4 py-2.5 bg-accent text-white rounded-xl text-sm font-medium hover:bg-accent-hover transition">
+                                Enviar a revisión de Meta
+                            </button>
+                            <button v-if="!selected.meta_id" @click="openEdit(selected)"
+                                    class="px-4 py-2.5 border border-gray-200 text-gray-700 rounded-xl text-sm font-medium hover:bg-gray-50 transition"
+                                    :class="{ 'flex-1': !metaConfigured }">
                                 Editar
                             </button>
-                            <button v-else disabled class="flex-1 px-4 py-2.5 bg-gray-100 text-gray-400 rounded-xl text-sm font-medium cursor-not-allowed"
+                            <button v-if="selected.meta_id" disabled class="flex-1 px-4 py-2.5 bg-gray-100 text-gray-400 rounded-xl text-sm font-medium cursor-not-allowed"
                                     title="Plantillas de Meta solo se editan en Meta Business">
                                 Editar en Meta
                             </button>
                             <button @click="deleteTemplate(selected)" class="px-4 py-2.5 border border-red-200 text-red-700 rounded-xl text-sm font-medium hover:bg-red-50 transition">
                                 Eliminar
+                            </button>
+                        </div>
+                        <p v-if="!selected.meta_id && !metaConfigured" class="text-[11px] text-amber-700 mt-2">
+                            Configura WhatsApp (Business Account ID + Access Token) en Configuración para poder enviar este borrador a revisión de Meta.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </Teleport>
+
+        <!-- ═══════════════ Modal: Enviar a revisión de Meta ═══════════════ -->
+        <Teleport to="body">
+            <div v-if="showSubmit && submitTarget" class="fixed inset-0 z-[75] flex items-center justify-center p-4">
+                <div class="fixed inset-0 bg-black/50" @click="showSubmit = false"></div>
+                <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-md animate-scale-in max-h-[90vh] overflow-y-auto">
+                    <div class="p-6">
+                        <h3 class="text-lg font-bold text-gray-900 mb-1">Enviar a revisión de Meta</h3>
+                        <p class="text-xs text-gray-500 mb-4">
+                            Se creará <span class="font-mono text-gray-700">{{ submitTarget.name }}</span> en Meta y quedará en estado pendiente hasta su aprobación.
+                        </p>
+
+                        <!-- Vista previa del body -->
+                        <div class="bg-[#d9fdd3] rounded-2xl rounded-tl-sm p-3 mb-4 border border-gray-100">
+                            <p v-if="submitTarget.header_text" class="text-sm font-semibold text-gray-900 mb-1">{{ submitTarget.header_text }}</p>
+                            <p class="text-sm text-gray-900 whitespace-pre-wrap" v-html="renderBodyWithVars(submitTarget.body)"></p>
+                            <p v-if="submitTarget.footer_text" class="text-[11px] text-gray-500 mt-1">{{ submitTarget.footer_text }}</p>
+                        </div>
+
+                        <!-- Muestras de variables posicionales {{n}} (Meta las exige) -->
+                        <div v-if="submitVarNumbers.length" class="bg-amber-50 border border-amber-100 rounded-xl p-3 space-y-2.5 mb-4">
+                            <div>
+                                <p class="text-[11px] text-amber-900 font-semibold uppercase tracking-wider">Muestras de variables</p>
+                                <p class="text-[10px] text-amber-700 mt-0.5">Meta exige un ejemplo por cada variable. No uses datos reales de clientes.</p>
+                            </div>
+                            <div v-for="n in submitVarNumbers" :key="n" class="flex items-center gap-2">
+                                <span class="shrink-0 px-2 py-1.5 bg-white border border-amber-200 rounded-lg font-mono text-[11px] text-amber-800 w-14 text-center">
+                                    {{ varLabel(n) }}
+                                </span>
+                                <input v-model="submitForm.variable_examples[n]" type="text" maxlength="1024"
+                                       :placeholder="'Ejemplo para ' + varLabel(n)"
+                                       class="flex-1 px-3 py-1.5 border rounded-lg text-sm bg-white focus:ring-2 focus:ring-accent/30 focus:border-accent"
+                                       :class="submitForm.errors[`variable_examples.${n}`] ? 'border-red-400' : 'border-amber-200'">
+                            </div>
+                        </div>
+
+                        <!-- Error devuelto por Meta -->
+                        <div v-if="submitForm.errors.meta" class="bg-red-50 border border-red-200 rounded-xl p-3 text-xs text-red-700 mb-4">
+                            {{ submitForm.errors.meta }}
+                        </div>
+
+                        <div class="flex justify-end gap-3 pt-1">
+                            <button type="button" @click="showSubmit = false" class="px-4 py-2.5 text-sm text-gray-600 hover:bg-gray-100 rounded-xl transition">Cancelar</button>
+                            <button @click="confirmSubmit" :disabled="submitForm.processing || submitExamplesIncomplete"
+                                    :title="submitExamplesIncomplete ? 'Completa una muestra para cada variable' : ''"
+                                    class="px-5 py-2.5 bg-accent text-white rounded-xl text-sm font-medium hover:bg-accent-hover transition disabled:opacity-50 disabled:cursor-not-allowed">
+                                {{ submitForm.processing ? 'Enviando…' : 'Enviar a revisión' }}
                             </button>
                         </div>
                     </div>
