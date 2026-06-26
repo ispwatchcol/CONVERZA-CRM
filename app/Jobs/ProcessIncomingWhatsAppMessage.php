@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Jobs\HandleBotResponse;
 use App\Models\Campaign;
 use App\Models\CampaignOptOut;
 use App\Models\CampaignRecipient;
@@ -89,24 +90,27 @@ class ProcessIncomingWhatsAppMessage implements ShouldQueue
 
         // Reabrir la conversación más reciente si estaba cerrada, en lugar de crear una nueva.
         // Evita duplicar chats del mismo contacto en la lista.
-        $conversation = Conversation::where('tenant_id', $tenantId)
+        $conversation      = Conversation::where('tenant_id', $tenantId)
             ->where('contact_id', $contact->id)
             ->orderByDesc('updated_at')
             ->first();
+        $isNewConversation = false;
 
         if ($conversation) {
             if ($conversation->status !== 'open') {
                 $conversation->update(['status' => 'open']);
             }
         } else {
-            $conversation = Conversation::create(['contact_id' => $contact->id, 'tenant_id' => $tenantId]);
+            $conversation      = Conversation::create(['contact_id' => $contact->id, 'tenant_id' => $tenantId]);
+            $isNewConversation = true;
         }
 
         $attributes = $this->buildAttributes($waMessageId, $type, $contact, $conversation, $whatsapp);
         $attributes['tenant_id'] = $tenantId;
 
+        $savedMessage = null;
         try {
-            Message::create($attributes);
+            $savedMessage = Message::create($attributes);
             $conversation->touch();
         } catch (UniqueConstraintViolationException) {
             // Meta retried the webhook — message already stored, nothing to do.
@@ -117,12 +121,32 @@ class ProcessIncomingWhatsAppMessage implements ShouldQueue
             $this->handleCampaignSignals($tenantId, $phone, $type === 'text' ? ($attributes['body'] ?? '') : '');
         }
 
+        // Despachar la respuesta del bot ANTES de auto-asignar: el bot puede estar
+        // en medio de la calificación del lead (bot_active=true, assigned_to=null).
+        // Si auto-assign corriera primero, el observer desactivaría el bot y el
+        // dispatch nunca se ejecutaría.
+        //
+        // Condiciones para despachar:
+        //   a) Conversación nueva → el bot decide si saludar según bot_settings.
+        //   b) Conversación existente con bot_active=true → el bot procesa la respuesta.
+        // Se excluyen duplicados de webhook (savedMessage = null) para no responder dos veces.
+        if ($savedMessage && $tenantId && ($isNewConversation || $conversation->bot_active)) {
+            HandleBotResponse::dispatch(
+                conversationId:    $conversation->id,
+                messageId:         $savedMessage->id,
+                tenantId:          $tenantId,
+                isNewConversation: $isNewConversation,
+            );
+        }
+
         // Auto-asignación "al menos ocupado": si el tenant la activó y la
-        // conversación está abierta y sin dueño, le asigna un agente. Idempotente
-        // ante reintentos de webhook: si ya tiene assigned_to, no hace nada.
+        // conversación está abierta, sin dueño y sin bot activo, le asigna un agente.
+        // El guard !bot_active evita interrumpir una sesión de bot en curso; cuando
+        // el bot haga handoff él mismo llama a assignLeastBusy().
         if ($tenant && $tenant->auto_assign_enabled
             && $conversation->status === 'open'
             && is_null($conversation->assigned_to)
+            && ! $conversation->bot_active
         ) {
             app(ConversationAssigner::class)->assignLeastBusy($conversation, $tenant);
         }
