@@ -12,7 +12,16 @@ class Conversation extends Model
 {
     use BelongsToTenant;
 
-    protected $fillable = ['tenant_id', 'contact_id', 'status', 'assigned_to', 'team_id'];
+    protected $fillable = [
+        'tenant_id', 'contact_id', 'status', 'assigned_to', 'team_id',
+        'bot_active', 'bot_step', 'bot_failed_intents', 'bot_context',
+    ];
+
+    protected $casts = [
+        'bot_active'         => 'boolean',
+        'bot_context'        => 'array',
+        'bot_failed_intents' => 'integer',
+    ];
 
     public function contact(): BelongsTo
     {
