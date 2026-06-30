@@ -227,6 +227,55 @@ let mediaRecorder = null;
 let recordedChunks = [];
 let recordTimer = null;
 let recordStream = null;
+// Medidor de nivel de micrófono + detección de notas mudas. Si el mic entrega
+// señal ~cero (mute, dispositivo equivocado, otra app lo tiene tomado), la nota
+// saldría sin voz; lo detectamos antes de enviar en vez de mandar silencio.
+const micLevel = ref(0);      // nivel en vivo (0-100) para la barra del medidor
+let audioCtx = null;
+let analyser = null;
+let meterRaf = null;
+let meterRan = false;         // ¿el medidor llegó a leer? si AudioContext falla, NO bloqueamos
+let recordPeak = 0;           // amplitud máxima observada (0-128); ~0 ⇒ grabación muda
+const SILENCE_PEAK = 4;       // por debajo de este pico se considera silencio (mic mudo)
+
+function startMeter(stream) {
+    micLevel.value = 0;
+    recordPeak = 0;
+    meterRan = false;
+    try {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const src = audioCtx.createMediaStreamSource(stream);
+        analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 1024;
+        src.connect(analyser);
+        const buf = new Uint8Array(analyser.fftSize);
+        const tick = () => {
+            if (!analyser) return;
+            meterRan = true;
+            analyser.getByteTimeDomainData(buf);
+            let peak = 0;
+            for (let i = 0; i < buf.length; i++) {
+                const dev = Math.abs(buf[i] - 128);
+                if (dev > peak) peak = dev;
+            }
+            if (peak > recordPeak) recordPeak = peak;
+            micLevel.value = Math.min(100, Math.round((peak / 128) * 250)); // ganancia visual ×2.5
+            meterRaf = requestAnimationFrame(tick);
+        };
+        tick();
+    } catch (e) {
+        // Sin AudioContext seguimos grabando, pero sin medidor ni guard de silencio.
+        audioCtx = null;
+        analyser = null;
+    }
+}
+
+function stopMeter() {
+    if (meterRaf) { cancelAnimationFrame(meterRaf); meterRaf = null; }
+    analyser = null;
+    if (audioCtx) { try { audioCtx.close(); } catch (e) {} audioCtx = null; }
+    micLevel.value = 0;
+}
 
 function pickRecordMime() {
     if (typeof MediaRecorder === 'undefined') return '';
@@ -249,6 +298,7 @@ async function startRecording() {
         recordError.value = 'No se pudo acceder al micrófono. Revisa los permisos.';
         return;
     }
+    startMeter(recordStream); // medidor en vivo + captura del pico para detectar silencio
     const mime = pickRecordMime();
     recordedChunks = [];
     try {
@@ -268,6 +318,7 @@ async function startRecording() {
 }
 
 function stopTracks() {
+    stopMeter();
     if (recordStream) { recordStream.getTracks().forEach(t => t.stop()); recordStream = null; }
     if (recordTimer) { clearInterval(recordTimer); recordTimer = null; }
 }
@@ -294,10 +345,19 @@ function cancelRecording() {
 function finalizeRecording() {
     const type = (mediaRecorder?.mimeType || recordedChunks[0]?.type || 'audio/webm').split(';')[0];
     const blob = new Blob(recordedChunks, { type });
+    // Pico capturado por el medidor ANTES de cerrar el AudioContext. Si el medidor
+    // corrió y nunca pasó el umbral, el mic entregó silencio → la nota saldría muda.
+    const wasSilent = meterRan && recordPeak < SILENCE_PEAK;
     stopTracks();
     mediaRecorder = null;
     recordedChunks = [];
     if (!blob.size) return;
+    // Salvaguarda: no adjuntamos una nota muda; avisamos para revisar el micrófono
+    // en vez de enviar silencio sin que nadie se dé cuenta.
+    if (wasSilent) {
+        recordError.value = 'La grabación salió sin sonido. Revisá que esté seleccionado el micrófono correcto, que no esté en mute y que ninguna otra app lo esté usando.';
+        return;
+    }
     const ext = type.includes('ogg') ? 'ogg' : type.includes('mp4') ? 'm4a' : 'webm';
     const file = new File([blob], `nota-voz-${Date.now()}.${ext}`, { type });
     setSelectedFile(file);
@@ -1402,7 +1462,15 @@ onUnmounted(() => document.removeEventListener('mousedown', handleAssignOutsideC
                                 </span>
                                 <span class="text-sm font-medium text-gray-700 tabular-nums">{{ fmtRecordTime(recordingTime) }}</span>
                                 <span class="text-xs text-gray-400 hidden sm:inline">Grabando…</span>
-                                <div class="flex-1"></div>
+                                <!-- Medidor de nivel de micrófono en vivo: si la barra no se
+                                     mueve al hablar, el mic no capta y la nota saldría muda. -->
+                                <div class="flex-1 flex items-center min-w-0">
+                                    <div class="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
+                                        <div class="h-full rounded-full transition-[width] duration-75"
+                                             :class="micLevel < 6 ? 'bg-gray-300' : (micLevel < 55 ? 'bg-green-400' : 'bg-green-500')"
+                                             :style="{ width: Math.max(2, micLevel) + '%' }"></div>
+                                    </div>
+                                </div>
                                 <button type="button" @click="cancelRecording" class="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition" title="Cancelar grabación">
                                     <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
                                 </button>
