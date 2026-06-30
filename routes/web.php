@@ -13,6 +13,7 @@ use App\Http\Controllers\QuickReplyController;
 use App\Http\Controllers\ClosingNoteController;
 use App\Http\Controllers\MetricsController;
 use App\Http\Controllers\NotificationLogController;
+use App\Http\Controllers\BotSettingsController;
 use App\Http\Controllers\SettingsController;
 use App\Http\Controllers\MediaController;
 use App\Http\Controllers\WhatsAppController;
@@ -195,6 +196,8 @@ Route::middleware('auth')->group(function () {
 
     // Settings
     Route::get('/settings', [SettingsController::class, 'index'])->name('settings.index');
+    Route::get('/settings/bot', [BotSettingsController::class, 'index'])->name('settings.bot.index');
+    Route::put('/settings/bot', [BotSettingsController::class, 'update'])->middleware('role:admin')->name('settings.bot.update');
     Route::put('/settings/profile', [SettingsController::class, 'updateProfile'])->name('settings.profile.update');
     Route::put('/settings/whatsapp', [SettingsController::class, 'updateWhatsApp'])->name('settings.whatsapp.update');
     Route::put('/settings/notifications', [SettingsController::class, 'updateNotifications'])->name('settings.notifications.update');
