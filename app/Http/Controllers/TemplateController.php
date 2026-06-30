@@ -238,11 +238,77 @@ class TemplateController extends Controller
     {
         $this->authorizeTenantOwnership($template);
 
-        // Si tiene meta_id, borrar local NO la borra de Meta — solo del mirror.
-        // Avisamos al usuario en el frontend que para borrar real, vaya a Meta.
+        // Si la plantilla está en Meta hay que borrarla TAMBIÉN allá. Borrar solo el
+        // mirror local no sirve: la próxima Sincronización reconstruye el espejo desde
+        // Meta y la plantilla "revive". Solo tras confirmar el borrado en Meta —o si ya
+        // no existe allá— limpiamos el registro local.
+        $hadMetaId = (bool) $template->meta_id;
+
+        if ($hadMetaId) {
+            if (! $this->isMetaConfigured()) {
+                return back()->withErrors([
+                    'delete' => 'Esta plantilla existe en Meta. Para borrarla de verdad configura Business Account ID + Access Token en Configuración → WhatsApp; si solo se borra local, la sincronización la vuelve a crear.',
+                ]);
+            }
+
+            $result = $this->deleteTemplateFromMeta(app('tenant'), $template);
+            if (! $result['ok']) {
+                return back()->withErrors(['delete' => $result['error']]);
+            }
+        }
+
         $template->delete();
 
-        return back()->with('success', 'Plantilla eliminada del mirror local.');
+        return back()->with('success', $hadMetaId ? 'Plantilla eliminada (local y Meta).' : 'Plantilla eliminada.');
+    }
+
+    /**
+     * Borra la plantilla en Meta vía Graph API (DELETE message_templates). Imprescindible:
+     * sin esto, borrar solo el mirror local no sirve porque {@see sync()} la recrea desde
+     * Meta. Borra la versión exacta (este idioma) por hsm_id + name. Si Meta responde que
+     * la plantilla ya no existe, se trata como borrado idempotente (ok) para poder limpiar
+     * igual el registro local.
+     *
+     * @return array{ok: bool, error?: string}
+     */
+    private function deleteTemplateFromMeta($tenant, Template $template): array
+    {
+        try {
+            $accessToken = $tenant->wa_access_token; // dispara cast 'encrypted'
+        } catch (\Illuminate\Contracts\Encryption\DecryptException) {
+            return ['ok' => false, 'error' => 'El Access Token guardado no se puede descifrar. Reemplázalo en Configuración → WhatsApp.'];
+        }
+
+        $version = config('services.whatsapp.graph_version', 'v20.0');
+        $wabaId  = $tenant->wa_business_account_id;
+        $query   = http_build_query(['hsm_id' => $template->meta_id, 'name' => $template->name]);
+
+        try {
+            $response = Http::withToken($accessToken)
+                ->timeout(15)
+                ->delete("https://graph.facebook.com/{$version}/{$wabaId}/message_templates?{$query}");
+        } catch (\Throwable $e) {
+            return ['ok' => false, 'error' => 'No se pudo conectar a Meta para borrar la plantilla: ' . $e->getMessage()];
+        }
+
+        if ($response->successful()) {
+            return ['ok' => true];
+        }
+
+        $msg = $response->json('error.error_user_msg')
+            ?? $response->json('error.message')
+            ?? ('HTTP ' . $response->status());
+
+        // Idempotencia: si Meta dice que ya no existe, la damos por borrada para no
+        // dejar el registro local imposible de limpiar.
+        $lower = strtolower($msg);
+        if (str_contains($lower, 'does not exist')
+            || str_contains($lower, 'not found')
+            || str_contains($lower, 'no existe')) {
+            return ['ok' => true];
+        }
+
+        return ['ok' => false, 'error' => 'Meta no pudo borrar la plantilla: ' . $msg];
     }
 
     /**
