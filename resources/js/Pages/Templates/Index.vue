@@ -191,7 +191,7 @@ function toggleActive(t) {
 
 function deleteTemplate(t) {
     const metaMsg = t.meta_id
-        ? 'Esta plantilla está sincronizada con Meta. Borrarla solo la quita del mirror local — sigue existiendo en Meta Business hasta que la elimines allá. '
+        ? 'Esta plantilla está en Meta. Se eliminará también de Meta Business (no solo del mirror local), así la sincronización no la vuelve a crear. '
         : '';
     askConfirm({
         title: 'Eliminar plantilla',
