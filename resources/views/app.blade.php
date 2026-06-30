@@ -6,6 +6,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="description" content="Converza - CRM & WhatsApp Chatbot Platform">
 
+    <!-- Meta (Facebook) domain verification -->
+    <meta name="facebook-domain-verification" content="axfatuq6t839t9xz215b55y7cxo62l">
+
     <title inertia>{{ config('app.name', 'Converza') }}</title>
 
     <!-- Favicon -->
