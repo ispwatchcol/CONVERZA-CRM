@@ -424,7 +424,8 @@ class IspwatchRepository
                 i.total       as total,
                 i.balance_due as balance_due,
                 i.status      as invoice_status,
-                i.due_date    as due_date
+                i.due_date    as due_date,
+                i.issue_date  as issue_date
             from customer_profile cp
             join users u  on u.id = cp.user_id
             join router r on r.id = cp.router_id
@@ -456,6 +457,7 @@ class IspwatchRepository
             'balance_due'      => $r->balance_due !== null ? (string) $r->balance_due : null,
             'invoice_status'   => $r->invoice_status,
             'due_date'         => $r->due_date,
+            'issue_date'       => $r->issue_date,
         ], $rows);
     }
 

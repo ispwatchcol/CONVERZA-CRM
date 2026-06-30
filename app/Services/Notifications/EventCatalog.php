@@ -83,6 +83,7 @@ class EventCatalog
                 'variables'   => [
                     'nombre_cliente'    => ['label' => 'Nombre del cliente',    'description' => 'Nombre del cliente en ispwatch.',        'sample' => 'Juan Pérez'],
                     'monto'             => ['label' => 'Monto de la factura',   'description' => 'Total de la factura del ciclo.',          'sample' => '$45.000'],
+                    'mes_facturado'     => ['label' => 'Mes facturado',         'description' => 'Mes al que corresponde la factura, en texto.', 'sample' => 'julio'],
                     'numero_factura'    => ['label' => 'Número de factura',     'description' => 'Consecutivo de la factura.',              'sample' => 'FAC-1234'],
                     'fecha_vencimiento' => ['label' => 'Fecha de vencimiento',  'description' => 'Fecha límite de pago (formato d/m/Y).',   'sample' => '15/06/2026'],
                     'empresa'           => ['label' => 'Tu empresa',            'description' => 'Nombre comercial de tu workspace.',       'sample' => 'Mi ISP'],
@@ -97,6 +98,7 @@ class EventCatalog
                 'variables'   => [
                     'nombre_cliente'    => ['label' => 'Nombre del cliente',    'description' => 'Nombre del cliente en ispwatch.',        'sample' => 'Juan Pérez'],
                     'saldo'             => ['label' => 'Saldo pendiente',       'description' => 'Saldo aún por pagar de la factura.',      'sample' => '$45.000'],
+                    'mes_facturado'     => ['label' => 'Mes facturado',         'description' => 'Mes al que corresponde la factura, en texto.', 'sample' => 'julio'],
                     'numero_factura'    => ['label' => 'Número de factura',     'description' => 'Consecutivo de la factura.',              'sample' => 'FAC-1234'],
                     'fecha_vencimiento' => ['label' => 'Fecha de vencimiento',  'description' => 'Fecha límite de pago (formato d/m/Y).',   'sample' => '15/06/2026'],
                     'empresa'           => ['label' => 'Tu empresa',            'description' => 'Nombre comercial de tu workspace.',       'sample' => 'Mi ISP'],
@@ -202,11 +204,14 @@ class EventCatalog
     {
         $money = fn ($v): string => '$' . number_format((float) $v, 0, ',', '.');
         $date  = fn ($v): string => $v ? Carbon::parse($v)->format('d/m/Y') : '';
+        // Mes en texto (es), del mes de emisión de la factura; respaldo al vencimiento.
+        $month = fn ($v): string => $v ? Carbon::parse($v)->locale('es')->isoFormat('MMMM') : '';
 
         return match ($eventKey) {
             'invoice_created' => [
                 'nombre_cliente'    => (string) $row['customer_name'],
                 'monto'             => $money($row['total'] ?? $row['balance_due']),
+                'mes_facturado'     => $month($row['issue_date'] ?? $row['due_date'] ?? null),
                 'numero_factura'    => (string) ($row['invoice_number'] ?? ''),
                 'fecha_vencimiento' => $date($row['due_date'] ?? null),
                 'empresa'           => (string) $tenant->name,
@@ -214,6 +219,7 @@ class EventCatalog
             'payment_reminder' => [
                 'nombre_cliente'    => (string) $row['customer_name'],
                 'saldo'             => $money($row['balance_due'] ?? $row['total']),
+                'mes_facturado'     => $month($row['issue_date'] ?? $row['due_date'] ?? null),
                 'numero_factura'    => (string) ($row['invoice_number'] ?? ''),
                 'fecha_vencimiento' => $date($row['due_date'] ?? null),
                 'empresa'           => (string) $tenant->name,
