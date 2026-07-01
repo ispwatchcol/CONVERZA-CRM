@@ -68,6 +68,7 @@ Route::middleware('auth')->group(function () {
     Route::patch('/chat/conversations/{conversation}/assign', [ChatController::class, 'assign'])->middleware('role:agent')->name('chat.conversations.assign');
     Route::post('/chat/conversations/{conversation}/notes', [ChatController::class, 'storeNote'])->middleware('role:agent')->name('chat.notes.store');
     Route::post('/chat/conversations/{conversation}/reopen', [ChatController::class, 'reopen'])->middleware('role:agent')->name('chat.conversations.reopen');
+    Route::post('/chat/contacts/{contact}/labels', [ChatController::class, 'updateContactLabels'])->middleware('role:agent')->name('chat.contacts.labels');
     Route::delete('/chat/conversations/{conversation}', [ChatController::class, 'destroy'])->middleware('role:admin')->name('chat.conversations.destroy');
 
     // Media files (bypasses storage symlink issues, requires auth)

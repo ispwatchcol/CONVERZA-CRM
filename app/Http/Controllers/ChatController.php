@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Contact;
 use App\Models\Conversation;
+use App\Models\Label;
 use App\Models\Message;
 use App\Models\QuickReply;
 use App\Models\StaffMember;
@@ -192,6 +193,19 @@ class ChatController extends Controller
             'activeAssignedTo'     => $activeAssignedTo,
             'myStaffMemberId'      => $myStaffMember->id,
             'filter'               => $filter,
+            'activeContactId'      => $activeConversation?->contact?->id,
+
+            // Etiquetas del contacto activo (refrescable solo en partial reload tras
+            // asignar/quitar) y catálogo de etiquetas tipo 'contact' del tenant.
+            'contactLabels'        => fn () => $activeConversation?->contact
+                ? $activeConversation->contact->labels()
+                    ->orderBy('name')
+                    ->get(['labels.id', 'labels.name', 'labels.color'])
+                : [],
+            'labels'               => fn () => Label::where('tenant_id', $tenantId)
+                ->where('type', 'contact')
+                ->orderBy('name')
+                ->get(['id', 'name', 'color']),
 
             'quickReplies'         => fn () => QuickReply::where('tenant_id', $tenantId)
                 ->where('is_active', true)
@@ -481,6 +495,30 @@ class ChatController extends Controller
             @unlink($tmpIn);
             @unlink($tmpOut);
         }
+    }
+
+    /**
+     * Asigna (sync) las etiquetas de un contacto desde el chat. Reemplaza el set
+     * completo por el enviado. Solo etiquetas tipo 'contact' del mismo tenant.
+     */
+    public function updateContactLabels(Request $request, Contact $contact)
+    {
+        $tenantId = app('tenant')->id;
+        abort_if($contact->tenant_id !== $tenantId, 403);
+
+        $validated = $request->validate([
+            'label_ids'   => ['array'],
+            'label_ids.*' => [
+                'integer',
+                Rule::exists('labels', 'id')
+                    ->where('tenant_id', $tenantId)
+                    ->where('type', 'contact'),
+            ],
+        ]);
+
+        $contact->labels()->sync($validated['label_ids'] ?? []);
+
+        return back()->with('success', 'Etiquetas actualizadas.');
     }
 
     /**
