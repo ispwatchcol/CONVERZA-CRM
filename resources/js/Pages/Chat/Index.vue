@@ -19,6 +19,9 @@ const props = defineProps({
     filter: { type: String, default: 'all' },
     filterCounts: { type: Object, default: () => ({}) },
     presence: { type: Object, default: () => ({ viewers: [] }) },
+    activeContactId: { type: Number, default: null },
+    contactLabels: { type: Array, default: () => [] }, // etiquetas asignadas al contacto activo
+    labels: { type: Array, default: () => [] },         // todas las etiquetas (tipo contact) del tenant
 });
 
 // Nombres de otros agentes viendo este chat ahora (detección de colisión).
@@ -39,6 +42,37 @@ const canClose = computed(() => {
     if (isAdmin.value) return true;
     return props.activeAssignedTo?.id === props.myStaffMemberId;
 });
+
+// ── Etiquetas del contacto (asignar/quitar desde la ficha) ───────────────────
+// assignedLabelIds es el estado local (optimista): se actualiza al instante al
+// hacer clic y se persiste en el backend; al recargar contactLabels se reconcilia.
+const assignedLabelIds = ref((props.contactLabels || []).map(l => l.id));
+const showLabelPicker = ref(false);
+
+watch(() => props.contactLabels, (v) => { assignedLabelIds.value = (v || []).map(l => l.id); });
+watch(() => props.activeConversationId, () => { showLabelPicker.value = false; });
+
+const assignedLabels  = computed(() => props.labels.filter(l => assignedLabelIds.value.includes(l.id)));
+const availableLabels = computed(() => props.labels.filter(l => !assignedLabelIds.value.includes(l.id)));
+
+function persistLabels() {
+    if (!props.activeContactId) return;
+    router.post(route('chat.contacts.labels', props.activeContactId),
+        { label_ids: assignedLabelIds.value },
+        { preserveScroll: true, preserveState: true, only: ['contactLabels'] },
+    );
+}
+function addLabel(label) {
+    if (!props.activeContactId || assignedLabelIds.value.includes(label.id)) return;
+    assignedLabelIds.value = [...assignedLabelIds.value, label.id];
+    showLabelPicker.value = false;
+    persistLabels();
+}
+function removeLabel(label) {
+    if (!assignedLabelIds.value.includes(label.id)) return;
+    assignedLabelIds.value = assignedLabelIds.value.filter(id => id !== label.id);
+    persistLabels();
+}
 
 const showNewChatModal = ref(false);
 const showQuickReplies = ref(false);
@@ -1536,6 +1570,44 @@ onUnmounted(() => document.removeEventListener('mousedown', handleAssignOutsideC
 
                 <!-- Body -->
                 <div class="flex-1 overflow-y-auto p-4 space-y-4">
+                    <!-- Etiquetas del contacto (asignar/quitar desde el chat) -->
+                    <section>
+                        <div class="flex items-center justify-between mb-2">
+                            <h4 class="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Etiquetas</h4>
+                            <div v-if="canWrite && activeContactId" class="relative">
+                                <button @click="showLabelPicker = !showLabelPicker"
+                                        class="inline-flex items-center gap-1 text-[10px] font-semibold text-accent hover:text-accent-hover">
+                                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
+                                    Agregar
+                                </button>
+                                <!-- Dropdown de etiquetas disponibles -->
+                                <div v-if="showLabelPicker" class="absolute right-0 top-7 z-30 w-56 max-h-64 overflow-y-auto bg-white rounded-xl shadow-lg border border-gray-100 py-1">
+                                    <button v-for="label in availableLabels" :key="label.id" @click="addLabel(label)"
+                                            type="button"
+                                            class="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 text-left">
+                                        <span class="w-2.5 h-2.5 rounded-full shrink-0" :style="{ backgroundColor: label.color }"></span>
+                                        <span class="truncate">{{ label.name }}</span>
+                                    </button>
+                                    <p v-if="!availableLabels.length" class="px-3 py-2 text-[11px] text-gray-400">
+                                        <template v-if="labels.length">Todas asignadas.</template>
+                                        <template v-else>No hay etiquetas. Creá algunas en <Link :href="route('labels.index')" class="text-accent underline">Etiquetas</Link>.</template>
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="flex flex-wrap gap-1.5">
+                            <span v-for="label in assignedLabels" :key="label.id"
+                                  class="inline-flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-full text-[10px] font-medium text-white shadow-sm"
+                                  :style="{ backgroundColor: label.color }">
+                                {{ label.name }}
+                                <button v-if="canWrite" @click="removeLabel(label)" type="button" class="hover:bg-black/20 rounded-full p-0.5 transition" title="Quitar etiqueta">
+                                    <svg class="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+                                </button>
+                            </span>
+                            <span v-if="!assignedLabels.length" class="text-[11px] text-gray-400">Sin etiquetas</span>
+                        </div>
+                    </section>
+
                     <!-- Caso: cliente encontrado en ispwatch -->
                     <template v-if="ispwatchCustomer">
                         <!-- Servicio -->
