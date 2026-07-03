@@ -78,7 +78,7 @@ class SendBillingNotifications extends Command
     /** Valores en el orden que las plantillas esperan sus variables {{1}}, {{2}}, … */
     private function templateValues(string $kind, array $row, Tenant $tenant): array
     {
-        $amount = $kind === BillingNotificationLog::KIND_REMINDER
+        $amount = in_array($kind, [BillingNotificationLog::KIND_REMINDER, BillingNotificationLog::KIND_SUSPENSION], true)
             ? ($row['balance_due'] ?? $row['total'])
             : ($row['total'] ?? $row['balance_due']);
 
@@ -187,12 +187,14 @@ class SendBillingNotifications extends Command
                 ->get()
                 ->keyBy('event_key');
 
-            $invoiceRoute  = $routes->get(BillingNotificationLog::KIND_INVOICE);
-            $reminderRoute = $routes->get(BillingNotificationLog::KIND_REMINDER);
+            $invoiceRoute    = $routes->get(BillingNotificationLog::KIND_INVOICE);
+            $reminderRoute   = $routes->get(BillingNotificationLog::KIND_REMINDER);
+            $suspensionRoute = $routes->get(BillingNotificationLog::KIND_SUSPENSION);
 
             // $tpl = plantilla LISTA para enviar (aprobada+activa) o null.
-            $invoiceTpl  = $this->routeTemplate($invoiceRoute);
-            $reminderTpl = $this->routeTemplate($reminderRoute);
+            $invoiceTpl    = $this->routeTemplate($invoiceRoute);
+            $reminderTpl   = $this->routeTemplate($reminderRoute);
+            $suspensionTpl = $this->routeTemplate($suspensionRoute);
 
             $billings = $ispwatch->whatsappBillingConfigsForTenant((int) $tenant->ispwatch_tenant_id);
             if ($billings === []) {
@@ -215,6 +217,10 @@ class SendBillingNotifications extends Command
                 $runInvoice  = $this->timeReached($billing['create_day'], $billing['create_time'], $now, $catchupDays);
                 $runReminder = $billing['payment_reminder_enabled']
                     && $this->timeReached($billing['reminder_day'], $billing['reminder_time'], $now, $catchupDays);
+                // Aviso de suspensión: el día de corte del router (cut_day). No hay
+                // toggle propio en ispwatch; lo gobierna notificar_wpp + la ruta en
+                // Settings. Solo a clientes con saldo (el filtro se aplica por cliente).
+                $runSuspension = $this->timeReached($billing['cut_day'], $billing['cut_time'], $now, $catchupDays);
 
                 // Compuerta de recursos en días de CATCH-UP (posteriores al día
                 // agendado): el query a ispwatch es caro y sin caché. En un día de
@@ -231,16 +237,21 @@ class SendBillingNotifications extends Command
                         && ! $this->hasPendingWork($tenant->id, (int) $billing['billing_id'], BillingNotificationLog::KIND_REMINDER, $cycleKey)) {
                         $runReminder = false;
                     }
+                    if ($runSuspension && $this->isCatchupDay($billing['cut_day'], $now)
+                        && ! $this->hasPendingWork($tenant->id, (int) $billing['billing_id'], BillingNotificationLog::KIND_SUSPENSION, $cycleKey)) {
+                        $runSuspension = false;
+                    }
                 }
 
                 $this->line("  ↳ billing #{$billing['billing_id']} ({$billing['router_names']}) — "
                     . 'factura(' . $this->describeWhen($billing['create_day'], $billing['create_time']) . ($runInvoice ? ' ✓' : ' ·') . ') '
-                    . 'recordatorio(' . $this->describeWhen($billing['reminder_day'], $billing['reminder_time']) . ($runReminder ? ' ✓' : ' ·') . ')');
+                    . 'recordatorio(' . $this->describeWhen($billing['reminder_day'], $billing['reminder_time']) . ($runReminder ? ' ✓' : ' ·') . ') '
+                    . 'corte(' . $this->describeWhen($billing['cut_day'], $billing['cut_time']) . ($runSuspension ? ' ✓' : ' ·') . ')');
 
                 // Nada que enviar (ni a su hora, ni catch-up pendiente): NO traemos
                 // la lista de clientes. La tarea corre cada minuto; este
                 // corto-circuito evita el query pesado a ispwatch cuando no hay nada.
-                if (! $runInvoice && ! $runReminder) {
+                if (! $runInvoice && ! $runReminder && ! $runSuspension) {
                     continue;
                 }
 
@@ -258,8 +269,9 @@ class SendBillingNotifications extends Command
 
                 foreach (
                     [
-                        [BillingNotificationLog::KIND_INVOICE,  $runInvoice,  $invoiceTpl,  $invoiceRoute?->template?->name],
-                        [BillingNotificationLog::KIND_REMINDER, $runReminder, $reminderTpl, $reminderRoute?->template?->name],
+                        [BillingNotificationLog::KIND_INVOICE,    $runInvoice,    $invoiceTpl,    $invoiceRoute?->template?->name],
+                        [BillingNotificationLog::KIND_REMINDER,   $runReminder,   $reminderTpl,   $reminderRoute?->template?->name],
+                        [BillingNotificationLog::KIND_SUSPENSION, $runSuspension, $suspensionTpl, $suspensionRoute?->template?->name],
                     ] as [$kind, $run, $tpl, $tplName]
                 ) {
                     if (! $run) {
@@ -350,7 +362,8 @@ class SendBillingNotifications extends Command
         // Skips SIGNIFICATIVOS (el cliente sí tenía factura pero no se le envió):
         // se registran con motivo para que el ISP lo vea en la bitácora.
         $skipReason = match (true) {
-            $kind === BillingNotificationLog::KIND_REMINDER && (float) ($row['balance_due'] ?? 0) <= 0
+            in_array($kind, [BillingNotificationLog::KIND_REMINDER, BillingNotificationLog::KIND_SUSPENSION], true)
+                && (float) ($row['balance_due'] ?? 0) <= 0
                             => 'La factura ya está pagada',
             ! $phone        => "Teléfono inválido ({$row['phone']})",
             default         => null,

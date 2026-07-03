@@ -22,9 +22,12 @@ const statusChips = [
 ];
 
 const kindChips = [
-    { value: '',                 label: 'Todo' },
-    { value: 'invoice_created',  label: 'Factura' },
-    { value: 'payment_reminder', label: 'Recordatorio' },
+    { value: '',                   label: 'Todo' },
+    { value: 'invoice_created',    label: 'Factura' },
+    { value: 'payment_reminder',   label: 'Recordatorio' },
+    { value: 'service_suspension', label: 'Suspensión' },
+    { value: 'service_activated',  label: 'Bienvenida' },
+    { value: 'payment_registered', label: 'Pago' },
 ];
 
 function applyFilters() {
@@ -62,13 +65,22 @@ function statusLabel(status) {
 
 function kindBadge(kind) {
     return {
-        invoice_created:  'bg-blue-100 text-blue-700',
-        payment_reminder: 'bg-purple-100 text-purple-700',
+        invoice_created:    'bg-blue-100 text-blue-700',
+        payment_reminder:   'bg-purple-100 text-purple-700',
+        service_suspension: 'bg-red-100 text-red-700',
+        service_activated:  'bg-teal-100 text-teal-700',
+        payment_registered: 'bg-emerald-100 text-emerald-700',
     }[kind] || 'bg-gray-100 text-gray-600';
 }
 
 function kindLabel(kind) {
-    return { invoice_created: 'Factura generada', payment_reminder: 'Recordatorio' }[kind] || kind;
+    return {
+        invoice_created:    'Factura generada',
+        payment_reminder:   'Recordatorio',
+        service_suspension: 'Aviso de suspensión',
+        service_activated:  'Bienvenida',
+        payment_registered: 'Pago registrado',
+    }[kind] || kind;
 }
 
 function formatDateTime(iso) {
@@ -180,7 +192,7 @@ function formatDateTime(iso) {
                             <tr v-for="l in logs.data" :key="l.id" class="hover:bg-gray-50 transition">
                                 <td class="px-4 py-3 whitespace-nowrap text-xs text-gray-500">
                                     {{ formatDateTime(l.sent_at || l.created_at) }}
-                                    <span class="block text-[10px] text-gray-400">ciclo {{ l.cycle_key }}</span>
+                                    <span v-if="l.cycle_key" class="block text-[10px] text-gray-400">ciclo {{ l.cycle_key }}</span>
                                 </td>
                                 <td class="px-4 py-3">
                                     <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wide" :class="kindBadge(l.kind)">
