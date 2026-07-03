@@ -26,6 +26,10 @@ class BillingNotificationLog extends Model
     public const KIND_WELCOME = 'service_activated';
     public const KIND_PAYMENT = 'payment_registered';
 
+    // Falla masiva por core/router (fan-out a todos los clientes del router).
+    public const KIND_OUTAGE_START    = 'router_outage_start';
+    public const KIND_OUTAGE_RESOLVED = 'router_outage_resolved';
+
     protected $fillable = [
         'tenant_id',
         'ispwatch_tenant_id',

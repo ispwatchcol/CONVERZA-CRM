@@ -66,16 +66,27 @@ class SendEventNotifications extends Command
         {--reset-cursor : Re-siembra el cursor al MAX(id) actual sin enviar histórico}
         {--limit= : Máximo de avisos a ENVIAR por tenant/evento}';
 
-    protected $description = 'Envía bienvenidas (servicio activado) y confirmaciones de pago por WhatsApp según eventos de ispwatch.';
+    protected $description = 'Envía bienvenidas, confirmaciones de pago y avisos de falla masiva por WhatsApp según eventos de ispwatch.';
 
     /** Eventos que maneja este comando (por orden de proceso). */
     private const EVENTS = [
         BillingNotificationLog::KIND_WELCOME,
         BillingNotificationLog::KIND_PAYMENT,
+        BillingNotificationLog::KIND_OUTAGE_START,
+        BillingNotificationLog::KIND_OUTAGE_RESOLVED,
+    ];
+
+    /** Eventos de falla masiva (fan-out por router, procesamiento distinto). */
+    private const OUTAGE_EVENTS = [
+        BillingNotificationLog::KIND_OUTAGE_START,
+        BillingNotificationLog::KIND_OUTAGE_RESOLVED,
     ];
 
     /** Techo de filas a examinar por corrida/evento (acota el query; el pacing lo da $limit). */
     private const FETCH_LIMIT = 1000;
+
+    /** Techo de eventos de outage a examinar por corrida (son infrecuentes). */
+    private const OUTAGE_FETCH_LIMIT = 50;
 
     public function handle(IspwatchRepository $ispwatch, WhatsAppService $whatsapp): int
     {
@@ -107,6 +118,14 @@ class SendEventNotifications extends Command
         $freshnessDays = max(0, (int) config('services.whatsapp.events_notify_freshness_days', 2));
         $bulkThreshold = max(0, (int) config('services.whatsapp.events_notify_bulk_threshold', 5));
         $bulkWindow    = max(0, (int) config('services.whatsapp.events_notify_bulk_window_seconds', 120));
+
+        // Falla masiva: valores del campo `type` de ispwatch que cuentan como
+        // inicio/fin, y frescura en horas.
+        $outageTypes = [
+            BillingNotificationLog::KIND_OUTAGE_START    => $this->parseTypes(config('services.whatsapp.outage_type_start', 'start')),
+            BillingNotificationLog::KIND_OUTAGE_RESOLVED => $this->parseTypes(config('services.whatsapp.outage_type_resolved', 'resolved')),
+        ];
+        $outageFreshnessHours = max(0, (int) config('services.whatsapp.outage_freshness_hours', 6));
 
         $tenants = Tenant::query()
             ->where('is_active', true)
@@ -164,10 +183,15 @@ class SendEventNotifications extends Command
                     continue;
                 }
 
-                $stats = $this->processEvent(
-                    $ispwatch, $whatsapp, $tenant, $event, $tpl, $tplName,
-                    $customer, $dryRun, $limit, $gapMs, $freshnessDays, $bulkThreshold, $bulkWindow,
-                );
+                $stats = in_array($event, self::OUTAGE_EVENTS, true)
+                    ? $this->processOutageEvent(
+                        $ispwatch, $whatsapp, $tenant, $event, $tpl, $tplName,
+                        $outageTypes[$event], $customer, $dryRun, $limit, $gapMs, $outageFreshnessHours,
+                    )
+                    : $this->processEvent(
+                        $ispwatch, $whatsapp, $tenant, $event, $tpl, $tplName,
+                        $customer, $dryRun, $limit, $gapMs, $freshnessDays, $bulkThreshold, $bulkWindow,
+                    );
 
                 foreach ($stats as $k => $v) {
                     $grand[$k] += $v;
@@ -354,6 +378,195 @@ class SendEventNotifications extends Command
         return $stats;
     }
 
+    /**
+     * FALLA MASIVA: fan-out del aviso a TODOS los clientes activos del router en
+     * outage. Un evento (router_outage_events) → N clientes. Pacing entre ticks: el
+     * cursor solo avanza cuando el outage quedó COMPLETO (todos notificados); si el
+     * tope se alcanza a mitad, el próximo tic reanuda leyendo el log (idempotencia
+     * por (tenant,kind,outage,cliente)).
+     *
+     * Salvaguardas: cold-start (semilla sin histórico), frescura en horas, y
+     * "superado" (is_latest=false ⇒ ya hay un evento posterior del router, p.ej. la
+     * falla ya se resolvió) ⇒ no se envía. Avanza el cursor solo en corrida normal.
+     *
+     * @param  array<int, string>  $types  valores de `type` (lowercase) de este kind
+     * @return array{sent:int, skipped:int, failed:int, already:int, bulk:int, stale:int}
+     */
+    private function processOutageEvent(
+        IspwatchRepository $ispwatch,
+        WhatsAppService $whatsapp,
+        Tenant $tenant,
+        string $event,
+        Template $tpl,
+        string $tplName,
+        array $types,
+        ?int $customer,
+        bool $dryRun,
+        ?int $limit,
+        int $gapMs,
+        int $freshnessHours,
+    ): array {
+        $stats  = ['sent' => 0, 'skipped' => 0, 'failed' => 0, 'already' => 0, 'bulk' => 0, 'stale' => 0];
+        $ispTid = (int) $tenant->ispwatch_tenant_id;
+
+        // Sin tipos configurados no se puede mapear la señal de ispwatch (seguro:
+        // no se envía nada; el ISP ajusta WHATSAPP_OUTAGE_TYPE_* si hace falta).
+        if ($types === []) {
+            $this->warn("• {$tenant->name} / {$event}: sin valores de 'type' configurados. Omitido.");
+            return $stats;
+        }
+
+        $cursor = IspwatchEventCursor::firstOrNew(['tenant_id' => $tenant->id, 'event_key' => $event]);
+        $maxId  = $ispwatch->maxOutageId($ispTid, $types);
+
+        // Cold-start / reset: sembrar sin enviar histórico.
+        if ($cursor->last_id === null || $this->option('reset-cursor')) {
+            $cursor->last_id      = $maxId;
+            $cursor->last_seen_at = now();
+            $cursor->save();
+            $this->line("• {$tenant->name} / {$event}: cursor sembrado en {$maxId} (sin envíos).");
+            return $stats;
+        }
+
+        if ($maxId <= $cursor->last_id) {
+            return $stats;
+        }
+
+        $outages = $ispwatch->newOutagesSince($ispTid, $types, $cursor->last_id, self::OUTAGE_FETCH_LIMIT);
+        if ($outages === []) {
+            return $stats;
+        }
+
+        $freshCutoff  = $freshnessHours > 0 ? now()->subHours($freshnessHours) : null;
+        $cursorTarget = (int) $cursor->last_id;
+        $persist      = ! $dryRun && $customer === null;
+
+        foreach ($outages as $outage) {
+            $outageId = $outage['outage_id'];
+
+            // Superado: ya hay un evento posterior de este router (p.ej. la falla ya
+            // se resolvió). No tiene sentido avisar de una caída que quedó atrás.
+            if (! $outage['is_latest']) {
+                $stats['stale']++;
+                $cursorTarget = $outageId;
+                continue;
+            }
+            // Frescura: outage demasiado viejo (system down cuando ocurrió) → no avisar.
+            if ($freshCutoff && $outage['created_at'] && Carbon::parse($outage['created_at'])->lt($freshCutoff)) {
+                $stats['stale']++;
+                $cursorTarget = $outageId;
+                continue;
+            }
+
+            // Destinatarios: clientes activos del router.
+            $clients = $ispwatch->activeCustomersForRouter($ispTid, $outage['router_id']);
+            if ($customer !== null) {
+                $clients = array_values(array_filter($clients, fn ($c) => $c['customer_user_id'] === $customer));
+            }
+
+            // Ya notificados de ESTE outage (reanudación entre ticks tras pacing).
+            $notified = BillingNotificationLog::query()
+                ->where('tenant_id', $tenant->id)
+                ->where('kind', $event)
+                ->where('ispwatch_ref_id', $outageId)
+                ->where('status', 'sent')
+                ->pluck('ispwatch_customer_id')
+                ->flip()
+                ->all();
+
+            $this->line("  ↳ {$event} router '{$outage['router_name']}' (#{$outage['router_id']}) — "
+                . count($clients) . ' activos, ' . count($notified) . ' ya avisados');
+
+            $capReached = false;
+
+            foreach ($clients as $client) {
+                $cust = $client['customer_user_id'];
+                $row  = ['customer_user_id' => $cust, 'customer_name' => $client['customer_name']];
+
+                if (isset($notified[$cust])) {
+                    $stats['already']++;
+                    continue;
+                }
+
+                $phone = Contact::normalizePhone($client['phone']);
+                if (! $phone) {
+                    if (! $dryRun) {
+                        $this->logRow($tenant, $event, $row, $outageId, $tplName, 'skipped', "Teléfono inválido ({$client['phone']})", null, null);
+                    }
+                    $stats['skipped']++;
+                    continue;
+                }
+
+                // Pacing: tope alcanzado ⇒ parar. NO avanzamos el cursor de este
+                // outage (queda a medias); el próximo tic reanuda por el log.
+                if ($limit !== null && $stats['sent'] >= $limit) {
+                    $capReached = true;
+                    break;
+                }
+
+                $params = $this->buildParams($event, $tpl, $row, $tenant);
+                $body   = TemplateRenderer::renderBody($tpl, $params);
+
+                if ($dryRun) {
+                    $this->line("    · [DRY] {$event} → {$client['customer_name']} ({$phone})");
+                    $stats['sent']++;
+                    $notified[$cust] = true;
+                    continue;
+                }
+
+                $result = $whatsapp->forTenant($tenant)
+                    ->sendTemplate($phone, $tpl->name, $tpl->language ?? 'es_CO', $params);
+
+                if (($result['success'] ?? false) && empty($result['mock'])) {
+                    $waId = $result['data']['messages'][0]['id'] ?? null;
+                    $this->logRow($tenant, $event, $row, $outageId, $tplName, 'sent', null, $phone, $waId);
+                    $this->recordInChat($tenant, $phone, $row, $body, $waId);
+                    $notified[$cust] = true;
+                    $stats['sent']++;
+
+                    if ($gapMs > 0) {
+                        usleep($gapMs * 1000);
+                    }
+                } else {
+                    $err = $result['error'] ?? (($result['mock'] ?? false) ? 'WhatsApp en modo mock (sin credenciales)' : 'desconocido');
+                    $this->logRow($tenant, $event, $row, $outageId, $tplName, 'failed', $err, $phone, null);
+                    $stats['failed']++;
+                }
+            }
+
+            if ($capReached) {
+                break; // outage a medias: no avanzar el cursor, se reanuda el próximo tic.
+            }
+
+            $cursorTarget = $outageId; // outage completo.
+        }
+
+        if ($persist && $cursorTarget > (int) $cursor->last_id) {
+            $cursor->last_id      = $cursorTarget;
+            $cursor->last_seen_at = now();
+            $cursor->save();
+        }
+
+        if (array_sum($stats) > 0) {
+            $this->info("• {$tenant->name} / {$event} — Env: {$stats['sent']} · Omit: {$stats['skipped']} · Fall: {$stats['failed']} · Ya: {$stats['already']} · Superados/rancios: {$stats['stale']}");
+        }
+
+        return $stats;
+    }
+
+    /**
+     * Normaliza la config coma-separada de `type` a una lista lowercase sin vacíos.
+     *
+     * @return array<int, string>
+     */
+    private function parseTypes(mixed $csv): array
+    {
+        return array_values(array_filter(
+            array_map(fn ($t) => mb_strtolower(trim((string) $t)), explode(',', (string) $csv)),
+            fn ($t) => $t !== '',
+        ));
+    }
+
     /** Plantilla LISTA para enviar (aprobada + activa) o null. */
     private function routeTemplate(?TenantNotificationRoute $route): ?Template
     {
@@ -409,13 +622,16 @@ class SendEventNotifications extends Command
     ): void {
         BillingNotificationLog::updateOrCreate(
             [
-                'tenant_id'       => $tenant->id,
-                'kind'            => $event,
-                'ispwatch_ref_id' => $ref,
+                // Idempotencia por (tenant, kind, ref, cliente): en falla masiva un
+                // mismo outage (ref) se notifica a muchos clientes; en bienvenida/pago
+                // ref ya es único por cliente, así que la llave no cambia su semántica.
+                'tenant_id'            => $tenant->id,
+                'kind'                 => $event,
+                'ispwatch_ref_id'      => $ref,
+                'ispwatch_customer_id' => $row['customer_user_id'],
             ],
             [
                 'ispwatch_tenant_id'   => $tenant->ispwatch_tenant_id,
-                'ispwatch_customer_id' => $row['customer_user_id'],
                 'customer_name'        => $row['customer_name'],
                 'phone'                => $phone,
                 'cycle_key'            => null,

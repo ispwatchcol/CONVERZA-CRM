@@ -677,6 +677,119 @@ class IspwatchRepository
         ], $rows);
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    //  FALLA MASIVA por core/router (router_outage_events → fan-out a clientes).
+    //  ispwatch inserta una fila cuando un core cae (type=inicio) o se restablece
+    //  (type=fin). El "core" es un router; los clientes dependen de él vía
+    //  customer_profile.router_id. Un outage afecta a TODOS sus clientes activos.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Mayor `router_outage_events.id` del tenant cuyo `type` esté en $types
+     * (lista lowercase). Compuerta barata / semilla de cursor.
+     *
+     * @param  array<int, string>  $types
+     */
+    public function maxOutageId(int $ispwatchTenantId, array $types): int
+    {
+        if ($types === []) {
+            return 0;
+        }
+        $in = implode(',', array_fill(0, count($types), '?'));
+
+        $row = \DB::connection('ispwatch')->selectOne(
+            "select coalesce(max(id), 0) as max_id
+               from router_outage_events
+              where tenant_id = ? and lower(type) in ({$in})",
+            [$ispwatchTenantId, ...$types],
+        );
+
+        return (int) ($row->max_id ?? 0);
+    }
+
+    /**
+     * Eventos de outage NUEVOS (id > $afterId) del tenant cuyo `type` esté en
+     * $types, con el nombre del router. `is_latest` = este evento es el MÁS
+     * RECIENTE de su router (cualquier tipo): si es false, ya hay un evento
+     * posterior (p.ej. la falla ya se resolvió) y el aviso está superado → no
+     * se debe enviar. Sin caché: batch.
+     *
+     * @param  array<int, string>  $types
+     * @return array<int, array<string, mixed>>
+     */
+    public function newOutagesSince(int $ispwatchTenantId, array $types, int $afterId, int $limit): array
+    {
+        if ($types === []) {
+            return [];
+        }
+        $limitInt = max(1, $limit);
+        $in       = implode(',', array_fill(0, count($types), '?'));
+
+        $sql = <<<SQL
+            select
+                e.id             as outage_id,
+                e.router_id      as router_id,
+                e.type           as type,
+                e.affected_count as affected_count,
+                e.created_at     as created_at,
+                r.name           as router_name,
+                (e.id = (select max(e2.id) from router_outage_events e2
+                          where e2.tenant_id = e.tenant_id
+                            and e2.router_id = e.router_id)) as is_latest
+            from router_outage_events e
+            left join router r on r.id = e.router_id
+            where e.tenant_id = ?
+              and lower(e.type) in ({$in})
+              and e.id > ?
+            order by e.id asc
+            limit {$limitInt}
+        SQL;
+
+        $rows = \DB::connection('ispwatch')->select($sql, [$ispwatchTenantId, ...$types, $afterId]);
+
+        return array_map(fn ($r) => [
+            'outage_id'      => (int) $r->outage_id,
+            'router_id'      => (int) $r->router_id,
+            'type'           => $r->type,
+            'affected_count' => $r->affected_count !== null ? (int) $r->affected_count : null,
+            'created_at'     => $r->created_at,
+            'router_name'    => $r->router_name,
+            'is_latest'      => (bool) $r->is_latest,
+        ], $rows);
+    }
+
+    /**
+     * Clientes ACTIVOS (cp.status = true) que dependen del router dado, con
+     * teléfono. Destinatarios del aviso de falla masiva. Sin caché: batch.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function activeCustomersForRouter(int $ispwatchTenantId, int $routerId): array
+    {
+        $sql = <<<'SQL'
+            select
+                u.id         as customer_user_id,
+                u.tel        as phone,
+                u.name       as user_name,
+                cp.name      as cp_name,
+                cp.last_name as cp_last_name
+            from customer_profile cp
+            join users u on u.id = cp.user_id
+            where u.tenant_id = ?
+              and cp.router_id = ?
+              and cp.status = true
+            order by u.id asc
+        SQL;
+
+        $rows = \DB::connection('ispwatch')->select($sql, [$ispwatchTenantId, $routerId]);
+
+        return array_map(fn ($r) => [
+            'customer_user_id' => (int) $r->customer_user_id,
+            'phone'            => $r->phone,
+            'customer_name'    => trim(($r->cp_name ?: $r->user_name) . ' ' . ($r->cp_last_name ?? '')) ?: 'Cliente',
+        ], $rows);
+    }
+
     /**
      * Quita todo lo que no sea dígito y trimea el prefijo país `57` si está
      * presente, devolviendo el número en formato local de 10 dígitos.

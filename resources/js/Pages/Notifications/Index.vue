@@ -28,6 +28,8 @@ const kindChips = [
     { value: 'service_suspension', label: 'Suspensión' },
     { value: 'service_activated',  label: 'Bienvenida' },
     { value: 'payment_registered', label: 'Pago' },
+    { value: 'router_outage_start',    label: 'Falla' },
+    { value: 'router_outage_resolved', label: 'Restablecido' },
 ];
 
 function applyFilters() {
@@ -70,6 +72,8 @@ function kindBadge(kind) {
         service_suspension: 'bg-red-100 text-red-700',
         service_activated:  'bg-teal-100 text-teal-700',
         payment_registered: 'bg-emerald-100 text-emerald-700',
+        router_outage_start:    'bg-orange-100 text-orange-700',
+        router_outage_resolved: 'bg-lime-100 text-lime-700',
     }[kind] || 'bg-gray-100 text-gray-600';
 }
 
@@ -80,6 +84,8 @@ function kindLabel(kind) {
         service_suspension: 'Aviso de suspensión',
         service_activated:  'Bienvenida',
         payment_registered: 'Pago registrado',
+        router_outage_start:    'Falla masiva',
+        router_outage_resolved: 'Servicio restablecido',
     }[kind] || kind;
 }
 

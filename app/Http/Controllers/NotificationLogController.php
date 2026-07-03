@@ -33,6 +33,8 @@ class NotificationLogController extends Controller
             BillingNotificationLog::KIND_SUSPENSION,
             BillingNotificationLog::KIND_WELCOME,
             BillingNotificationLog::KIND_PAYMENT,
+            BillingNotificationLog::KIND_OUTAGE_START,
+            BillingNotificationLog::KIND_OUTAGE_RESOLVED,
         ], true)) {
             $query->where('kind', $kind);
         }
