@@ -93,5 +93,18 @@ return [
         // Ventana (segundos) alrededor de cada activación para medir la densidad
         // anterior. Las importaciones caen en el mismo minuto; 120s cubre el borde.
         'events_notify_bulk_window_seconds' => (int) env('WHATSAPP_EVENTS_NOTIFY_BULK_WINDOW_SECONDS', 120),
+
+        // ── FALLA MASIVA por core/router (router_outage_start / _resolved) ─────
+        // ispwatch inserta una fila en `router_outage_events` cuando un core cae
+        // (type=inicio) o se restablece (type=fin). Converza hace fan-out del aviso
+        // a TODOS los clientes activos de ese router. Valores del campo `type` que
+        // cuentan como inicio/fin (coma-separados, case-insensitive). AJUSTAR si
+        // ispwatch usa otras cadenas: si no coinciden, no se envía nada (seguro).
+        'outage_type_start'    => env('WHATSAPP_OUTAGE_TYPE_START', 'start,inicio,down,outage,open'),
+        'outage_type_resolved' => env('WHATSAPP_OUTAGE_TYPE_RESOLVED', 'resolved,fin,resuelto,up,recovered,close'),
+        // Frescura del aviso de falla, en HORAS (más corto que los otros eventos:
+        // avisar de una caída de hace días no tiene sentido). Un evento de outage
+        // más viejo que esto se omite (el cursor avanza). Default 6h.
+        'outage_freshness_hours' => (int) env('WHATSAPP_OUTAGE_FRESHNESS_HOURS', 6),
     ],
 ];

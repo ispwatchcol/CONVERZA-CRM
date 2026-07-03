@@ -154,6 +154,36 @@ class EventCatalog
                     'empresa'        => ['label' => 'Tu empresa',         'description' => 'Nombre comercial de tu workspace.',   'sample' => 'Mi ISP'],
                 ],
             ],
+
+            'router_outage_start' => [
+                'label'       => 'Falla masiva — inicio',
+                'description' => 'Avisa a TODOS los clientes activos de un core/router que está presentando una falla. Se dispara cuando ispwatch reporta la caída del router (fan-out masivo, paceado).',
+                'trigger'     => 'Cuando ispwatch reporta que un core entró en falla (router_outage_events).',
+                'auto'        => true,
+                'variables'   => [
+                    'nombre_cliente' => ['label' => 'Nombre del cliente', 'description' => 'Nombre completo del cliente.',        'sample' => 'Juan Pérez'],
+                    'primer_nombre'  => ['label' => 'Primer nombre',      'description' => 'Solo el primer nombre del cliente.',  'sample' => 'Juan'],
+                    'empresa'        => ['label' => 'Tu empresa',         'description' => 'Nombre comercial de tu workspace.',   'sample' => 'Mi ISP'],
+                    'saludo'         => ['label' => 'Saludo según la hora', 'description' => 'Buenos días / Buenas tardes / Buenas noches.', 'sample' => 'Buenas tardes'],
+                    'fecha_actual'   => ['label' => 'Fecha de hoy',       'description' => 'Fecha actual (d/m/Y).',               'sample' => '03/07/2026'],
+                    'hora_actual'    => ['label' => 'Hora actual',        'description' => 'Hora actual (HH:mm).',                'sample' => '14:30'],
+                ],
+            ],
+
+            'router_outage_resolved' => [
+                'label'       => 'Falla masiva — restablecido',
+                'description' => 'Avisa a los clientes activos del core/router que el servicio ya fue restablecido. Se dispara cuando ispwatch reporta que el router volvió a estar activo.',
+                'trigger'     => 'Cuando ispwatch reporta que el core se restableció (router_outage_events).',
+                'auto'        => true,
+                'variables'   => [
+                    'nombre_cliente' => ['label' => 'Nombre del cliente', 'description' => 'Nombre completo del cliente.',        'sample' => 'Juan Pérez'],
+                    'primer_nombre'  => ['label' => 'Primer nombre',      'description' => 'Solo el primer nombre del cliente.',  'sample' => 'Juan'],
+                    'empresa'        => ['label' => 'Tu empresa',         'description' => 'Nombre comercial de tu workspace.',   'sample' => 'Mi ISP'],
+                    'saludo'         => ['label' => 'Saludo según la hora', 'description' => 'Buenos días / Buenas tardes / Buenas noches.', 'sample' => 'Buenas tardes'],
+                    'fecha_actual'   => ['label' => 'Fecha de hoy',       'description' => 'Fecha actual (d/m/Y).',               'sample' => '03/07/2026'],
+                    'hora_actual'    => ['label' => 'Hora actual',        'description' => 'Hora actual (HH:mm).',                'sample' => '15:10'],
+                ],
+            ],
         ];
     }
 
@@ -310,6 +340,14 @@ class EventCatalog
                 'fecha_pago'     => $date($row['payment_date'] ?? null),
                 'saldo_restante' => $money($row['pending_balance'] ?? 0),
                 'empresa'        => (string) $tenant->name,
+            ],
+            'router_outage_start', 'router_outage_resolved' => [
+                'nombre_cliente' => (string) $row['customer_name'],
+                'primer_nombre'  => $first($row['customer_name'] ?? ''),
+                'empresa'        => (string) $tenant->name,
+                'saludo'         => $greeting(),
+                'fecha_actual'   => Carbon::now()->format('d/m/Y'),
+                'hora_actual'    => Carbon::now(config('services.whatsapp.billing_notify_timezone', 'America/Bogota'))->format('H:i'),
             ],
             'general' => self::generalValues($row, $tenant, $agentName, $money),
             default   => [],
