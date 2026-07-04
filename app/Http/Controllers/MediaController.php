@@ -67,6 +67,13 @@ class MediaController extends Controller
             'mp4'  => 'video/mp4',
             '3gp'  => 'video/3gpp',
             'pdf'  => 'application/pdf',
+            'txt'  => 'text/plain',
+            'doc'  => 'application/msword',
+            'xls'  => 'application/vnd.ms-excel',
+            'ppt'  => 'application/vnd.ms-powerpoint',
+            'docx' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'xlsx' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'pptx' => 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
         ];
         $headers = isset($mimeByExt[$ext]) ? ['Content-Type' => $mimeByExt[$ext]] : [];
 

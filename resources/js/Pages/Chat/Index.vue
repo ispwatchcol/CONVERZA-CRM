@@ -50,7 +50,7 @@ const assignedLabelIds = ref((props.contactLabels || []).map(l => l.id));
 const showLabelPicker = ref(false);
 
 watch(() => props.contactLabels, (v) => { assignedLabelIds.value = (v || []).map(l => l.id); });
-watch(() => props.activeConversationId, () => { showLabelPicker.value = false; });
+watch(() => props.activeConversationId, () => { showLabelPicker.value = false; showLabelsPopover.value = false; });
 
 const assignedLabels  = computed(() => props.labels.filter(l => assignedLabelIds.value.includes(l.id)));
 const availableLabels = computed(() => props.labels.filter(l => !assignedLabelIds.value.includes(l.id)));
@@ -106,6 +106,11 @@ onMounted(() => {
             url.searchParams.set('conversation', String(props.activeConversationId));
             window.history.replaceState(history.state, '', url.toString());
         }
+        // Si la página carga (o se refresca) con una conversación ya abierta por
+        // la URL, el backend recién la marca leída DESPUÉS de armar esta misma
+        // respuesta — se autocorrige en el próximo poll (~5s), pero mientras
+        // tanto la damos por leída al instante, igual que al hacer clic.
+        optimisticRead.value[props.activeConversationId] = true;
     }
     // Inicializar el rastreo del scroll inteligente con el estado actual,
     // así el primer polling no arrastra al usuario hacia abajo.
@@ -464,7 +469,9 @@ function formatPhone(phone) {
 
 function selectConversation(conv) {
     mobileShowChat.value = true;
-    delete unreadConvIds.value[conv.id];
+    // El backend marca la conversación como leída (conversation_reads) en la
+    // próxima carga; mientras tanto, la damos por leída al instante en la UI.
+    optimisticRead.value[conv.id] = true;
 }
 
 const filteredConversations = () => {
@@ -486,12 +493,22 @@ function executeDelete() {
 }
 
 // ── Notificaciones: sonido + título + badge de no leídos ─────────────────────
+// El estado "no leído" real vive en el backend (tabla conversation_reads,
+// conv.is_unread / conv.unread_count) — persiste entre refrescos, pestañas y
+// agentes, a diferencia de lo que había antes (un ref en memoria que se
+// reseteaba en cada carga de página). optimisticRead es solo un override
+// LOCAL e instantáneo: al abrir un chat lo marcamos leído en la UI de
+// inmediato, sin esperar el próximo poll (~5s) a que el backend lo confirme.
 let sharedAudioCtx = null;
-const unreadConvIds = ref({});
+const optimisticRead = ref({});
 let _unreadTotal = 0;
 const prevConvTimestamps = ref({});
 const docTitle = typeof document !== 'undefined' ? document.title : 'Converza';
 let titleBlinker = null;
+
+function isConvUnread(conv) {
+    return !!conv.is_unread && !optimisticRead.value[conv.id];
+}
 
 function unlockAudio() {
     try {
@@ -530,19 +547,18 @@ function blinkTitle(count) {
 }
 
 // Limpia SOLO las alertas globales que piden atención: el contador y el
-// parpadeo del título. NO toca unreadConvIds — el puntito de "nuevo" de cada
-// chat se quita únicamente al ABRIR ese chat (ver selectConversation). Antes
-// el foco de la ventana borraba todos los puntitos de golpe.
+// parpadeo del título. El estado "no leído" de cada chat lo maneja el
+// backend (conv.is_unread), no esta función.
 function clearAlerts() {
     _unreadTotal = 0;
     if (titleBlinker) { clearInterval(titleBlinker); titleBlinker = null; }
     document.title = docTitle;
 }
 
-// Reset completo, incluyendo marcar todo como leído. Solo al desmontar.
+// Reset completo. Solo al desmontar.
 function clearNotifications() {
     clearAlerts();
-    unreadConvIds.value = {};
+    optimisticRead.value = {};
 }
 
 watch(() => props.conversations, (newConvs) => {
@@ -553,14 +569,15 @@ watch(() => props.conversations, (newConvs) => {
         const prev = prevConvTimestamps.value[c.id];
         const isNewIncoming = prev !== undefined && c.last_message_at !== prev && c.last_message_status === 'received';
         if (isNewIncoming) {
-            // No marcamos como "nuevo" (ni alertamos por) la conversación que el
-            // agente ya está viendo con la ventana enfocada: la está leyendo.
+            // No alertamos (sonido/título) por la conversación que el agente ya
+            // está viendo con la ventana enfocada: la está leyendo.
             const viewingThis = c.id === activeId && focused;
-            if (!viewingThis) {
-                incoming++;
-                unreadConvIds.value[c.id] = true;
-            }
+            if (!viewingThis) incoming++;
         }
+        // El backend ya confirmó el estado real en este poll. Si dice "leído",
+        // soltamos el override optimista para no enmascarar un futuro mensaje
+        // nuevo en la misma conversación.
+        if (!c.is_unread && optimisticRead.value[c.id]) delete optimisticRead.value[c.id];
         prevConvTimestamps.value[c.id] = c.last_message_at;
     });
     if (incoming > 0) {
@@ -673,6 +690,7 @@ function onImgError(id) { imgErrors.value[id] = true; }
 // Los agentes solo ven sus propios chips; el backend ya restringe los datos.
 const ALL_FILTER_CHIPS = [
     { value: 'all',        label: 'Todas' },
+    { value: 'unread',     label: 'No leídos' },
     { value: 'open',       label: 'Abiertas' },
     { value: 'mine',       label: 'Mías' },
     { value: 'unassigned', label: 'Sin asignar' },
@@ -680,7 +698,7 @@ const ALL_FILTER_CHIPS = [
 ];
 const filterChips = computed(() =>
     isAgent.value
-        ? ALL_FILTER_CHIPS.filter(c => c.value === 'mine' || c.value === 'closed')
+        ? ALL_FILTER_CHIPS.filter(c => ['mine', 'unread', 'closed'].includes(c.value))
         : ALL_FILTER_CHIPS
 );
 
@@ -702,6 +720,22 @@ const assignMenuRef = ref(null);
 function handleAssignOutsideClick(e) {
     if (showAssignMenu.value && assignMenuRef.value && !assignMenuRef.value.contains(e.target)) {
         showAssignMenu.value = false;
+    }
+}
+
+// ── Etiquetas del contacto (acceso rápido desde el header) ───────────────────
+// La asignación de etiquetas ya existía dentro del panel "Ficha" (ISPWatch),
+// pero ahí queda escondida (mezclada con datos de facturación, cerrada por
+// defecto en mobile). Este popover reutiliza el mismo estado/lógica
+// (assignedLabelIds, addLabel, removeLabel, persistLabels — definidos arriba)
+// para dar acceso directo desde el header, igual en mobile y desktop.
+const showLabelsPopover = ref(false);
+const labelsMenuRef = ref(null);
+
+function handleLabelsOutsideClick(e) {
+    if (showLabelsPopover.value && labelsMenuRef.value && !labelsMenuRef.value.contains(e.target)) {
+        showLabelsPopover.value = false;
+        showLabelPicker.value = false;
     }
 }
 
@@ -887,6 +921,9 @@ onUnmounted(() => window.removeEventListener('resize', handleResize));
 
 onMounted(() => document.addEventListener('mousedown', handleAssignOutsideClick));
 onUnmounted(() => document.removeEventListener('mousedown', handleAssignOutsideClick));
+
+onMounted(() => document.addEventListener('mousedown', handleLabelsOutsideClick));
+onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideClick));
 </script>
 
 <template>
@@ -966,11 +1003,15 @@ onUnmounted(() => document.removeEventListener('mousedown', handleAssignOutsideC
                                             </span>
                                         </h3>
                                         <div class="flex items-center gap-1.5 ml-2 shrink-0">
-                                            <span class="text-[10px] text-gray-400">{{ formatDate(conv.last_message_at) }}</span>
-                                            <span v-if="unreadConvIds[conv.id]" class="w-2 h-2 rounded-full bg-emerald-500"></span>
+                                            <span class="text-[10px]" :class="isConvUnread(conv) ? 'text-emerald-600 font-semibold' : 'text-gray-400'">{{ formatDate(conv.last_message_at) }}</span>
+                                            <span v-if="isConvUnread(conv)"
+                                                  class="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-emerald-500 text-white text-[10px] font-bold tabular-nums"
+                                                  :title="`${conv.unread_count} mensaje${conv.unread_count === 1 ? '' : 's'} sin leer`">
+                                                {{ conv.unread_count > 9 ? '9+' : conv.unread_count }}
+                                            </span>
                                         </div>
                                     </div>
-                                    <p class="text-xs truncate" :class="unreadConvIds[conv.id] ? 'text-gray-900 font-semibold' : 'text-gray-500'">
+                                    <p class="text-xs truncate" :class="isConvUnread(conv) ? 'text-gray-900 font-semibold' : 'text-gray-500'">
                                         <span v-if="conv.last_message_status !== 'received'" class="mr-1">
                                             <svg class="h-3 w-3 inline text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
                                         </span>
@@ -1076,6 +1117,55 @@ onUnmounted(() => document.removeEventListener('mousedown', handleAssignOutsideC
                             <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
                             Cerrar
                         </button>
+
+                        <!-- ── Etiquetas (popover, acceso directo desde el header) ── -->
+                        <div v-if="activeContactId" class="relative" ref="labelsMenuRef">
+                            <button @click="showLabelsPopover = !showLabelsPopover"
+                                    class="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 border border-gray-200 rounded-lg text-xs font-medium text-gray-700 hover:bg-gray-50 hover:border-gray-300 transition"
+                                    :class="{ 'bg-accent/10 border-accent/30 text-accent': showLabelsPopover }"
+                                    title="Etiquetas del contacto">
+                                <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9.568 3H5.25A2.25 2.25 0 003 5.25v4.318c0 .597.237 1.17.659 1.591l9.581 9.581c.699.699 1.78.872 2.607.33a18.095 18.095 0 005.223-5.223c.542-.827.369-1.908-.33-2.607L11.16 3.66A2.25 2.25 0 009.568 3z" /><path stroke-linecap="round" stroke-linejoin="round" d="M6 6h.008v.008H6V6z" /></svg>
+                                <span class="hidden sm:inline">Etiquetas</span>
+                                <span v-if="assignedLabels.length" class="inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-accent text-white text-[9px] font-bold">{{ assignedLabels.length }}</span>
+                            </button>
+
+                            <div v-if="showLabelsPopover"
+                                 class="absolute right-0 mt-1 w-72 max-w-[calc(100vw-2rem)] bg-white rounded-xl shadow-xl border border-gray-200 p-3 z-50 animate-scale-in">
+                                <div class="flex items-center justify-between mb-2">
+                                    <h4 class="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Etiquetas del contacto</h4>
+                                    <div v-if="canWrite" class="relative">
+                                        <button @click="showLabelPicker = !showLabelPicker"
+                                                class="inline-flex items-center gap-1 text-[10px] font-semibold text-accent hover:text-accent-hover">
+                                            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
+                                            Agregar
+                                        </button>
+                                        <div v-if="showLabelPicker" class="absolute right-0 top-6 z-30 w-56 max-h-64 overflow-y-auto bg-white rounded-xl shadow-lg border border-gray-100 py-1">
+                                            <button v-for="label in availableLabels" :key="label.id" @click="addLabel(label)"
+                                                    type="button"
+                                                    class="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 text-left">
+                                                <span class="w-2.5 h-2.5 rounded-full shrink-0" :style="{ backgroundColor: label.color }"></span>
+                                                <span class="truncate">{{ label.name }}</span>
+                                            </button>
+                                            <p v-if="!availableLabels.length" class="px-3 py-2 text-[11px] text-gray-400">
+                                                <template v-if="labels.length">Todas asignadas.</template>
+                                                <template v-else>No hay etiquetas. Creá algunas en <Link :href="route('labels.index')" class="text-accent underline">Etiquetas</Link>.</template>
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="flex flex-wrap gap-1.5">
+                                    <span v-for="label in assignedLabels" :key="label.id"
+                                          class="inline-flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-full text-[10px] font-medium text-white shadow-sm"
+                                          :style="{ backgroundColor: label.color }">
+                                        {{ label.name }}
+                                        <button v-if="canWrite" @click="removeLabel(label)" type="button" class="hover:bg-black/20 rounded-full p-0.5 transition" title="Quitar etiqueta">
+                                            <svg class="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+                                        </button>
+                                    </span>
+                                    <span v-if="!assignedLabels.length" class="text-[11px] text-gray-400">Sin etiquetas</span>
+                                </div>
+                            </div>
+                        </div>
 
                         <!-- Ficha toggle (visible en todos los tamaños) -->
                         <button @click="showCustomerPanel = !showCustomerPanel"

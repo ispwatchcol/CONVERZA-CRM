@@ -48,6 +48,11 @@ class Conversation extends Model
         return $this->hasMany(ClosingNote::class);
     }
 
+    public function reads(): HasMany
+    {
+        return $this->hasMany(ConversationRead::class);
+    }
+
     /**
      * El "último mensaje" de la lista de chats y el cálculo de "cliente
      * esperando" del dashboard deben reflejar la conversación real con el
