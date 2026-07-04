@@ -96,12 +96,12 @@ return [
 
         // ── FALLA MASIVA por core/router (router_outage_start / _resolved) ─────
         // ispwatch inserta una fila en `router_outage_events` cuando un core cae
-        // (type=inicio) o se restablece (type=fin). Converza hace fan-out del aviso
-        // a TODOS los clientes activos de ese router. Valores del campo `type` que
-        // cuentan como inicio/fin (coma-separados, case-insensitive). AJUSTAR si
-        // ispwatch usa otras cadenas: si no coinciden, no se envía nada (seguro).
-        'outage_type_start'    => env('WHATSAPP_OUTAGE_TYPE_START', 'start,inicio,down,outage,open'),
-        'outage_type_resolved' => env('WHATSAPP_OUTAGE_TYPE_RESOLVED', 'resolved,fin,resuelto,up,recovered,close'),
+        // (type='outage') o se restablece (type='restored'). Converza hace fan-out
+        // del aviso a TODOS los clientes activos de ese router. Valores del campo
+        // `type` que cuentan como inicio/fin (coma-separados, case-insensitive).
+        // Confirmado con ispwatch (2026-07-04): escribe fijo 'outage' / 'restored'.
+        'outage_type_start'    => env('WHATSAPP_OUTAGE_TYPE_START', 'outage'),
+        'outage_type_resolved' => env('WHATSAPP_OUTAGE_TYPE_RESOLVED', 'restored'),
         // Frescura del aviso de falla, en HORAS (más corto que los otros eventos:
         // avisar de una caída de hace días no tiene sentido). Un evento de outage
         // más viejo que esto se omite (el cursor avanza). Default 6h.
