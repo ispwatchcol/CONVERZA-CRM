@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Contact;
 use App\Models\Conversation;
+use App\Models\ConversationRead;
 use App\Models\Label;
 use App\Models\Message;
 use App\Models\QuickReply;
@@ -11,7 +12,9 @@ use App\Models\StaffMember;
 use App\Services\Ispwatch\IspwatchRepository;
 use App\Services\Presence\PresenceService;
 use App\Services\WhatsAppService;
+use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
@@ -53,6 +56,9 @@ class ChatController extends Controller
             $conversationsQuery->where('assigned_to', $myStaffMember->id);
             if ($filter === 'closed') {
                 $conversationsQuery->where('status', 'closed');
+            } elseif ($filter === 'unread') {
+                $conversationsQuery->where('status', 'open')
+                    ->whereIn('id', fn (QueryBuilder $q) => $this->applyUnreadJoin($q, $tenantId, $myStaffMember->id)->select('m.conversation_id'));
             } else {
                 $conversationsQuery->where('status', 'open');
             }
@@ -66,13 +72,27 @@ class ChatController extends Controller
                 $conversationsQuery->where('assigned_to', $myStaffMember->id)->where('status', 'open');
             } elseif ($filter === 'unassigned') {
                 $conversationsQuery->whereNull('assigned_to')->where('status', 'open');
+            } elseif ($filter === 'unread') {
+                $conversationsQuery->where('status', 'open')
+                    ->whereIn('id', fn (QueryBuilder $q) => $this->applyUnreadJoin($q, $tenantId, $myStaffMember->id)->select('m.conversation_id'));
             }
         }
 
-        $conversations = $conversationsQuery
-            ->orderByDesc('updated_at')
-            ->get()
-            ->map(fn (Conversation $conv) => [
+        $conversationModels = $conversationsQuery->orderByDesc('updated_at')->get();
+
+        // Conteo de mensajes entrantes no leídos por conversación, para ESTE
+        // agente (conversation_reads.staff_member_id). Una sola query agrupada
+        // en vez de N+1 por fila.
+        $unreadCounts = $this->applyUnreadJoin(DB::table('messages as m'), $tenantId, $myStaffMember->id)
+            ->whereIn('m.conversation_id', $conversationModels->pluck('id'))
+            ->groupBy('m.conversation_id')
+            ->selectRaw('m.conversation_id, COUNT(*) AS unread_count')
+            ->pluck('unread_count', 'm.conversation_id');
+
+        $conversations = $conversationModels->map(function (Conversation $conv) use ($unreadCounts) {
+            $unread = (int) ($unreadCounts[$conv->id] ?? 0);
+
+            return [
                 'id'                  => $conv->id,
                 'contact_id'          => $conv->contact_id,
                 'phone'               => $conv->contact?->phone,
@@ -82,12 +102,15 @@ class ChatController extends Controller
                 'last_message_status' => $conv->latestMessage?->status,
                 'last_message_at'     => $conv->latestMessage?->created_at?->toIso8601String(),
                 'updated_at'          => $conv->updated_at?->toIso8601String(),
+                'unread_count'        => $unread,
+                'is_unread'           => $unread > 0,
                 'assigned_to'         => $conv->assignee ? [
                     'id'      => $conv->assignee->id,
                     'name'    => $conv->assignee->user?->name ?? 'Agente',
                     'initial' => mb_substr($conv->assignee->user?->name ?? '?', 0, 1),
                 ] : null,
-            ]);
+            ];
+        });
 
         // ── Conversación activa ──────────────────────────────────────────────
         $activeConversationId = $request->query('conversation');
@@ -158,6 +181,20 @@ class ChatController extends Controller
                     'initial' => mb_substr($activeConversation->assignee->user?->name ?? '?', 0, 1),
                 ];
             }
+
+            // Marca la conversación como leída por ESTE agente. Corre en cada
+            // carga (incluido el poll de 5s mientras el agente la tiene abierta),
+            // así un mensaje nuevo que llegue mientras la está viendo se marca
+            // leído automáticamente en el siguiente poll — sin esperar un clic.
+            // El "unread" de $conversations ya se calculó arriba, con el estado
+            // ANTERIOR a este upsert: la propia conversación abierta puede verse
+            // como no leída una vez más en esta misma respuesta y corregirse recién
+            // en el próximo poll (~5s); el frontend la marca leída al instante de
+            // forma optimista mientras tanto.
+            ConversationRead::updateOrCreate(
+                ['conversation_id' => $activeConversation->id, 'staff_member_id' => $myStaffMember->id],
+                ['tenant_id' => $tenantId, 'last_read_at' => now()],
+            );
         }
 
         // Heartbeat de presencia: registra que este usuario está en línea y, si
@@ -720,6 +757,13 @@ class ChatController extends Controller
      */
     private function filterCounts(int $tenantId, int $myStaffMemberId, bool $agentScope = false): array
     {
+        $unreadCount = Conversation::query()
+            ->where('tenant_id', $tenantId)
+            ->where('status', 'open')
+            ->when($agentScope, fn ($q) => $q->where('assigned_to', $myStaffMemberId))
+            ->whereIn('id', fn (QueryBuilder $q) => $this->applyUnreadJoin($q, $tenantId, $myStaffMemberId)->select('m.conversation_id'))
+            ->count();
+
         if ($agentScope) {
             // Agente: solo sus conversaciones asignadas.
             $row = Conversation::query()
@@ -736,6 +780,7 @@ class ChatController extends Controller
                 'mine'       => (int) $row->open_count,
                 'unassigned' => 0,
                 'closed'     => (int) $row->closed_count,
+                'unread'     => $unreadCount,
             ];
         }
 
@@ -755,6 +800,29 @@ class ChatController extends Controller
             'mine'       => (int) $row->mine_count,
             'unassigned' => (int) $row->unassigned_count,
             'closed'     => (int) $row->closed_count,
+            'unread'     => $unreadCount,
         ];
+    }
+
+    /**
+     * Configura $query (una subquery de whereIn, o una query de messages
+     * independiente) para seleccionar mensajes ENTRANTES no leídos por
+     * $staffMemberId: sin fila en conversation_reads, o con last_read_at
+     * anterior al mensaje. Reutilizado por el filtro "unread", filterCounts()
+     * y el conteo agrupado por conversación en index().
+     */
+    private function applyUnreadJoin(QueryBuilder $query, int $tenantId, int $staffMemberId): QueryBuilder
+    {
+        return $query
+            ->from('messages as m')
+            ->leftJoin('conversation_reads as cr', function ($join) use ($staffMemberId) {
+                $join->on('cr.conversation_id', '=', 'm.conversation_id')
+                    ->where('cr.staff_member_id', '=', $staffMemberId);
+            })
+            ->where('m.tenant_id', $tenantId)
+            ->where('m.status', 'received')
+            ->where(function ($q) {
+                $q->whereNull('cr.last_read_at')->orWhereColumn('m.created_at', '>', 'cr.last_read_at');
+            });
     }
 }

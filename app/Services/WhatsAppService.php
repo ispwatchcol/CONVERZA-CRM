@@ -343,6 +343,13 @@ class WhatsAppService
             'audio/mp4' => 'm4a',
             'audio/webm' => 'weba',
             'application/pdf' => 'pdf',
+            'text/plain' => 'txt',
+            'application/msword' => 'doc',
+            'application/vnd.ms-excel' => 'xls',
+            'application/vnd.ms-powerpoint' => 'ppt',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document' => 'docx',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' => 'xlsx',
+            'application/vnd.openxmlformats-officedocument.presentationml.presentation' => 'pptx',
             default => null,
         };
     }
