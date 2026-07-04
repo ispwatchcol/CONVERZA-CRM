@@ -11,7 +11,11 @@ const props = defineProps({
     invoices:       Array,
     tickets:        Array,
     notes:          Array,
+    tenants:        { type: Array, default: () => [] },
+    plan_catalog:   { type: Object, default: () => ({ base_currency: 'USD', ispwatch: [], converza: [], combo: [] }) },
 });
+
+const baseCurrency = props.plan_catalog.base_currency ?? 'USD';
 
 // ── Tabs ───────────────────────────────────────────────────────────────────
 const activeTab = ref('summary');
@@ -70,12 +74,55 @@ const editForm = useForm({
 });
 function submitEdit() { editForm.put(route('brain.accounts.update', props.account.id), { onSuccess: () => { showEdit.value = false; } }); }
 
+// ── Corte / reactivación manual del servicio ───────────────────────────────
+// Nada se corta solo: el founder decide. Reusa editForm (ya tiene todos los
+// campos requeridos) y solo cambia el estado de la cuenta.
+function setAccountStatus(newStatus, confirmMsg) {
+    if (confirmMsg && !confirm(confirmMsg)) return;
+    editForm.status = newStatus;
+    editForm.put(route('brain.accounts.update', props.account.id), { preserveScroll: true });
+}
+function cutService()      { setAccountStatus('suspended', `¿Suspender el servicio de "${props.account.name}"? Podrás reactivarlo cuando pague.`); }
+function reactivateService() { setAccountStatus('active'); }
+
+// Semáforo de vencimiento de un producto según su fecha "vence el" (renews_at).
+function expiryInfo(dateStr) {
+    if (!dateStr) return null;
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const due = new Date(dateStr + 'T00:00:00');
+    const days = Math.round((due - today) / 86400000);
+    if (days < 0)  return { tone: 'text-red-600 bg-red-50 border-red-200',       label: `Vencido hace ${-days} d` };
+    if (days <= 7) return { tone: 'text-amber-600 bg-amber-50 border-amber-200', label: `Vence en ${days} d` };
+    return null;
+}
+
 // ── Products ───────────────────────────────────────────────────────────────
 const showProductModal = ref(false);
 const editingProduct   = ref(null);
-const productForm = useForm({ product:'', plan:'', status:'active', billing_cycle:'monthly', amount:'', currency:'COP', started_at:'', renews_at:'', cancelled_at:'' });
+const productForm = useForm({ product:'', plan_key:'', plan:'', status:'active', billing_cycle:'monthly', amount:'', currency:'COP', started_at:'', renews_at:'', cancelled_at:'' });
 function openAddProduct() { editingProduct.value = null; productForm.reset(); productForm.currency='COP'; productForm.status='active'; productForm.billing_cycle='monthly'; showProductModal.value=true; }
-function openEditProduct(p) { editingProduct.value=p; Object.assign(productForm, { product:p.product, plan:p.plan??'', status:p.status, billing_cycle:p.billing_cycle, amount:p.amount, currency:p.currency, started_at:p.started_at??'', renews_at:p.renews_at??'', cancelled_at:p.cancelled_at??'' }); showProductModal.value=true; }
+function openEditProduct(p) { editingProduct.value=p; Object.assign(productForm, { product:p.product, plan_key:p.plan_key??'', plan:p.plan??'', status:p.status, billing_cycle:p.billing_cycle, amount:p.amount, currency:p.currency, started_at:p.started_at??'', renews_at:p.renews_at??'', cancelled_at:p.cancelled_at??'' }); showProductModal.value=true; }
+
+// Planes del catálogo aplicables a este producto: los de su familia + combos.
+const productPlanOptions = computed(() => {
+    const fam = productForm.product ? (props.plan_catalog[productForm.product] ?? []) : [];
+    return [...fam, ...(props.plan_catalog.combo ?? [])];
+});
+function findCatalogPlan(key) {
+    for (const fam of ['ispwatch', 'converza', 'combo']) {
+        const hit = (props.plan_catalog[fam] ?? []).find(p => p.key === key);
+        if (hit) return hit;
+    }
+    return null;
+}
+// Al elegir un plan del catálogo: fija etiqueta y pre-rellena precio base + moneda.
+function applyCatalogPlan() {
+    const p = findCatalogPlan(productForm.plan_key);
+    if (!p) return;
+    productForm.plan = p.name;
+    productForm.currency = baseCurrency;
+    if (p.price != null) productForm.amount = String(p.price);
+}
 function submitProduct() {
     const opts = { onSuccess: () => { showProductModal.value=false; } };
     editingProduct.value
@@ -187,6 +234,16 @@ function deleteAccount() { if (!confirm(`¿Eliminar "${props.account.name}"?`)) 
                         <p v-if="account.notes" class="mt-3 text-sm text-gray-600 bg-gray-50 rounded-lg px-4 py-2.5 border border-gray-100">{{ account.notes }}</p>
                     </div>
                     <div class="flex items-center gap-2 shrink-0">
+                        <button v-if="['suspended','past_due'].includes(account.status)" @click="reactivateService" :disabled="editForm.processing"
+                            class="px-3 py-2 text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg hover:bg-green-100 transition flex items-center gap-1.5 disabled:opacity-60">
+                            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z" /></svg>
+                            Reactivar
+                        </button>
+                        <button v-else-if="account.status === 'active'" @click="cutService" :disabled="editForm.processing"
+                            class="px-3 py-2 text-sm text-orange-700 bg-orange-50 border border-orange-200 rounded-lg hover:bg-orange-100 transition flex items-center gap-1.5 disabled:opacity-60">
+                            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 5.25a3 3 0 013 3m3 0a6 6 0 01-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1121.75 8.25z" /></svg>
+                            Cortar servicio
+                        </button>
                         <button @click="showEdit = true" class="px-3 py-2 text-sm text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition flex items-center gap-1.5">
                             <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" /></svg>
                             Editar
@@ -219,7 +276,14 @@ function deleteAccount() { if (!confirm(`¿Eliminar "${props.account.name}"?`)) 
                         <div class="flex justify-between"><dt class="text-gray-500">Inicio</dt><dd class="font-medium">{{ account.onboarding_at ?? '—' }}</dd></div>
                         <div class="flex justify-between"><dt class="text-gray-500">Renovación</dt><dd class="font-medium">{{ account.renewal_at ?? '—' }}</dd></div>
                         <div class="flex justify-between"><dt class="text-gray-500">ispwatch ID</dt><dd class="font-mono text-xs font-medium">{{ account.ispwatch_tenant_id ?? '—' }}</dd></div>
-                        <div class="flex justify-between"><dt class="text-gray-500">Tenant Converza</dt><dd class="font-mono text-xs font-medium">{{ account.tenant_id ?? '—' }}</dd></div>
+                        <div class="flex justify-between items-center">
+                            <dt class="text-gray-500">Tenant Converza</dt>
+                            <dd v-if="account.tenant" class="text-xs font-medium">
+                                <Link :href="route('admin.tenants.index')" class="text-amber-700 hover:underline">{{ account.tenant.name }}</Link>
+                                <span class="text-gray-400 font-mono ml-1">/{{ account.tenant.slug }}</span>
+                            </dd>
+                            <dd v-else class="font-mono text-xs font-medium text-gray-400">Sin vincular</dd>
+                        </div>
                     </dl>
                 </div>
                 <div v-if="converza_live" class="bg-white rounded-xl border border-amber-200 p-5 space-y-4">
@@ -267,13 +331,15 @@ function deleteAccount() { if (!confirm(`¿Eliminar "${props.account.name}"?`)) 
                         <div class="flex items-center gap-2 flex-wrap">
                             <span class="font-semibold text-gray-900">{{ productLabel[p.product] }}</span>
                             <span v-if="p.plan" class="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full">{{ p.plan }}</span>
+                            <span v-if="p.plan_key && p.plan_key.startsWith('combo_')" class="text-[10px] font-semibold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded">COMBO</span>
                             <span class="text-xs px-2 py-0.5 rounded-full font-medium" :class="p.status==='active'?'bg-green-100 text-green-700':p.status==='paused'?'bg-yellow-100 text-yellow-700':'bg-gray-100 text-gray-500'">
                                 {{ p.status==='active'?'Activo':p.status==='paused'?'Pausado':'Cancelado' }}
                             </span>
+                            <span v-if="expiryInfo(p.renews_at)" class="text-[11px] px-2 py-0.5 rounded-full border font-medium" :class="expiryInfo(p.renews_at).tone">{{ expiryInfo(p.renews_at).label }}</span>
                         </div>
                         <div class="flex flex-wrap gap-4 text-sm">
                             <span class="text-xl font-bold text-gray-900">{{ formatAmount(p.amount, p.currency) }}<span class="text-xs text-gray-400 ml-1 font-normal">/ {{ cycleLabel[p.billing_cycle].toLowerCase() }}</span></span>
-                            <span v-if="p.renews_at" class="text-xs text-amber-600 self-end">Renueva {{ p.renews_at }}</span>
+                            <span v-if="p.renews_at" class="text-xs text-amber-600 self-end">Vence {{ p.renews_at }}</span>
                         </div>
                     </div>
                     <div class="flex items-center gap-1 shrink-0">
@@ -485,7 +551,7 @@ function deleteAccount() { if (!confirm(`¿Eliminar "${props.account.name}"?`)) 
                             <div><label class="block text-xs font-semibold text-gray-700 mb-1">Nombre *</label><input v-model="editForm.name" required class="w-full px-3 py-2 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400" :class="editForm.errors.name?'border-red-400':'border-gray-300'" /></div>
                             <div><label class="block text-xs font-semibold text-gray-700 mb-1">Razón social</label><input v-model="editForm.legal_name" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400" /></div>
                             <div><label class="block text-xs font-semibold text-gray-700 mb-1">ispwatch Tenant ID</label><input v-model="editForm.ispwatch_tenant_id" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400" /></div>
-                            <div><label class="block text-xs font-semibold text-gray-700 mb-1">Tenant Converza ID</label><input v-model="editForm.tenant_id" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400" /></div>
+                            <div><label class="block text-xs font-semibold text-gray-700 mb-1">Workspace de Converza</label><select v-model="editForm.tenant_id" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-amber-400"><option value="">Sin vincular</option><option v-for="t in tenants" :key="t.id" :value="t.id" :disabled="t.taken_by && t.id !== account.tenant_id">{{ t.name }}{{ !t.is_active ? ' (inactivo)' : '' }}{{ t.taken_by && t.id !== account.tenant_id ? ` — ya en ${t.taken_by}` : '' }}</option></select></div>
                             <div><label class="block text-xs font-semibold text-gray-700 mb-1">Estado *</label><select v-model="editForm.status" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400"><option value="prospect">Prospecto</option><option value="active">Activo</option><option value="past_due">En mora</option><option value="suspended">Suspendido</option><option value="churned">Cancelado</option></select></div>
                             <div><label class="block text-xs font-semibold text-gray-700 mb-1">Salud</label><select v-model="editForm.health" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400"><option value="">Sin definir</option><option value="good">Buena</option><option value="at_risk">En riesgo</option><option value="critical">Crítica</option></select></div>
                             <div><label class="block text-xs font-semibold text-gray-700 mb-1">Nombre contacto</label><input v-model="editForm.contact_name" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400" /></div>
@@ -514,13 +580,20 @@ function deleteAccount() { if (!confirm(`¿Eliminar "${props.account.name}"?`)) 
                     <form @submit.prevent="submitProduct" class="p-6 space-y-4">
                         <div class="grid grid-cols-2 gap-4">
                             <div><label class="block text-xs font-semibold text-gray-700 mb-1">Producto *</label><select v-model="productForm.product" :disabled="!!editingProduct" required class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 disabled:bg-gray-50"><option value="">Seleccionar</option><option value="ispwatch">ispwatch</option><option value="converza">Converza</option></select></div>
-                            <div><label class="block text-xs font-semibold text-gray-700 mb-1">Plan</label><input v-model="productForm.plan" type="text" placeholder="Básico, Pro…" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400" /></div>
+                            <div>
+                                <label class="block text-xs font-semibold text-gray-700 mb-1">Plan del catálogo</label>
+                                <select v-model="productForm.plan_key" @change="applyCatalogPlan" :disabled="!productForm.product" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-amber-400 disabled:bg-gray-50">
+                                    <option value="">Personalizado</option>
+                                    <option v-for="p in productPlanOptions" :key="p.key" :value="p.key">{{ p.name }} — {{ p.limit }}{{ p.price != null ? ` · $${p.price} ${baseCurrency}` : ' · a medida' }}</option>
+                                </select>
+                            </div>
+                            <div class="col-span-2"><label class="block text-xs font-semibold text-gray-700 mb-1">Etiqueta del plan</label><input v-model="productForm.plan" type="text" placeholder="Básico, Pro…" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400" /></div>
                             <div><label class="block text-xs font-semibold text-gray-700 mb-1">Estado</label><select v-model="productForm.status" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400"><option value="active">Activo</option><option value="paused">Pausado</option><option value="cancelled">Cancelado</option></select></div>
                             <div><label class="block text-xs font-semibold text-gray-700 mb-1">Ciclo</label><select v-model="productForm.billing_cycle" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400"><option value="monthly">Mensual</option><option value="quarterly">Trimestral</option><option value="yearly">Anual</option></select></div>
                             <div><label class="block text-xs font-semibold text-gray-700 mb-1">Valor *</label><input v-model="productForm.amount" type="number" min="0" step="0.01" required class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400" /></div>
                             <div><label class="block text-xs font-semibold text-gray-700 mb-1">Moneda</label><select v-model="productForm.currency" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400"><option value="COP">COP</option><option value="USD">USD</option></select></div>
                             <div><label class="block text-xs font-semibold text-gray-700 mb-1">Inicio</label><input v-model="productForm.started_at" type="date" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400" /></div>
-                            <div><label class="block text-xs font-semibold text-gray-700 mb-1">Renueva</label><input v-model="productForm.renews_at" type="date" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400" /></div>
+                            <div><label class="block text-xs font-semibold text-gray-700 mb-1">Vence el</label><input v-model="productForm.renews_at" type="date" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400" /></div>
                         </div>
                         <div class="flex justify-end gap-3 pt-2"><button type="button" @click="showProductModal=false" class="px-4 py-2 text-sm text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 transition">Cancelar</button><button type="submit" :disabled="productForm.processing" class="px-6 py-2 text-sm font-medium text-white bg-amber-600 rounded-lg hover:bg-amber-700 disabled:opacity-60 transition">{{ productForm.processing?'Guardando...':editingProduct?'Actualizar':'Agregar' }}</button></div>
                     </form>

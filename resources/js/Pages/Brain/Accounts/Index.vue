@@ -1,12 +1,14 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
-import { Link, router, useForm, usePage } from '@inertiajs/vue3';
-import { ref, watch } from 'vue';
+import { Link, router, useForm } from '@inertiajs/vue3';
+import { ref, watch, computed } from 'vue';
 
 const props = defineProps({
     accounts:       Array,
     filters:        Object,
     internal_users: Array,
+    tenants:        { type: Array, default: () => [] },
+    plan_catalog:   { type: Object, default: () => ({ base_currency: 'USD', ispwatch: [], converza: [], combo: [] }) },
 });
 
 // ── Filtros ────────────────────────────────────────────────────────────────
@@ -19,6 +21,41 @@ watch([search, status], () => {
     searchTimer = setTimeout(() => {
         router.get(route('brain.accounts.index'), { search: search.value, status: status.value }, { preserveState: true, replace: true });
     }, 300);
+});
+
+// ── Catálogo de planes ─────────────────────────────────────────────────────
+const baseCurrency = props.plan_catalog.base_currency ?? 'USD';
+
+// planMode: qué contrata el ISP. 'none' = solo ficha comercial, sin producto aún.
+const planMode = ref('none');
+const planKey  = ref('');
+const planCurrency = ref(baseCurrency);
+const planAmount   = ref('');
+const planRenews   = ref('');
+
+const planModeOptions = [
+    { value: 'none',     label: 'Definir después',  hint: 'Solo crea la ficha; agregas el plan luego' },
+    { value: 'ispwatch', label: 'Solo ISPWatch',    hint: 'Monitoreo/facturación del ISP' },
+    { value: 'converza', label: 'Solo Converza',    hint: 'WhatsApp multiagente' },
+    { value: 'combo',    label: 'Combo (ambas)',    hint: 'Las dos apps, precio de paquete' },
+];
+
+const planOptions = computed(() => {
+    if (planMode.value === 'none') return [];
+    return props.plan_catalog[planMode.value] ?? [];
+});
+
+const selectedPlan = computed(() => planOptions.value.find(p => p.key === planKey.value) ?? null);
+
+// Al cambiar de modo, resetea el plan elegido.
+watch(planMode, () => { planKey.value = ''; planAmount.value = ''; });
+
+// Al elegir un plan, pre-rellena moneda base + precio base (editable — mixto por cuenta).
+watch(planKey, () => {
+    const p = selectedPlan.value;
+    if (!p) return;
+    planCurrency.value = baseCurrency;
+    planAmount.value = p.price != null ? String(p.price) : '';
 });
 
 // ── Modal nueva cuenta ─────────────────────────────────────────────────────
@@ -39,12 +76,51 @@ const form = useForm({
     onboarding_at:      '',
     renewal_at:         '',
     notes:              '',
+    products:           [],
 });
 
-function openCreate() { form.reset(); showCreate.value = true; }
+function openCreate() {
+    form.reset();
+    planMode.value = 'none';
+    planKey.value = '';
+    planCurrency.value = baseCurrency;
+    planAmount.value = '';
+    planRenews.value = '';
+    showCreate.value = true;
+}
 function closeCreate() { showCreate.value = false; }
 
+// Traduce la selección de plan a filas account_products. Un combo se expande en
+// DOS filas (converza con el precio del paquete + ispwatch en 0) que comparten
+// el mismo plan_key, para que el MRR no se duplique.
+function buildProducts() {
+    const p = selectedPlan.value;
+    if (planMode.value === 'none' || !p) return [];
+
+    const shared = {
+        plan_key:      p.key,
+        plan:          p.name,
+        status:        'active',
+        billing_cycle: 'monthly',
+        currency:      planCurrency.value,
+        started_at:    form.onboarding_at || null,
+        renews_at:     planRenews.value || form.renewal_at || null,
+    };
+    const amount = Number(planAmount.value || 0);
+
+    if (p.product === 'combo') {
+        return [
+            { ...shared, product: 'converza', amount },
+            { ...shared, product: 'ispwatch', amount: 0 },
+        ];
+    }
+    return [{ ...shared, product: p.product, amount }];
+}
+
 function submitCreate() {
+    form.products = buildProducts();
+    // Si el combo trae fecha de vencimiento y la cuenta no tiene renovación, úsala.
+    if (!form.renewal_at && planRenews.value) form.renewal_at = planRenews.value;
     form.post(route('brain.accounts.store'), {
         onSuccess: () => closeCreate(),
     });
@@ -79,6 +155,18 @@ const productLabel = { ispwatch: 'ispwatch', converza: 'Converza' };
 
 function formatAmount(amount, currency) {
     return new Intl.NumberFormat('es-CO', { style: 'currency', currency, minimumFractionDigits: 0 }).format(Number(amount));
+}
+
+// Combos: los dos productos comparten plan_key combo_*. En la tabla los mostramos
+// como una sola etiqueta "Combo …" en vez de dos filas separadas.
+function displayProducts(products) {
+    const combo = products.find(p => p.plan_key && p.plan_key.startsWith('combo_'));
+    if (combo) {
+        const paid = products.find(p => p.plan_key === combo.plan_key && Number(p.amount) > 0) ?? combo;
+        const rest = products.filter(p => !(p.plan_key && p.plan_key.startsWith('combo_')));
+        return [{ product: 'combo', plan: combo.plan, amount: paid.amount, currency: paid.currency }, ...rest];
+    }
+    return products;
 }
 </script>
 
@@ -127,7 +215,7 @@ function formatAmount(amount, currency) {
                         <tr>
                             <th class="px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Empresa</th>
                             <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Estado</th>
-                            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Productos</th>
+                            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Plan / Productos</th>
                             <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Contacto</th>
                             <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Renovación</th>
                             <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Manager</th>
@@ -152,10 +240,11 @@ function formatAmount(amount, currency) {
                             </td>
                             <td class="px-4 py-3.5">
                                 <div class="flex flex-wrap gap-1">
-                                    <span v-for="p in a.products" :key="p.product"
-                                        class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium bg-violet-50 text-violet-700">
-                                        {{ productLabel[p.product] }}
-                                        <span class="text-violet-500">{{ formatAmount(p.amount, p.currency) }}</span>
+                                    <span v-for="p in displayProducts(a.products)" :key="p.product"
+                                        class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium"
+                                        :class="p.product === 'combo' ? 'bg-amber-50 text-amber-700' : 'bg-violet-50 text-violet-700'">
+                                        {{ p.product === 'combo' ? p.plan : productLabel[p.product] }}
+                                        <span :class="p.product === 'combo' ? 'text-amber-500' : 'text-violet-500'">{{ formatAmount(p.amount, p.currency) }}</span>
                                     </span>
                                     <span v-if="a.products.length === 0" class="text-gray-400 text-xs">—</span>
                                 </div>
@@ -202,17 +291,78 @@ function formatAmount(amount, currency) {
                             </div>
                         </div>
 
+                        <!-- ── Plan / Producto ─────────────────────────────── -->
+                        <div class="rounded-xl border border-violet-100 bg-violet-50/40 p-4 space-y-4">
+                            <div class="flex items-center gap-2">
+                                <span class="text-xs font-bold uppercase tracking-wider text-violet-700">Plan contratado</span>
+                                <span class="text-[11px] text-gray-400">precios base en {{ baseCurrency }} · editable por cuenta</span>
+                            </div>
+
+                            <!-- Modo -->
+                            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                                <button v-for="opt in planModeOptions" :key="opt.value" type="button"
+                                    @click="planMode = opt.value"
+                                    class="text-left px-3 py-2 rounded-lg border text-xs transition"
+                                    :class="planMode === opt.value ? 'border-violet-500 bg-white ring-1 ring-violet-500 text-violet-800' : 'border-gray-200 bg-white text-gray-600 hover:border-violet-300'">
+                                    <span class="block font-semibold">{{ opt.label }}</span>
+                                    <span class="block text-[10px] text-gray-400 leading-tight mt-0.5">{{ opt.hint }}</span>
+                                </button>
+                            </div>
+
+                            <!-- Selección de plan -->
+                            <div v-if="planMode !== 'none'" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                <div class="sm:col-span-2">
+                                    <label class="block text-xs font-semibold text-gray-700 mb-1">Plan *</label>
+                                    <select v-model="planKey" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-violet-500">
+                                        <option value="">Elige un plan…</option>
+                                        <option v-for="p in planOptions" :key="p.key" :value="p.key">
+                                            {{ p.name }} — {{ p.limit }}{{ p.price != null ? ` · ${p.price === 0 ? 'Gratis' : '$' + p.price + ' ' + baseCurrency} ` : ' · a medida' }}{{ p.popular ? ' ★' : '' }}
+                                        </option>
+                                    </select>
+                                    <p v-if="selectedPlan" class="text-[11px] text-gray-500 mt-1">
+                                        {{ selectedPlan.blurb }}<span v-if="selectedPlan.saving"> · ahorro ~${{ selectedPlan.saving }} vs separado</span>
+                                    </p>
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-semibold text-gray-700 mb-1">Valor / mes</label>
+                                    <input v-model="planAmount" type="number" min="0" step="0.01" placeholder="0"
+                                        class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500" />
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-semibold text-gray-700 mb-1">Moneda</label>
+                                    <select v-model="planCurrency" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500">
+                                        <option value="USD">USD</option>
+                                        <option value="COP">COP</option>
+                                    </select>
+                                </div>
+                                <div class="sm:col-span-2">
+                                    <label class="block text-xs font-semibold text-gray-700 mb-1">Vence el (corte de servicio)</label>
+                                    <input v-model="planRenews" type="date"
+                                        class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500" />
+                                    <p class="text-[10px] text-gray-400 mt-1">El Cockpit te avisa cuando se acerca; tú decides cuándo suspender.</p>
+                                </div>
+                            </div>
+                        </div>
+
                         <!-- Vínculos -->
                         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                             <div>
-                                <label class="block text-xs font-semibold text-gray-700 mb-1">ispwatch Tenant ID</label>
-                                <input v-model="form.ispwatch_tenant_id" type="text" placeholder="Ej: 5"
-                                    class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500" />
+                                <label class="block text-xs font-semibold text-gray-700 mb-1">Workspace de Converza</label>
+                                <select v-model="form.tenant_id" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-violet-500">
+                                    <option value="">Sin vincular</option>
+                                    <option v-for="t in tenants" :key="t.id" :value="t.id" :disabled="!!t.taken_by">
+                                        {{ t.name }}{{ !t.is_active ? ' (inactivo)' : '' }}{{ t.taken_by ? ` — ya en ${t.taken_by}` : '' }}
+                                    </option>
+                                </select>
+                                <p class="text-[10px] text-gray-400 mt-1">El tenant del ISP dentro de Converza.</p>
                             </div>
                             <div>
-                                <label class="block text-xs font-semibold text-gray-700 mb-1">Tenant Converza ID</label>
-                                <input v-model="form.tenant_id" type="text" placeholder="ID interno de tenant"
-                                    class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500" />
+                                <label class="block text-xs font-semibold text-gray-700 mb-1">ispwatch Tenant ID</label>
+                                <input v-model="form.ispwatch_tenant_id" type="text" placeholder="Ej: 5"
+                                    class="w-full px-3 py-2 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-500"
+                                    :class="form.errors.ispwatch_tenant_id ? 'border-red-400' : 'border-gray-300'" />
+                                <p v-if="form.errors.ispwatch_tenant_id" class="text-xs text-red-500 mt-1">{{ form.errors.ispwatch_tenant_id }}</p>
+                                <p v-else class="text-[10px] text-gray-400 mt-1">Se valida en vivo contra ispwatch.</p>
                             </div>
                         </div>
 

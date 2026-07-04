@@ -10,6 +10,7 @@ class AccountProduct extends Model
     protected $fillable = [
         'account_id',
         'product',
+        'plan_key',
         'plan',
         'status',
         'billing_cycle',
@@ -33,5 +34,21 @@ class AccountProduct extends Model
     public function account(): BelongsTo
     {
         return $this->belongsTo(Account::class);
+    }
+
+    /** ¿Este producto es parte de un combo (ambas apps a precio de paquete)? */
+    public function isBundled(): bool
+    {
+        return $this->plan_key !== null && str_starts_with($this->plan_key, 'combo_');
+    }
+
+    /** Valor normalizado a mensual según el ciclo de facturación. */
+    public function monthlyAmount(): float
+    {
+        return match ($this->billing_cycle) {
+            'quarterly' => (float) $this->amount / 3,
+            'yearly'    => (float) $this->amount / 12,
+            default     => (float) $this->amount,
+        };
     }
 }
