@@ -434,7 +434,7 @@ class ChatController extends Controller
             'tenant_id'       => $tenantId,
             'conversation_id' => $conversation->id,
             'contact_id'      => $contact->id,
-            'body'            => $caption ?? ($type === 'image' ? '[Imagen]' : '[Audio]'),
+            'body'            => $caption ?? ($type === 'image' ? '📷 Imagen' : '🎤 Audio'),
             'status'          => 'sent',
             'type'            => $type,
             'media_path'      => $path,

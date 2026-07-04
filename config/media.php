@@ -14,7 +14,7 @@ return [
     */
     'download_types' => array_filter(array_map(
         'trim',
-        explode(',', env('MEDIA_DOWNLOAD_TYPES', 'image,audio')),
+        explode(',', env('MEDIA_DOWNLOAD_TYPES', 'image,audio,video')),
     )),
 
     /*

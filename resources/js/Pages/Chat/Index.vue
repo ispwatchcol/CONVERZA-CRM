@@ -1133,6 +1133,18 @@ onUnmounted(() => document.removeEventListener('mousedown', handleAssignOutsideC
                                 </div>
                             </div>
 
+                            <!-- ─── Reacción a un mensaje (badge mínimo, no burbuja) ─── -->
+                            <div v-else-if="msg.type === 'reaction'" class="max-w-[75%] flex flex-col" :class="isOutgoing(msg) ? 'items-end' : 'items-start'">
+                                <div class="inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 shadow-sm text-xs text-gray-500 italic"
+                                     :class="isOutgoing(msg) ? 'bg-[#d9fdd3]' : 'bg-white'">
+                                    <span>{{ msg.body || 'Reaccionó a un mensaje' }}</span>
+                                </div>
+                                <div class="mt-1 flex items-center gap-1 px-1">
+                                    <span class="text-[10px] text-gray-400">{{ formatTime(msg.created_at) }}</span>
+                                    <svg v-if="isOutgoing(msg)" class="h-3 w-3 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+                                </div>
+                            </div>
+
                             <!-- ─── Imagen ─────────────────────────────────────────── -->
                             <div
                                 v-else-if="msg.type === 'image'"
@@ -1179,7 +1191,7 @@ onUnmounted(() => document.removeEventListener('mousedown', handleAssignOutsideC
                                 </div>
                             </div>
 
-                            <!-- ─── Video (enlace de descarga) ───────────────────────── -->
+                            <!-- ─── Video ──────────────────────────────────────────── -->
                             <div
                                 v-else-if="msg.type === 'video'"
                                 class="max-w-[75%] rounded-2xl shadow-sm overflow-hidden"
@@ -1188,22 +1200,20 @@ onUnmounted(() => document.removeEventListener('mousedown', handleAssignOutsideC
                                 <p v-if="isOutgoing(msg) && msg.sender_name" class="px-3 pt-1.5 text-[11px] font-semibold text-emerald-600">
                                     {{ msg.sender_name }}
                                 </p>
-                                <a
-                                    v-if="msg.media_url"
-                                    :href="msg.media_url"
-                                    :download="msg.media_filename || 'video'"
-                                    class="flex items-center gap-2.5 px-3 py-2.5 hover:bg-black/5 transition min-w-[200px]"
-                                >
-                                    <div class="w-10 h-10 rounded-full flex items-center justify-center shrink-0"
-                                         :class="isOutgoing(msg) ? 'bg-green-500' : 'bg-accent'">
-                                        <svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" /></svg>
-                                    </div>
-                                    <div class="min-w-0 flex-1">
-                                        <p class="text-sm font-medium text-gray-900 truncate">{{ msg.media_filename || 'Video' }}</p>
-                                        <p class="text-[10px] text-gray-500">Toca para ver o descargar</p>
-                                    </div>
-                                    <svg class="w-4 h-4 text-gray-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" /></svg>
-                                </a>
+                                <!-- Video disponible: reproductor nativo inline (soporta seek vía Range,
+                                     ver MediaController@serve) en vez de solo un link de descarga. -->
+                                <div v-if="msg.media_url" class="relative p-1">
+                                    <video
+                                        :src="msg.media_url"
+                                        controls
+                                        preload="metadata"
+                                        class="max-w-full max-h-80 rounded-xl block bg-black w-full"
+                                    >
+                                        <a :href="msg.media_url" target="_blank" rel="noopener noreferrer">Descargar video</a>
+                                    </video>
+                                </div>
+                                <!-- Video no descargado (p. ej. tenant con descarga de video desactivada
+                                     por tamaño) o falló la descarga desde WhatsApp -->
                                 <div v-else class="flex items-center gap-2.5 px-3 py-2.5 min-w-[200px]">
                                     <div class="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center shrink-0">
                                         <svg class="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" /></svg>
