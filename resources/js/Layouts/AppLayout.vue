@@ -169,6 +169,13 @@ function isActive(routeName) {
     return currentRoute.value?.startsWith(routeName.split('.')[0]);
 }
 
+// El FAB de soporte es fixed bottom-6 right-6 en todo el viewport. En el Chat
+// (resources/js/Pages/Chat/Index.vue) el composer tiene su propio botón de
+// enviar en esa misma esquina, y en mobile el FAB queda encima tapándolo o
+// impidiendo el tap. El agente ya está dentro de la herramienta de WhatsApp
+// en esa página, así que el acceso directo de soporte es redundante ahí.
+const isChatPage = computed(() => currentRoute.value === 'chat.index');
+
 // ─── Flash ────────────────────────────────────────────────────────────────────
 // Sin { deep: true }: Vue usa Object.is() para comparar el valor retornado por
 // el getter. El polling reutiliza la misma referencia del objeto flash (Inertia
@@ -478,9 +485,10 @@ onUnmounted(() => {
             </main>
         </div>
 
-        <!-- ── Floating WhatsApp Support Button (oculto para superadmins del SaaS) ── -->
+        <!-- ── Floating WhatsApp Support Button (oculto para superadmins del SaaS
+             y en el Chat, donde taparía el composer — ver isChatPage) ── -->
         <a
-            v-if="!isSuperadmin"
+            v-if="!isSuperadmin && !isChatPage"
             :href="SUPPORT_WHATSAPP"
             target="_blank"
             rel="noopener noreferrer"

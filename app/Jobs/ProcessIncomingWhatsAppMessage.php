@@ -196,6 +196,15 @@ class ProcessIncomingWhatsAppMessage implements ShouldQueue
                 ]);
                 break;
 
+            case $type === 'reaction':
+                // Meta manda { message_id, emoji } — emoji vacío significa que el
+                // contacto QUITÓ una reacción puesta antes. findFirstText no la
+                // reconocía (busca claves como body/text/caption) y el mensaje
+                // quedaba guardado como el literal "[reaction]" en el chat.
+                $emoji = $this->message['reaction']['emoji'] ?? null;
+                $attributes['body'] = $emoji ? "Reaccionó con {$emoji}" : 'Quitó su reacción';
+                break;
+
             case $type === 'location':
                 $loc = $this->message['location'] ?? [];
                 $lat = $loc['latitude'] ?? null;
@@ -423,12 +432,15 @@ class ProcessIncomingWhatsAppMessage implements ShouldQueue
 
     private function placeholderForType(string $type): string
     {
+        // Con emoji prefijo (mismo estilo que ubicación/contacto arriba) para que
+        // el preview en la lista de conversaciones sea legible de un vistazo,
+        // en vez de un genérico "[imagen]" entre corchetes.
         return match ($type) {
-            'image'    => '[Imagen]',
-            'sticker'  => '[Sticker]',
-            'audio'    => '[Audio]',
-            'video'    => '[Video]',
-            'document' => '[Documento]',
+            'image'    => '📷 Imagen',
+            'sticker'  => '🎭 Sticker',
+            'audio'    => '🎤 Audio',
+            'video'    => '🎥 Video',
+            'document' => '📎 Documento',
             default    => '[' . $type . ']',
         };
     }
