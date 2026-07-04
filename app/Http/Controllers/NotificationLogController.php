@@ -27,7 +27,15 @@ class NotificationLogController extends Controller
             $query->where('status', $status);
         }
 
-        if (in_array($kind, [BillingNotificationLog::KIND_INVOICE, BillingNotificationLog::KIND_REMINDER], true)) {
+        if (in_array($kind, [
+            BillingNotificationLog::KIND_INVOICE,
+            BillingNotificationLog::KIND_REMINDER,
+            BillingNotificationLog::KIND_SUSPENSION,
+            BillingNotificationLog::KIND_WELCOME,
+            BillingNotificationLog::KIND_PAYMENT,
+            BillingNotificationLog::KIND_OUTAGE_START,
+            BillingNotificationLog::KIND_OUTAGE_RESOLVED,
+        ], true)) {
             $query->where('kind', $kind);
         }
 

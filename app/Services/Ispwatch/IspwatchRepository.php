@@ -14,6 +14,9 @@ class IspwatchRepository
 {
     public const CACHE_TTL_SECONDS = 60;
 
+    /** Estados de `user_services` que cuentan como "servicio activo" (bienvenida). */
+    public const ACTIVE_SERVICE_STATUSES = ['active', 'gratis'];
+
     /**
      * Devuelve el cliente (user + customer_profile) cuyo `tel` coincida con el
      * teléfono dado, dentro del tenant ispwatch indicado.
@@ -350,10 +353,10 @@ class IspwatchRepository
      * mes (las fechas guardadas pueden ser de meses pasados).
      *
      * Devuelve por cada billing: id, día de generación (create_invoice), día de
-     * recordatorio (payment_reminder), la HORA local de cada uno
-     * (create_invoice_time / payment_reminder_time, formato 'HH:MM:SS' o null),
-     * si el recordatorio está habilitado y los nombres de los routers que la
-     * usan (para mostrar en la bitácora).
+     * recordatorio (payment_reminder), día de CORTE (cut_day), la HORA local de
+     * cada uno (create_invoice_time / payment_reminder_time / cut_time, formato
+     * 'HH:MM:SS' o null), si el recordatorio está habilitado y los nombres de los
+     * routers que la usan (para mostrar en la bitácora).
      *
      * Las horas son `time without time zone`: hora de pared que el admin del ISP
      * escribió en su zona local. Quien las consuma debe interpretarlas en esa
@@ -371,15 +374,17 @@ class IspwatchRepository
             ->where('b.tenant_id', $ispwatchTenantId)
             ->where('b.notificar_wpp', true)
             ->groupBy(
-                'b.id', 'b.create_invoice', 'b.payment_reminder',
-                'b.create_invoice_time', 'b.payment_reminder_time',
+                'b.id', 'b.create_invoice', 'b.payment_reminder', 'b.cut_day',
+                'b.create_invoice_time', 'b.payment_reminder_time', 'b.cut_time',
                 'b.payment_reminder_enabled',
             )
             ->selectRaw("b.id as billing_id,
                          extract(day from b.create_invoice)::int   as create_day,
                          extract(day from b.payment_reminder)::int as reminder_day,
+                         extract(day from b.cut_day)::int          as cut_day,
                          to_char(b.create_invoice_time,   'HH24:MI:SS') as create_time,
                          to_char(b.payment_reminder_time, 'HH24:MI:SS') as reminder_time,
+                         to_char(b.cut_time,              'HH24:MI:SS') as cut_time,
                          b.payment_reminder_enabled,
                          string_agg(distinct r.name, ', ') as router_names")
             ->orderBy('b.id')
@@ -389,8 +394,10 @@ class IspwatchRepository
             'billing_id'               => (int) $r->billing_id,
             'create_day'               => $r->create_day !== null ? (int) $r->create_day : null,
             'reminder_day'             => $r->reminder_day !== null ? (int) $r->reminder_day : null,
+            'cut_day'                  => $r->cut_day !== null ? (int) $r->cut_day : null,
             'create_time'              => $r->create_time,   // 'HH:MM:SS' (hora local ISP) o null
             'reminder_time'            => $r->reminder_time, // 'HH:MM:SS' (hora local ISP) o null
+            'cut_time'                 => $r->cut_time,      // 'HH:MM:SS' (hora local ISP) o null
             'payment_reminder_enabled' => (bool) $r->payment_reminder_enabled,
             'router_names'             => $r->router_names,
         ])->all();
@@ -502,6 +509,285 @@ class IspwatchRepository
         } catch (\Throwable) {
             return null;
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    //  Avisos por EVENTO (polling incremental para whatsapp:events-notify).
+    //  ispwatch es solo lectura: no hay webhooks/triggers. Detectamos "lo nuevo"
+    //  con una marca de agua sobre el id de la tabla origen (user_services / payments).
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Mayor `user_services.id` con servicio activo del tenant. Compuerta barata:
+     * si no supera el cursor guardado, la corrida no hace el query pesado. Sirve
+     * también para sembrar el cursor en el arranque (cold-start) sin enviar nada.
+     */
+    public function maxActivationId(int $ispwatchTenantId): int
+    {
+        $in  = implode(',', array_fill(0, count(self::ACTIVE_SERVICE_STATUSES), '?'));
+        $row = \DB::connection('ispwatch')->selectOne(
+            "select coalesce(max(us.id), 0) as max_id
+               from user_services us
+               join users u on u.id = us.user_id
+              where u.tenant_id = ? and us.status in ({$in})",
+            [$ispwatchTenantId, ...self::ACTIVE_SERVICE_STATUSES],
+        );
+
+        return (int) ($row->max_id ?? 0);
+    }
+
+    /**
+     * Activaciones de servicio NUEVAS (user_services.id > $afterId) del tenant,
+     * con datos del cliente y su plan. Cada fila trae `cluster_size`: cuántas
+     * activaciones del MISMO tenant cayeron dentro de ±$clusterWindowSeconds de su
+     * `created_at`. Sirve para distinguir alta MANUAL (1-4/min) de CARGA MASIVA
+     * (decenas/cientos en el mismo minuto) — a estas NO se les manda bienvenida.
+     *
+     * El count over() se calcula sobre TODAS las activaciones del tenant (no solo
+     * las nuevas), así la densidad es real aunque el vecino ya se haya procesado.
+     *
+     * Sin caché: es un job batch y la frescura importa.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function newActivationsSince(int $ispwatchTenantId, int $afterId, int $limit, int $clusterWindowSeconds): array
+    {
+        $window   = max(0, $clusterWindowSeconds);
+        $limitInt = max(1, $limit);
+        $in       = implode(',', array_fill(0, count(self::ACTIVE_SERVICE_STATUSES), '?'));
+
+        $sql = <<<SQL
+            select x.* from (
+                select
+                    us.id             as service_id,
+                    us.user_id        as customer_user_id,
+                    us.created_at     as activated_at,
+                    u.tel             as phone,
+                    u.name            as user_name,
+                    cp.name           as cp_name,
+                    cp.last_name      as cp_last_name,
+                    cp.pppoe_username as pppoe_username,
+                    cp.address        as address,
+                    cp.status         as cp_status,
+                    sp.name           as plan_name,
+                    count(*) over (
+                        partition by u.tenant_id
+                        order by us.created_at
+                        range between interval '{$window} seconds' preceding
+                                  and interval '{$window} seconds' following
+                    ) as cluster_size
+                from user_services us
+                join users u on u.id = us.user_id
+                left join customer_profile cp on cp.user_id = u.id
+                left join service_plan sp on sp.id = us.service_plan_id
+                where u.tenant_id = ?
+                  and us.status in ({$in})
+            ) x
+            where x.service_id > ?
+            order by x.service_id asc
+            limit {$limitInt}
+        SQL;
+
+        $rows = \DB::connection('ispwatch')->select(
+            $sql,
+            [$ispwatchTenantId, ...self::ACTIVE_SERVICE_STATUSES, $afterId],
+        );
+
+        return array_map(fn ($r) => [
+            'service_id'       => (int) $r->service_id,
+            'customer_user_id' => (int) $r->customer_user_id,
+            'activated_at'     => $r->activated_at,
+            'phone'            => $r->phone,
+            'customer_name'    => trim(($r->cp_name ?: $r->user_name) . ' ' . ($r->cp_last_name ?? '')) ?: 'Cliente',
+            'pppoe_username'   => $r->pppoe_username,
+            'address'          => $r->address,
+            'plan_name'        => $r->plan_name,
+            'cp_status'        => (bool) $r->cp_status,
+            'cluster_size'     => (int) $r->cluster_size,
+        ], $rows);
+    }
+
+    /**
+     * Mayor `payments.id` (completado) del tenant. Compuerta barata / semilla de
+     * cursor, igual que maxActivationId().
+     */
+    public function maxPaymentId(int $ispwatchTenantId): int
+    {
+        $row = \DB::connection('ispwatch')->selectOne(
+            "select coalesce(max(id), 0) as max_id
+               from payments where tenant_id = ? and status = 'completed'",
+            [$ispwatchTenantId],
+        );
+
+        return (int) ($row->max_id ?? 0);
+    }
+
+    /**
+     * Pagos NUEVOS (payments.id > $afterId, status completed) del tenant, con el
+     * cliente y su saldo pendiente TRAS el pago (suma de balance_due de facturas
+     * abiertas). Sin caché: batch.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function newPaymentsSince(int $ispwatchTenantId, int $afterId, int $limit): array
+    {
+        $limitInt = max(1, $limit);
+
+        $sql = <<<SQL
+            select
+                p.id           as payment_id,
+                p.customer_id  as customer_user_id,
+                p.amount       as amount,
+                p.payment_date as payment_date,
+                p.method       as method,
+                p.reference    as reference,
+                p.created_at   as created_at,
+                u.tel          as phone,
+                u.name         as user_name,
+                cp.name        as cp_name,
+                cp.last_name   as cp_last_name,
+                (select coalesce(sum(i.balance_due), 0)
+                   from invoices i
+                  where i.customer_id = p.customer_id
+                    and i.tenant_id   = ?
+                    and i.balance_due > 0) as pending_balance
+            from payments p
+            join users u on u.id = p.customer_id
+            left join customer_profile cp on cp.user_id = u.id
+            where p.tenant_id = ?
+              and p.status = 'completed'
+              and p.id > ?
+            order by p.id asc
+            limit {$limitInt}
+        SQL;
+
+        $rows = \DB::connection('ispwatch')->select($sql, [$ispwatchTenantId, $ispwatchTenantId, $afterId]);
+
+        return array_map(fn ($r) => [
+            'payment_id'       => (int) $r->payment_id,
+            'customer_user_id' => (int) $r->customer_user_id,
+            'amount'           => (string) $r->amount,
+            'payment_date'     => $r->payment_date,
+            'method'           => $r->method,
+            'reference'        => $r->reference,
+            'created_at'       => $r->created_at,
+            'phone'            => $r->phone,
+            'customer_name'    => trim(($r->cp_name ?: $r->user_name) . ' ' . ($r->cp_last_name ?? '')) ?: 'Cliente',
+            'pending_balance'  => (string) $r->pending_balance,
+        ], $rows);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    //  FALLA MASIVA por core/router (router_outage_events → fan-out a clientes).
+    //  ispwatch inserta una fila cuando un core cae (type=inicio) o se restablece
+    //  (type=fin). El "core" es un router; los clientes dependen de él vía
+    //  customer_profile.router_id. Un outage afecta a TODOS sus clientes activos.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Mayor `router_outage_events.id` del tenant cuyo `type` esté en $types
+     * (lista lowercase). Compuerta barata / semilla de cursor.
+     *
+     * @param  array<int, string>  $types
+     */
+    public function maxOutageId(int $ispwatchTenantId, array $types): int
+    {
+        if ($types === []) {
+            return 0;
+        }
+        $in = implode(',', array_fill(0, count($types), '?'));
+
+        $row = \DB::connection('ispwatch')->selectOne(
+            "select coalesce(max(id), 0) as max_id
+               from router_outage_events
+              where tenant_id = ? and lower(type) in ({$in})",
+            [$ispwatchTenantId, ...$types],
+        );
+
+        return (int) ($row->max_id ?? 0);
+    }
+
+    /**
+     * Eventos de outage NUEVOS (id > $afterId) del tenant cuyo `type` esté en
+     * $types, con el nombre del router. `is_latest` = este evento es el MÁS
+     * RECIENTE de su router (cualquier tipo): si es false, ya hay un evento
+     * posterior (p.ej. la falla ya se resolvió) y el aviso está superado → no
+     * se debe enviar. Sin caché: batch.
+     *
+     * @param  array<int, string>  $types
+     * @return array<int, array<string, mixed>>
+     */
+    public function newOutagesSince(int $ispwatchTenantId, array $types, int $afterId, int $limit): array
+    {
+        if ($types === []) {
+            return [];
+        }
+        $limitInt = max(1, $limit);
+        $in       = implode(',', array_fill(0, count($types), '?'));
+
+        $sql = <<<SQL
+            select
+                e.id             as outage_id,
+                e.router_id      as router_id,
+                e.type           as type,
+                e.affected_count as affected_count,
+                e.created_at     as created_at,
+                r.name           as router_name,
+                (e.id = (select max(e2.id) from router_outage_events e2
+                          where e2.tenant_id = e.tenant_id
+                            and e2.router_id = e.router_id)) as is_latest
+            from router_outage_events e
+            left join router r on r.id = e.router_id
+            where e.tenant_id = ?
+              and lower(e.type) in ({$in})
+              and e.id > ?
+            order by e.id asc
+            limit {$limitInt}
+        SQL;
+
+        $rows = \DB::connection('ispwatch')->select($sql, [$ispwatchTenantId, ...$types, $afterId]);
+
+        return array_map(fn ($r) => [
+            'outage_id'      => (int) $r->outage_id,
+            'router_id'      => (int) $r->router_id,
+            'type'           => $r->type,
+            'affected_count' => $r->affected_count !== null ? (int) $r->affected_count : null,
+            'created_at'     => $r->created_at,
+            'router_name'    => $r->router_name,
+            'is_latest'      => (bool) $r->is_latest,
+        ], $rows);
+    }
+
+    /**
+     * Clientes ACTIVOS (cp.status = true) que dependen del router dado, con
+     * teléfono. Destinatarios del aviso de falla masiva. Sin caché: batch.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function activeCustomersForRouter(int $ispwatchTenantId, int $routerId): array
+    {
+        $sql = <<<'SQL'
+            select
+                u.id         as customer_user_id,
+                u.tel        as phone,
+                u.name       as user_name,
+                cp.name      as cp_name,
+                cp.last_name as cp_last_name
+            from customer_profile cp
+            join users u on u.id = cp.user_id
+            where u.tenant_id = ?
+              and cp.router_id = ?
+              and cp.status = true
+            order by u.id asc
+        SQL;
+
+        $rows = \DB::connection('ispwatch')->select($sql, [$ispwatchTenantId, $routerId]);
+
+        return array_map(fn ($r) => [
+            'customer_user_id' => (int) $r->customer_user_id,
+            'phone'            => $r->phone,
+            'customer_name'    => trim(($r->cp_name ?: $r->user_name) . ' ' . ($r->cp_last_name ?? '')) ?: 'Cliente',
+        ], $rows);
     }
 
     /**

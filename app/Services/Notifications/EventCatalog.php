@@ -104,6 +104,86 @@ class EventCatalog
                     'empresa'           => ['label' => 'Tu empresa',            'description' => 'Nombre comercial de tu workspace.',       'sample' => 'Mi ISP'],
                 ],
             ],
+
+            'service_suspension' => [
+                'label'       => 'Aviso de suspensión (corte por mora)',
+                'description' => 'Avisa al cliente con saldo pendiente que su servicio será suspendido por mora. Distinto del recordatorio: se envía el día de CORTE del router, no el de recordatorio.',
+                'trigger'     => 'El día de corte del router (campo cut_day del billing). Solo a clientes con saldo pendiente.',
+                'auto'        => true,
+                'variables'   => [
+                    'nombre_cliente'    => ['label' => 'Nombre del cliente',    'description' => 'Nombre del cliente en ispwatch.',        'sample' => 'Juan Pérez'],
+                    'saldo'             => ['label' => 'Saldo pendiente',       'description' => 'Saldo aún por pagar de la factura.',      'sample' => '$45.000'],
+                    'mes_facturado'     => ['label' => 'Mes facturado',         'description' => 'Mes al que corresponde la factura, en texto.', 'sample' => 'julio'],
+                    'numero_factura'    => ['label' => 'Número de factura',     'description' => 'Consecutivo de la factura.',              'sample' => 'FAC-1234'],
+                    'fecha_vencimiento' => ['label' => 'Fecha de vencimiento',  'description' => 'Fecha límite de pago (formato d/m/Y).',   'sample' => '15/06/2026'],
+                    'fecha_corte'       => ['label' => 'Fecha de corte',        'description' => 'Fecha en que se suspende el servicio (hoy).', 'sample' => '30/06/2026'],
+                    'empresa'           => ['label' => 'Tu empresa',            'description' => 'Nombre comercial de tu workspace.',       'sample' => 'Mi ISP'],
+                ],
+            ],
+
+            'service_activated' => [
+                'label'       => 'Bienvenida (servicio activado)',
+                'description' => 'Da la bienvenida al cliente cuando se le activa el servicio en ispwatch. Se envía UNA sola vez por cliente y SOLO en altas manuales: las cargas masivas se omiten aunque el aviso esté activo.',
+                'trigger'     => 'Cuando se activa el servicio de un cliente creado manualmente (no en carga masiva ni al editar el servicio).',
+                'auto'        => true,
+                'variables'   => [
+                    'nombre_cliente' => ['label' => 'Nombre del cliente', 'description' => 'Nombre completo del cliente.',        'sample' => 'Juan Pérez'],
+                    'primer_nombre'  => ['label' => 'Primer nombre',      'description' => 'Solo el primer nombre del cliente.',  'sample' => 'Juan'],
+                    'plan'           => ['label' => 'Plan contratado',    'description' => 'Nombre del plan de servicio activado.', 'sample' => '10 MEGAS'],
+                    'usuario_pppoe'  => ['label' => 'Usuario PPPoE',      'description' => 'Usuario de conexión del cliente.',    'sample' => 'juanperez01'],
+                    'direccion'      => ['label' => 'Dirección',          'description' => 'Dirección registrada del cliente.',   'sample' => 'Cra 10 # 20-30'],
+                    'empresa'        => ['label' => 'Tu empresa',         'description' => 'Nombre comercial de tu workspace.',   'sample' => 'Mi ISP'],
+                    'saludo'         => ['label' => 'Saludo según la hora', 'description' => 'Buenos días / Buenas tardes / Buenas noches.', 'sample' => 'Buenos días'],
+                    'fecha_actual'   => ['label' => 'Fecha de hoy',       'description' => 'Fecha actual (d/m/Y).',               'sample' => '03/07/2026'],
+                ],
+            ],
+
+            'payment_registered' => [
+                'label'       => 'Pago registrado',
+                'description' => 'Confirma al cliente que su pago quedó registrado en ispwatch.',
+                'trigger'     => 'Cuando se registra un pago del cliente en ispwatch.',
+                'auto'        => true,
+                'variables'   => [
+                    'nombre_cliente' => ['label' => 'Nombre del cliente', 'description' => 'Nombre completo del cliente.',        'sample' => 'Juan Pérez'],
+                    'primer_nombre'  => ['label' => 'Primer nombre',      'description' => 'Solo el primer nombre del cliente.',  'sample' => 'Juan'],
+                    'monto'          => ['label' => 'Monto del pago',     'description' => 'Valor del pago registrado.',          'sample' => '$45.000'],
+                    'metodo'         => ['label' => 'Método de pago',     'description' => 'Medio con que se registró el pago.',  'sample' => 'Efectivo'],
+                    'referencia'     => ['label' => 'Referencia',         'description' => 'Referencia o comprobante del pago.',  'sample' => 'REF-0099'],
+                    'fecha_pago'     => ['label' => 'Fecha del pago',     'description' => 'Fecha en que se registró el pago (d/m/Y).', 'sample' => '03/07/2026'],
+                    'saldo_restante' => ['label' => 'Saldo restante',     'description' => 'Saldo pendiente del cliente tras el pago.', 'sample' => '$0'],
+                    'empresa'        => ['label' => 'Tu empresa',         'description' => 'Nombre comercial de tu workspace.',   'sample' => 'Mi ISP'],
+                ],
+            ],
+
+            'router_outage_start' => [
+                'label'       => 'Falla masiva — inicio',
+                'description' => 'Avisa a TODOS los clientes activos de un core/router que está presentando una falla. Se dispara cuando ispwatch reporta la caída del router (fan-out masivo, paceado).',
+                'trigger'     => 'Cuando ispwatch reporta que un core entró en falla (router_outage_events).',
+                'auto'        => true,
+                'variables'   => [
+                    'nombre_cliente' => ['label' => 'Nombre del cliente', 'description' => 'Nombre completo del cliente.',        'sample' => 'Juan Pérez'],
+                    'primer_nombre'  => ['label' => 'Primer nombre',      'description' => 'Solo el primer nombre del cliente.',  'sample' => 'Juan'],
+                    'empresa'        => ['label' => 'Tu empresa',         'description' => 'Nombre comercial de tu workspace.',   'sample' => 'Mi ISP'],
+                    'saludo'         => ['label' => 'Saludo según la hora', 'description' => 'Buenos días / Buenas tardes / Buenas noches.', 'sample' => 'Buenas tardes'],
+                    'fecha_actual'   => ['label' => 'Fecha de hoy',       'description' => 'Fecha actual (d/m/Y).',               'sample' => '03/07/2026'],
+                    'hora_actual'    => ['label' => 'Hora actual',        'description' => 'Hora actual (HH:mm).',                'sample' => '14:30'],
+                ],
+            ],
+
+            'router_outage_resolved' => [
+                'label'       => 'Falla masiva — restablecido',
+                'description' => 'Avisa a los clientes activos del core/router que el servicio ya fue restablecido. Se dispara cuando ispwatch reporta que el router volvió a estar activo.',
+                'trigger'     => 'Cuando ispwatch reporta que el core se restableció (router_outage_events).',
+                'auto'        => true,
+                'variables'   => [
+                    'nombre_cliente' => ['label' => 'Nombre del cliente', 'description' => 'Nombre completo del cliente.',        'sample' => 'Juan Pérez'],
+                    'primer_nombre'  => ['label' => 'Primer nombre',      'description' => 'Solo el primer nombre del cliente.',  'sample' => 'Juan'],
+                    'empresa'        => ['label' => 'Tu empresa',         'description' => 'Nombre comercial de tu workspace.',   'sample' => 'Mi ISP'],
+                    'saludo'         => ['label' => 'Saludo según la hora', 'description' => 'Buenos días / Buenas tardes / Buenas noches.', 'sample' => 'Buenas tardes'],
+                    'fecha_actual'   => ['label' => 'Fecha de hoy',       'description' => 'Fecha actual (d/m/Y).',               'sample' => '03/07/2026'],
+                    'hora_actual'    => ['label' => 'Hora actual',        'description' => 'Hora actual (HH:mm).',                'sample' => '15:10'],
+                ],
+            ],
         ];
     }
 
@@ -206,6 +286,13 @@ class EventCatalog
         $date  = fn ($v): string => $v ? Carbon::parse($v)->format('d/m/Y') : '';
         // Mes en texto (es), del mes de emisión de la factura; respaldo al vencimiento.
         $month = fn ($v): string => $v ? Carbon::parse($v)->locale('es')->isoFormat('MMMM') : '';
+        $first = fn ($v): string => ($v = trim((string) $v)) !== '' ? (explode(' ', $v)[0] ?? '') : '';
+        // Saludo según la hora local del ISP (misma zona que usan los avisos).
+        $greeting = function (): string {
+            $tz   = config('services.whatsapp.billing_notify_timezone', 'America/Bogota');
+            $hour = (int) Carbon::now($tz)->format('H');
+            return $hour < 12 ? 'Buenos días' : ($hour < 19 ? 'Buenas tardes' : 'Buenas noches');
+        };
 
         return match ($eventKey) {
             'invoice_created' => [
@@ -223,6 +310,44 @@ class EventCatalog
                 'numero_factura'    => (string) ($row['invoice_number'] ?? ''),
                 'fecha_vencimiento' => $date($row['due_date'] ?? null),
                 'empresa'           => (string) $tenant->name,
+            ],
+            'service_suspension' => [
+                'nombre_cliente'    => (string) $row['customer_name'],
+                'saldo'             => $money($row['balance_due'] ?? $row['total']),
+                'mes_facturado'     => $month($row['issue_date'] ?? $row['due_date'] ?? null),
+                'numero_factura'    => (string) ($row['invoice_number'] ?? ''),
+                'fecha_vencimiento' => $date($row['due_date'] ?? null),
+                // Se envía el día de corte, así que "hoy" es la fecha de corte.
+                'fecha_corte'       => Carbon::now()->format('d/m/Y'),
+                'empresa'           => (string) $tenant->name,
+            ],
+            'service_activated' => [
+                'nombre_cliente' => (string) $row['customer_name'],
+                'primer_nombre'  => $first($row['customer_name'] ?? ''),
+                'plan'           => (string) ($row['plan_name'] ?? ''),
+                'usuario_pppoe'  => (string) ($row['pppoe_username'] ?? ''),
+                'direccion'      => (string) ($row['address'] ?? ''),
+                'empresa'        => (string) $tenant->name,
+                'saludo'         => $greeting(),
+                'fecha_actual'   => Carbon::now()->format('d/m/Y'),
+            ],
+            'payment_registered' => [
+                'nombre_cliente' => (string) $row['customer_name'],
+                'primer_nombre'  => $first($row['customer_name'] ?? ''),
+                'monto'          => $money($row['amount'] ?? 0),
+                'metodo'         => (string) ($row['method'] ?? ''),
+                'referencia'     => (string) ($row['reference'] ?? ''),
+                'fecha_pago'     => $date($row['payment_date'] ?? null),
+                'saldo_restante' => $money($row['pending_balance'] ?? 0),
+                'empresa'        => (string) $tenant->name,
+            ],
+            'router_outage_start', 'router_outage_resolved' => [
+                'nombre_cliente' => (string) $row['customer_name'],
+                'primer_nombre'  => $first($row['customer_name'] ?? ''),
+                'empresa'        => (string) $tenant->name,
+                'saludo'         => $greeting(),
+                'fecha_actual'   => Carbon::now()->format('d/m/Y'),
+                'hora_actual'    => Carbon::now(config('services.whatsapp.billing_notify_timezone', 'America/Bogota'))->format('H:i'),
             ],
             'general' => self::generalValues($row, $tenant, $agentName, $money),
             default   => [],

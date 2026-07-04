@@ -34,6 +34,20 @@ Schedule::command('whatsapp:billing-notify')
     ->withoutOverlapping(10)
     ->onOneServer();
 
+// ── Avisos por EVENTO de ispwatch (bienvenida + pago registrado) ──────────
+// Corre cada MINUTO. Polling incremental (marca de agua por tenant+evento en
+// ispwatch_event_cursors) sobre user_services / payments: ispwatch es solo
+// lectura y no hay webhooks. En reposo el tic es barato: un MAX(id) por
+// tenant/evento activo y corta si no hay nada nuevo. Apagado por defecto: solo
+// procesa eventos con ruta activa (Settings → Avisos). Salvaguardas anti-baneo:
+// cold-start (siembra el cursor sin enviar histórico), ventana de frescura,
+// supresión de carga masiva por densidad (solo bienvenida a altas manuales),
+// idempotencia por (tenant,kind,ref) y pacing (tope + micro-espaciado).
+Schedule::command('whatsapp:events-notify')
+    ->everyMinute()
+    ->withoutOverlapping(10)
+    ->onOneServer();
+
 // ── Campañas masivas de WhatsApp ──────────────────────────────────────────
 // Corre cada minuto: promueve campañas agendadas cuya hora llegó y despacha
 // el siguiente lote (throttle_per_minute) de cada campaña en envío. Barato

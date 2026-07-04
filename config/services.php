@@ -70,5 +70,41 @@ return [
         // segundo. 250ms × 40 ≈ 10s, holgado dentro del lock withoutOverlapping(10).
         // 0 = sin pausa entre mensajes.
         'billing_notify_gap_ms' => (int) env('WHATSAPP_BILLING_NOTIFY_GAP_MS', 250),
+
+        // ── Avisos por EVENTO (whatsapp:events-notify): bienvenida + pago ──────
+        // Comparten el interruptor maestro (billing_notify_enabled) y la zona
+        // horaria de arriba. La activación real de cada evento es su ruta en
+        // Settings → Avisos (apagada por defecto).
+        //
+        // Tope de ENVÍOS por tenant/evento por corrida (pacing anti-baneo). Como
+        // corre cada minuto y avanza el cursor solo sobre lo procesado, una ráfaga
+        // se drena sola en varios minutos. 0 = sin tope.
+        'events_notify_per_minute' => (int) env('WHATSAPP_EVENTS_NOTIFY_PER_MINUTE', 30),
+        // Micro-espaciado entre envíos reales (ms).
+        'events_notify_gap_ms' => (int) env('WHATSAPP_EVENTS_NOTIFY_GAP_MS', 350),
+        // Ventana de frescura: no se envía por un registro cuyo created_at sea más
+        // viejo que N días (evita soltar bienvenidas/confirmaciones rancias tras una
+        // caída larga). El cursor igual avanza sobre esos registros (no se reintentan).
+        'events_notify_freshness_days' => (int) env('WHATSAPP_EVENTS_NOTIFY_FRESHNESS_DAYS', 2),
+        // Detección de CARGA MASIVA (solo bienvenida): si >= este nº de activaciones
+        // del mismo tenant caen dentro de la ventana, se tratan como importación y NO
+        // reciben bienvenida aunque el aviso esté activo. Manual observado: 1-4/min.
+        'events_notify_bulk_threshold' => (int) env('WHATSAPP_EVENTS_NOTIFY_BULK_THRESHOLD', 5),
+        // Ventana (segundos) alrededor de cada activación para medir la densidad
+        // anterior. Las importaciones caen en el mismo minuto; 120s cubre el borde.
+        'events_notify_bulk_window_seconds' => (int) env('WHATSAPP_EVENTS_NOTIFY_BULK_WINDOW_SECONDS', 120),
+
+        // ── FALLA MASIVA por core/router (router_outage_start / _resolved) ─────
+        // ispwatch inserta una fila en `router_outage_events` cuando un core cae
+        // (type=inicio) o se restablece (type=fin). Converza hace fan-out del aviso
+        // a TODOS los clientes activos de ese router. Valores del campo `type` que
+        // cuentan como inicio/fin (coma-separados, case-insensitive). AJUSTAR si
+        // ispwatch usa otras cadenas: si no coinciden, no se envía nada (seguro).
+        'outage_type_start'    => env('WHATSAPP_OUTAGE_TYPE_START', 'start,inicio,down,outage,open'),
+        'outage_type_resolved' => env('WHATSAPP_OUTAGE_TYPE_RESOLVED', 'resolved,fin,resuelto,up,recovered,close'),
+        // Frescura del aviso de falla, en HORAS (más corto que los otros eventos:
+        // avisar de una caída de hace días no tiene sentido). Un evento de outage
+        // más viejo que esto se omite (el cursor avanza). Default 6h.
+        'outage_freshness_hours' => (int) env('WHATSAPP_OUTAGE_FRESHNESS_HOURS', 6),
     ],
 ];
