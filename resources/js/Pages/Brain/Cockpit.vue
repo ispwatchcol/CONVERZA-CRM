@@ -5,8 +5,16 @@ import { Link } from '@inertiajs/vue3';
 const props = defineProps({
     stats:            Object,
     renewing_soon:    Array,
+    overdue_services: { type: Array, default: () => [] },
     recent_accounts:  Array,
 });
+
+// Convierte un mapa {moneda: monto} a texto "US$88 · $1.200.000" (o "—" si vacío).
+function money(map) {
+    const entries = Object.entries(map ?? {});
+    if (entries.length === 0) return '—';
+    return entries.map(([cur, amt]) => formatAmount(amt, cur)).join(' · ');
+}
 
 const statusLabel = {
     prospect:  'Prospecto',
@@ -46,6 +54,25 @@ function formatAmount(amount, currency) {
                     <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
                     Nueva cuenta
                 </Link>
+            </div>
+
+            <!-- Finanzas -->
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div class="bg-gradient-to-br from-violet-600 to-violet-700 rounded-xl p-5 text-white shadow-sm">
+                    <p class="text-xs uppercase tracking-wider text-violet-100">MRR — ingreso mensual</p>
+                    <p class="text-2xl font-bold mt-1">{{ money(stats.mrr) }}</p>
+                    <p class="text-xs text-violet-200 mt-1">recurrente de cuentas activas</p>
+                </div>
+                <div class="bg-white rounded-xl border border-gray-200 p-5">
+                    <p class="text-xs uppercase tracking-wider text-gray-500">Por cobrar</p>
+                    <p class="text-2xl font-bold mt-1" :class="Object.keys(stats.pending ?? {}).length ? 'text-red-600' : 'text-gray-900'">{{ money(stats.pending) }}</p>
+                    <p class="text-xs text-gray-400 mt-1">saldo de facturas abiertas</p>
+                </div>
+                <div class="bg-white rounded-xl border border-gray-200 p-5">
+                    <p class="text-xs uppercase tracking-wider text-gray-500">Facturas vencidas</p>
+                    <p class="text-2xl font-bold mt-1" :class="stats.overdue_count > 0 ? 'text-red-600' : 'text-gray-400'">{{ stats.overdue_count ?? 0 }}</p>
+                    <p class="text-xs text-gray-400 mt-1">pasadas de la fecha de pago</p>
+                </div>
             </div>
 
             <!-- Stats -->
@@ -96,6 +123,28 @@ function formatAmount(amount, currency) {
                                 <span class="font-semibold text-gray-900 ml-1">{{ formatAmount(p.amount, p.currency) }}</span>
                             </p>
                         </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Servicios vencidos (candidatos a corte) -->
+            <div v-if="overdue_services.length > 0" class="bg-red-50 border border-red-200 rounded-xl p-5">
+                <h2 class="text-sm font-semibold text-red-800 mb-3 flex items-center gap-2">
+                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" /></svg>
+                    Servicios vencidos — candidatos a corte ({{ overdue_services.length }})
+                </h2>
+                <div class="space-y-2">
+                    <div v-for="a in overdue_services" :key="a.id"
+                        class="flex items-center justify-between bg-white rounded-lg px-4 py-2.5 border border-red-100">
+                        <div>
+                            <Link :href="route('brain.accounts.show', a.id)" class="font-medium text-gray-900 hover:text-violet-700 transition text-sm">{{ a.name }}</Link>
+                            <p class="text-xs text-red-700 mt-0.5">
+                                <span v-for="(p, i) in a.products" :key="p.product">
+                                    <span class="capitalize">{{ productLabel[p.product] }}</span> venció hace {{ p.days_over }} d{{ i < a.products.length - 1 ? ' · ' : '' }}
+                                </span>
+                            </p>
+                        </div>
+                        <Link :href="route('brain.accounts.show', a.id)" class="text-xs font-medium text-red-700 bg-red-50 border border-red-200 px-3 py-1.5 rounded-lg hover:bg-red-100 transition">Revisar</Link>
                     </div>
                 </div>
             </div>

@@ -1,6 +1,6 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
-import { useForm, router, Head } from '@inertiajs/vue3';
+import { useForm, router, Head, Link } from '@inertiajs/vue3';
 import { ref, computed } from 'vue';
 
 const props = defineProps({
@@ -191,6 +191,20 @@ function formatDate(iso) {
                             <span class="w-1.5 h-1.5 rounded-full bg-gray-400"></span>
                             Sin ISPWatch
                         </span>
+                    </div>
+
+                    <!-- Cuenta del Core Brain vinculada -->
+                    <div class="mb-3">
+                        <Link v-if="t.account" :href="route('brain.accounts.show', t.account.id)"
+                              class="inline-flex items-center gap-1 text-[11px] font-medium text-violet-700 hover:underline">
+                            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12l8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25" /></svg>
+                            Cuenta: {{ t.account.name }}
+                        </Link>
+                        <Link v-else :href="route('brain.accounts.index')"
+                              class="inline-flex items-center gap-1 text-[11px] text-gray-400 hover:text-violet-600 transition">
+                            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
+                            Sin cuenta — vincular en Core Brain
+                        </Link>
                     </div>
 
                     <!-- Stats del tenant -->

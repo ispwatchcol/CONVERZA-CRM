@@ -59,17 +59,20 @@ class Account extends Model
         return $this->hasMany(AccountProduct::class);
     }
 
-    /** MRR en la moneda base de cada producto activo. */
+    /**
+     * MRR (ingreso mensual recurrente) por moneda, sumando los productos activos.
+     *
+     * Combo-safe: un combo guarda el precio del paquete en la fila de Converza y 0
+     * en la de ISPWatch (ambas comparten el mismo `plan_key` combo_*), por lo que la
+     * suma simple no lo cuenta dos veces.
+     *
+     * @return array<string, float>
+     */
     public function getMrrAttribute(): array
     {
         $mrr = [];
         foreach ($this->products->where('status', 'active') as $product) {
-            $monthly = match ($product->billing_cycle) {
-                'quarterly' => $product->amount / 3,
-                'yearly'    => $product->amount / 12,
-                default     => $product->amount,
-            };
-            $mrr[$product->currency] = ($mrr[$product->currency] ?? 0) + $monthly;
+            $mrr[$product->currency] = ($mrr[$product->currency] ?? 0) + $product->monthlyAmount();
         }
         return $mrr;
     }

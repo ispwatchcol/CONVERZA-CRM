@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Models\Brain\Account;
 use App\Models\StaffMember;
 use App\Models\Tenant;
 use App\Models\User;
@@ -48,7 +49,12 @@ class TenantsController extends Controller
             ? $this->ispwatch->tenantInfoBatch($ispwatchIds)
             : [];
 
-        $tenants = $allTenants->map(function (Tenant $t) use ($ispwatchInfos) {
+        // Cuenta del Core Brain vinculada a cada tenant (puente Tenants → Cuentas).
+        $accountsByTenant = Account::whereIn('tenant_id', $allTenants->pluck('id'))
+            ->get(['id', 'name', 'tenant_id'])
+            ->keyBy('tenant_id');
+
+        $tenants = $allTenants->map(function (Tenant $t) use ($ispwatchInfos, $accountsByTenant) {
             // Status del link ISPWatch (resuelto en el batch previo)
             $ispwatchStatus = null;
             if ($t->ispwatch_tenant_id) {
@@ -57,6 +63,8 @@ class TenantsController extends Controller
                     ? ['connected' => true, 'name' => $info['name'], 'customers' => $info['customers_count']]
                     : ['connected' => false, 'message' => "Tenant #{$t->ispwatch_tenant_id} no existe en ispwatch"];
             }
+
+            $account = $accountsByTenant[$t->id] ?? null;
 
             return [
                 'id'                  => $t->id,
@@ -70,6 +78,7 @@ class TenantsController extends Controller
                 'users_count'         => (int) $t->users_count,
                 'contacts_count'      => (int) $t->contacts_count,
                 'conversations_count' => (int) $t->conversations_count,
+                'account'             => $account ? ['id' => $account->id, 'name' => $account->name] : null,
                 'created_at'          => $t->created_at?->toIso8601String(),
             ];
         });

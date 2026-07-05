@@ -10,6 +10,7 @@ use App\Models\Brain\AccountProduct;
 use App\Models\Brain\SupportTicket;
 use App\Models\Tenant;
 use App\Models\User;
+use App\Services\Brain\PlanCatalog;
 use App\Services\Ispwatch\IspwatchRepository;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
@@ -51,12 +52,34 @@ class AccountController extends Controller
             'accounts'       => $accounts,
             'filters'        => ['search' => $search, 'status' => $status],
             'internal_users' => $internalUsers,
+            'tenants'        => $this->linkableTenants(),
+            'plan_catalog'   => PlanCatalog::forFrontend(),
         ]);
+    }
+
+    /**
+     * Tenants de Converza que se pueden vincular a una cuenta (dropdown del modal).
+     * Trae también qué cuenta ya los usa, para no vincular el mismo tenant dos veces.
+     *
+     * @return \Illuminate\Support\Collection<int, array>
+     */
+    private function linkableTenants()
+    {
+        $takenByAccount = Account::whereNotNull('tenant_id')->pluck('name', 'tenant_id');
+
+        return Tenant::orderBy('name')->get(['id', 'name', 'slug', 'is_active'])
+            ->map(fn (Tenant $t) => [
+                'id'        => $t->id,
+                'name'      => $t->name,
+                'slug'      => $t->slug,
+                'is_active' => (bool) $t->is_active,
+                'taken_by'  => $takenByAccount[$t->id] ?? null,
+            ]);
     }
 
     public function show(Account $account)
     {
-        $account->load(['products', 'ownerUser']);
+        $account->load(['products', 'ownerUser', 'tenant:id,name,slug']);
 
         $converzaLive = null;
         if ($account->tenant_id) {
@@ -173,6 +196,8 @@ class AccountController extends Controller
             'invoices'       => $invoices,
             'tickets'        => $tickets,
             'notes'          => $notes,
+            'tenants'        => $this->linkableTenants(),
+            'plan_catalog'   => PlanCatalog::forFrontend(),
         ]);
     }
 
@@ -193,9 +218,11 @@ class AccountController extends Controller
             'onboarding_at'      => ['nullable', 'date'],
             'renewal_at'         => ['nullable', 'date'],
             'notes'              => ['nullable', 'string', 'max:2000'],
-            // Productos opcionales
+            // Productos opcionales (para "solo ispwatch", "solo converza" o combo).
+            // El frontend expande un combo en sus DOS filas antes de enviar.
             'products'           => ['nullable', 'array'],
             'products.*.product' => ['required', Rule::in(['ispwatch', 'converza'])],
+            'products.*.plan_key' => ['nullable', Rule::in(PlanCatalog::keys())],
             'products.*.plan'    => ['nullable', 'string', 'max:60'],
             'products.*.status'  => ['required', Rule::in(['active', 'paused', 'cancelled'])],
             'products.*.billing_cycle' => ['required', Rule::in(['monthly', 'quarterly', 'yearly'])],
@@ -205,16 +232,37 @@ class AccountController extends Controller
             'products.*.renews_at'  => ['nullable', 'date'],
         ]);
 
+        if ($error = $this->validateIspwatchLink($validated['ispwatch_tenant_id'] ?? null)) {
+            return back()->withErrors(['ispwatch_tenant_id' => $error]);
+        }
+
         $account = Account::create([
-            ...$validated,
+            ...collect($validated)->except('products')->all(),
             'slug' => Str::slug($validated['name']) . '-' . Str::lower(Str::random(5)),
         ]);
 
         foreach ($validated['products'] ?? [] as $p) {
-            $account->products()->create($p);
+            // updateOrCreate por producto: un combo trae ispwatch+converza y no debe
+            // chocar con el unique(account_id, product) si se reenvía.
+            $account->products()->updateOrCreate(['product' => $p['product']], $p);
         }
 
         return back()->with('success', "Cuenta '{$account->name}' creada.");
+    }
+
+    /**
+     * Verifica que el tenant de ispwatch exista (read-only). Devuelve el mensaje de
+     * error o null si es válido / vacío. Evita vincular una cuenta a un ID inexistente.
+     */
+    private function validateIspwatchLink($ispwatchTenantId): ?string
+    {
+        if (empty($ispwatchTenantId)) {
+            return null;
+        }
+
+        return $this->ispwatch->tenantInfo((int) $ispwatchTenantId) === null
+            ? 'No existe un tenant con ese ID en ispwatch.'
+            : null;
     }
 
     public function update(Request $request, Account $account)
@@ -236,6 +284,11 @@ class AccountController extends Controller
             'notes'              => ['nullable', 'string', 'max:2000'],
         ]);
 
+        if ($validated['ispwatch_tenant_id'] != $account->ispwatch_tenant_id
+            && $error = $this->validateIspwatchLink($validated['ispwatch_tenant_id'] ?? null)) {
+            return back()->withErrors(['ispwatch_tenant_id' => $error]);
+        }
+
         $account->update($validated);
 
         return back()->with('success', "Cuenta '{$account->name}' actualizada.");
@@ -254,6 +307,7 @@ class AccountController extends Controller
     {
         $validated = $request->validate([
             'product'       => ['required', Rule::in(['ispwatch', 'converza'])],
+            'plan_key'      => ['nullable', Rule::in(PlanCatalog::keys())],
             'plan'          => ['nullable', 'string', 'max:60'],
             'status'        => ['required', Rule::in(['active', 'paused', 'cancelled'])],
             'billing_cycle' => ['required', Rule::in(['monthly', 'quarterly', 'yearly'])],
@@ -276,6 +330,7 @@ class AccountController extends Controller
         abort_if($product->account_id !== $account->id, 404);
 
         $validated = $request->validate([
+            'plan_key'      => ['nullable', Rule::in(PlanCatalog::keys())],
             'plan'          => ['nullable', 'string', 'max:60'],
             'status'        => ['required', Rule::in(['active', 'paused', 'cancelled'])],
             'billing_cycle' => ['required', Rule::in(['monthly', 'quarterly', 'yearly'])],
@@ -316,6 +371,7 @@ class AccountController extends Controller
             'owner'        => $a->ownerUser?->only('id', 'name'),
             'products'     => $a->products->map(fn ($p) => [
                 'product'  => $p->product,
+                'plan_key' => $p->plan_key,
                 'plan'     => $p->plan,
                 'amount'   => (string) $p->amount,
                 'currency' => $p->currency,
@@ -343,9 +399,11 @@ class AccountController extends Controller
             'renewal_at'         => $a->renewal_at?->toDateString(),
             'notes'              => $a->notes,
             'owner'              => $a->ownerUser?->only('id', 'name'),
+            'tenant'             => $a->tenant?->only('id', 'name', 'slug'),
             'products'           => $a->products->map(fn ($p) => [
                 'id'            => $p->id,
                 'product'       => $p->product,
+                'plan_key'      => $p->plan_key,
                 'plan'          => $p->plan,
                 'status'        => $p->status,
                 'billing_cycle' => $p->billing_cycle,
