@@ -57,10 +57,16 @@ const routesForm = useForm({
     }),
 });
 
-// Plantillas elegibles para un evento: las tageadas con ese propósito o las
-// "generales" (sin propósito).
+// Plantillas elegibles para un evento: las tageadas con ESTE evento, o las
+// "generales" (propósito libre). Ojo: "general" tiene dos formas equivalentes en
+// los datos — sin event_key (null, ej. plantillas sincronizadas de Meta) o con
+// event_key='general' (la que asigna el editor de plantillas). Ambas deben servir
+// para cualquier evento; antes solo se reconocía la primera y las 'general' del
+// editor (bienvenida, pago registrado, etc.) no aparecían en ningún dropdown.
 function templatesForEvent(eventKey) {
-    return props.approvedTemplates.filter((t) => t.event_key === eventKey || !t.event_key);
+    return props.approvedTemplates.filter(
+        (t) => t.event_key === eventKey || !t.event_key || t.event_key === 'general',
+    );
 }
 
 function saveNotifications() {
