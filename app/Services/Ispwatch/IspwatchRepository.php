@@ -348,7 +348,8 @@ class IspwatchRepository
 
     /**
      * Configuraciones de `billing` de un tenant con el envío por WhatsApp
-     * habilitado (`notificar_wpp = true`). Cada billing define las fechas que
+     * habilitado (`notification_type` whatsapp/both, o la legada `notificar_wpp
+     * = true`). Cada billing define las fechas que
      * disparan los avisos automáticos; de las fechas SOLO importa el día del
      * mes (las fechas guardadas pueden ser de meses pasados).
      *
@@ -372,7 +373,18 @@ class IspwatchRepository
             ->table('billing as b')
             ->leftJoin('router as r', 'r.billing_router_id', '=', 'b.id')
             ->where('b.tenant_id', $ispwatchTenantId)
-            ->where('b.notificar_wpp', true)
+            // Canal WhatsApp del core: la UI actual de ISPWatch lo elige con el
+            // selector "Tipo de Aviso al Crear Facturas" → notification_type in
+            // (whatsapp, both). Es la MISMA condición con la que el propio
+            // ISPWatch decide enviar por WhatsApp (Billing/PaymentReminderService).
+            // `notificar_wpp` es la columna LEGADA (UI vieja); ISPWatch ya no la
+            // escribe desde el selector, así que gatear solo por ella dejaba
+            // fuera a routers configurados con la UI nueva. Se mantiene como OR
+            // para no perder billings que solo tengan esa bandera puesta.
+            ->where(function ($q) {
+                $q->whereIn('b.notification_type', ['whatsapp', 'both'])
+                    ->orWhere('b.notificar_wpp', true);
+            })
             ->groupBy(
                 'b.id', 'b.create_invoice', 'b.payment_reminder', 'b.cut_day',
                 'b.create_invoice_time', 'b.payment_reminder_time', 'b.cut_time',

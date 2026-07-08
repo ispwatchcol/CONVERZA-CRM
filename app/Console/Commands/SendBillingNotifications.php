@@ -24,8 +24,10 @@ use Illuminate\Support\Facades\Log;
  *   - kind=invoice_created  → "factura generada", el día `create_invoice`.
  *   - kind=payment_reminder → "recordatorio de pago", el día `payment_reminder`.
  *
- * Gate: solo routers con `billing.notificar_wpp = true` (el toggle de WhatsApp
- * del core). De las fechas importa el DÍA del mes y la HORA local
+ * Gate: solo routers cuyo `billing.notification_type` sea `whatsapp`/`both` (el
+ * selector "Tipo de Aviso al Crear Facturas" del core; misma condición con la
+ * que ISPWatch decide enviar por WhatsApp). Se acepta también la columna legada
+ * `notificar_wpp = true`. De las fechas importa el DÍA del mes y la HORA local
  * (`create_invoice_time` / `payment_reminder_time`).
  *
  * Zona horaria: esas horas son `time without time zone` que el admin del ISP
@@ -198,7 +200,7 @@ class SendBillingNotifications extends Command
 
             $billings = $ispwatch->whatsappBillingConfigsForTenant((int) $tenant->ispwatch_tenant_id);
             if ($billings === []) {
-                $this->warn('  ↳ Ningún router con notificar_wpp activo. Saltando.');
+                $this->warn('  ↳ Ningún router con WhatsApp activo (notification_type whatsapp/both). Saltando.');
                 continue;
             }
 
