@@ -1,8 +1,9 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
 import { useForm, Head, Link, usePage } from '@inertiajs/vue3';
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, watch } from 'vue';
 import axios from 'axios';
+import QRCode from 'qrcode';
 
 const props = defineProps({
     tenant: Object,
@@ -168,6 +169,53 @@ const qualityBadge = computed(() => {
         RED:    { label: 'Baja (roja)',      cls: 'bg-red-100 text-red-700',         dot: 'bg-red-500' },
     }[q] || { label: q ? q : 'Desconocida', cls: 'bg-gray-100 text-gray-600', dot: 'bg-gray-400' };
 });
+
+// ── Enlace de contacto (click-to-chat wa.me) ─────────────────────────────────
+// El número real lo trae Meta en waHealth.display_phone_number; de ahí armamos
+// el enlace universal wa.me/<solo-dígitos>. Quien lo abra empieza un chat con el
+// número del tenant. (El enlace corto wa.me/message/CÓDIGO es de Meta y no se
+// puede construir desde fuera; este cumple lo mismo para quien lo recibe.)
+const waNumberDigits = computed(() => (waHealth.value?.display_phone_number || '').replace(/\D/g, ''));
+const waContactLink = computed(() => (waNumberDigits.value ? `https://wa.me/${waNumberDigits.value}` : null));
+
+// Compartir nativo (móvil); en escritorio sin soporte cae a copiar.
+async function shareContactLink() {
+    const url = waContactLink.value;
+    if (!url) return;
+    if (navigator.share) {
+        try {
+            await navigator.share({ title: 'Escríbeme por WhatsApp', text: 'Escríbeme por WhatsApp:', url });
+            return;
+        } catch (e) {
+            if (e && e.name === 'AbortError') return; // el usuario canceló la hoja de compartir
+        }
+    }
+    copy(url, 'wa-link');
+}
+
+// QR del enlace: qrcode → data URL PNG. Se regenera cuando cambia el número.
+const waQrDataUrl = ref(null);
+const qrError = ref(false);
+watch(waContactLink, async (url) => {
+    waQrDataUrl.value = null;
+    qrError.value = false;
+    if (!url) return;
+    try {
+        waQrDataUrl.value = await QRCode.toDataURL(url, { width: 240, margin: 1 });
+    } catch (e) {
+        qrError.value = true;
+    }
+}, { immediate: true });
+
+function downloadQr() {
+    if (!waQrDataUrl.value) return;
+    const a = document.createElement('a');
+    a.href = waQrDataUrl.value;
+    a.download = `whatsapp-${waNumberDigits.value || 'contacto'}.png`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+}
 
 // ── ISPWatch live status refresh ─────────────────────────────────────────────
 const refreshing = ref(false);
@@ -446,6 +494,32 @@ const waBadge = computed(() => {
                             <p v-else-if="waHealth && !waHealth.ok" class="text-xs text-amber-700">
                                 {{ waHealth.message || 'No se pudo leer la salud del número.' }}
                             </p>
+                        </div>
+
+                        <!-- Enlace de contacto (click-to-chat) -->
+                        <div v-if="tenant.has_whatsapp && waContactLink" class="rounded-xl bg-emerald-50/60 border border-emerald-100 p-3">
+                            <p class="text-xs font-semibold text-emerald-700 uppercase tracking-wider mb-1">Tu enlace de contacto</p>
+                            <p class="text-xs text-gray-500 mb-2">Compártelo en tu web, redes o tarjetas: quien lo abra empieza un chat de WhatsApp contigo. También puedes descargar el QR para imprimir.</p>
+                            <div class="flex gap-2">
+                                <input :value="waContactLink" disabled type="text" class="flex-1 px-3 py-2 bg-white border border-gray-200 rounded-lg text-xs font-mono text-gray-700">
+                                <button type="button" @click="copy(waContactLink, 'wa-link')" class="px-3 py-2 border border-gray-200 rounded-lg text-xs text-gray-700 hover:bg-white transition whitespace-nowrap">
+                                    {{ copiedKey === 'wa-link' ? '✓ Copiado' : 'Copiar' }}
+                                </button>
+                                <button type="button" @click="shareContactLink" class="px-3 py-2 border border-emerald-200 bg-emerald-100 text-emerald-800 rounded-lg text-xs font-medium hover:bg-emerald-200 transition whitespace-nowrap">
+                                    Compartir
+                                </button>
+                            </div>
+                            <div class="flex items-center gap-3 mt-3">
+                                <img v-if="waQrDataUrl" :src="waQrDataUrl" alt="Código QR de tu WhatsApp" width="96" height="96" class="rounded-lg border border-gray-200 bg-white p-1 shrink-0">
+                                <div class="text-xs">
+                                    <button v-if="waQrDataUrl" type="button" @click="downloadQr" class="px-3 py-2 border border-gray-200 rounded-lg text-gray-700 hover:bg-white transition">Descargar QR (PNG)</button>
+                                    <p v-else-if="qrError" class="text-amber-700">No se pudo generar el QR.</p>
+                                    <p class="text-gray-400 mt-1">Ideal para imprimir en tu local o en tarjetas.</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div v-else-if="tenant.has_whatsapp && !waHealth" class="rounded-xl bg-gray-50 border border-gray-100 p-3 text-xs text-gray-400">
+                            Cargando tu enlace de contacto…
                         </div>
 
                         <!-- Test result -->
