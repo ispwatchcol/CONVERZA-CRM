@@ -1546,7 +1546,10 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
                                 </template>
 
                                 <template v-else>
-                                    <p class="text-gray-900 whitespace-pre-wrap break-words px-4 pt-2">{{ msg.body }}</p>
+                                    <p class="whitespace-pre-wrap break-words px-4 pt-2"
+                                       :class="msg.type === 'unsupported' ? 'text-gray-400 italic text-sm' : 'text-gray-900'">
+                                        {{ msg.body }}
+                                    </p>
                                 </template>
 
                                 <div class="flex items-center justify-end space-x-1 px-3 pb-1.5">

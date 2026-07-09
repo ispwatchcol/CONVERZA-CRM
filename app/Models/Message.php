@@ -23,7 +23,12 @@ class Message extends Model
         'media_mime',
         'media_filename',
         'caption',
+        'raw_metadata',
         'sent_by_user_id',
+    ];
+
+    protected $casts = [
+        'raw_metadata' => 'array',
     ];
 
     public function conversation(): BelongsTo
