@@ -185,15 +185,43 @@ class ProcessIncomingWhatsAppMessage implements ShouldQueue
                 // mensajes borrados y —caso típico aquí— códigos de verificación de
                 // Meta/Facebook que llegan con botón "Copiar código". En todos estos
                 // el CONTENIDO no viaja en el webhook: Meta solo manda el error, así
-                // que el código real no es recuperable desde el chat.
+                // que el código real no es recuperable desde el chat. Antes
+                // mostrábamos el título de error de Meta tal cual (crudo, en inglés,
+                // pensado para debugging de la API) directamente en el chat del
+                // agente; ahora mostramos un texto amigable y el detalle técnico
+                // queda en raw_metadata + logs para poder auditar el caso después.
                 $errors = $this->message['errors'] ?? [];
-                $detail = $errors[0]['title'] ?? $errors[0]['details'] ?? 'Tipo de mensaje no soportado';
-                $attributes['body'] = '[Mensaje no compatible con WhatsApp API: ' . $detail . ']';
+                $attributes['body'] = '🚫 El cliente envió un mensaje que WhatsApp no permite mostrar aquí '
+                    . '(por ejemplo: encuesta, mensaje que se autodestruye, tarjeta de verificación u otro '
+                    . 'formato no compatible con la API).';
+                $attributes['raw_metadata'] = [
+                    'reason' => 'unsupported',
+                    'errors' => $errors,
+                ];
                 Log::info('Unsupported WhatsApp message received', [
                     'wa_message_id' => $waMessageId,
                     'error_code'    => $errors[0]['code'] ?? null,
                     'errors'        => $errors,
                 ]);
+                break;
+
+            case $type === 'order':
+                // Pedido armado desde el catálogo de WhatsApp (comercio conversacional).
+                $order = $this->message['order'] ?? [];
+                $items = $order['product_items'] ?? [];
+                $count = count($items);
+                $attributes['body'] = $count > 0
+                    ? "🛒 Pedido: {$count} producto" . ($count === 1 ? '' : 's')
+                    : '🛒 Pedido desde el catálogo';
+                $attributes['raw_metadata'] = ['reason' => 'order', 'order' => $order];
+                break;
+
+            case $type === 'system':
+                // Notificaciones del sistema de WhatsApp (p. ej. el contacto cambió
+                // de número). Meta ya manda un texto legible en `system.body`.
+                $system = $this->message['system'] ?? [];
+                $attributes['body'] = 'ℹ️ ' . ($system['body'] ?? 'Notificación del sistema de WhatsApp');
+                $attributes['raw_metadata'] = ['reason' => 'system', 'system' => $system];
                 break;
 
             case $type === 'reaction':
@@ -245,11 +273,26 @@ class ProcessIncomingWhatsAppMessage implements ShouldQueue
                 break;
 
             default:
-                // Tipo sin case propio (formatos nuevos de Meta). Antes de rendirnos
-                // con un placeholder, intentamos rescatar cualquier texto legible del
-                // payload para no perder contenido (p. ej. un código que llegue en un
-                // formato distinto a `text`).
-                $attributes['body'] = $this->extractReadableText($type) ?? '[' . $type . ']';
+                // Tipo sin case propio: Meta lanzó un formato nuevo que todavía no
+                // contemplamos explícitamente. Antes de rendirnos con un placeholder,
+                // intentamos rescatar cualquier texto legible del payload para no
+                // perder contenido (p. ej. un código que llegue en un formato
+                // distinto a `text`). Se loguea siempre como warning —a diferencia
+                // del resto de casos— porque esta rama es justamente la señal de que
+                // hay un tipo de mensaje nuevo que conviene agregarle un case propio.
+                $extracted = $this->extractReadableText($type);
+                $attributes['body'] = $extracted ?? '📩 Mensaje en un formato que todavía no soportamos aquí.';
+                $attributes['raw_metadata'] = [
+                    'reason'  => 'unhandled_type',
+                    'type'    => $type,
+                    'payload' => $this->message[$type] ?? $this->message,
+                ];
+                Log::warning('WhatsApp message type without explicit handler', [
+                    'wa_message_id' => $waMessageId,
+                    'type'          => $type,
+                    'extracted'     => $extracted !== null,
+                    'payload'       => $this->message,
+                ]);
         }
 
         return $attributes;

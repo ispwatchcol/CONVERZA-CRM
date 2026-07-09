@@ -165,6 +165,51 @@ function scrollToBottom() {
     });
 }
 
+// ── Indicador flotante de fecha (estilo WhatsApp) ────────────────────────────
+// Al hacer scroll mostramos la fecha del bloque de mensajes que está en la
+// parte superior visible, y la ocultamos con fade tras un momento sin scroll.
+// Para encontrar el bloque visible solo recorremos los separadores de día (uno
+// por día con actividad) en vez de los mensajes — en un chat largo eso puede
+// ser cientos de nodos en lugar de miles, así que el costo en scroll no crece
+// con el volumen de mensajes.
+const floatingDateLabel = ref('');
+const showFloatingDate = ref(false);
+let floatingDateHideTimer = null;
+let floatingDateRAF = null;
+
+function updateFloatingDate() {
+    const container = messagesContainer.value;
+    if (!container) return;
+    const separators = container.querySelectorAll('[data-date-sep]');
+    if (!separators.length) return;
+    const containerTop = container.getBoundingClientRect().top;
+    let current = separators[0];
+    for (const sep of separators) {
+        if (sep.getBoundingClientRect().top - containerTop <= 8) {
+            current = sep;
+        } else {
+            break;
+        }
+    }
+    floatingDateLabel.value = current.dataset.dateSep;
+}
+
+function onMessagesScroll() {
+    if (floatingDateRAF) return; // ya hay una lectura de layout agendada para este frame
+    floatingDateRAF = requestAnimationFrame(() => {
+        floatingDateRAF = null;
+        updateFloatingDate();
+    });
+    showFloatingDate.value = true;
+    clearTimeout(floatingDateHideTimer);
+    floatingDateHideTimer = setTimeout(() => { showFloatingDate.value = false; }, 1200);
+}
+
+onUnmounted(() => {
+    if (floatingDateRAF) cancelAnimationFrame(floatingDateRAF);
+    clearTimeout(floatingDateHideTimer);
+});
+
 // ── Nota interna vs. mensaje al cliente ──────────────────────────────────────
 // Cuando noteMode está activo, el composer escribe una nota interna (solo el
 // equipo la ve) en vez de enviar un WhatsApp al cliente.
@@ -459,6 +504,36 @@ function formatDate(dateString) {
 function formatTime(dateString) {
     if (!dateString) return '';
     return new Date(dateString).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+// ── Separadores de fecha (estilo WhatsApp) ───────────────────────────────────
+// Cada mensaje trae created_at en ISO 8601 con offset; al construir un Date()
+// con eso, getFullYear/Month/Date ya reflejan la timezone local del navegador
+// del agente, igual que formatTime/formatDate arriba — así el separador y la
+// hora de cada burbuja siempre caen en el mismo "día" percibido por el usuario.
+function dayKey(dateString) {
+    const d = new Date(dateString);
+    return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+}
+
+function formatDateSeparator(dateString) {
+    if (!dateString) return '';
+    const date = new Date(dateString);
+    const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    const diffDays = Math.round((startOfDay(new Date()) - startOfDay(date)) / 86400000);
+    if (diffDays === 0) return 'Hoy';
+    if (diffDays === 1) return 'Ayer';
+    return new Intl.DateTimeFormat('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(date);
+}
+
+// true cuando msg es el primero de su día dentro de activeChat (mensajes vienen
+// ordenados ascendente por created_at desde el backend). O(1) por mensaje.
+function isFirstOfDay(msg, index) {
+    if (!msg?.created_at) return false;
+    if (index === 0) return true;
+    const prev = props.activeChat[index - 1];
+    if (!prev?.created_at) return true;
+    return dayKey(prev.created_at) !== dayKey(msg.created_at);
 }
 
 function formatPhone(phone) {
@@ -1184,8 +1259,28 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
                     </div>
 
                     <!-- Messages -->
-                    <div ref="messagesContainer" class="flex-1 overflow-y-auto p-4 space-y-2 z-0 relative">
-                        <div v-for="msg in activeChat" :key="msg.id" class="flex animate-fade-in"
+                    <div ref="messagesContainer" class="flex-1 overflow-y-auto p-4 space-y-2 z-0 relative" @scroll="onMessagesScroll">
+
+                        <!-- Indicador flotante de fecha: aparece al scrollear, muestra la
+                             fecha del bloque visible y se desvanece solo tras un momento quieto.
+                             h-0 + overflow visible: no reserva espacio en el flujo (el pill
+                             "flota" sobre los mensajes en vez de empujarlos hacia abajo). -->
+                        <div class="sticky top-1 z-20 h-0 flex items-start justify-center pointer-events-none">
+                            <span class="bg-gray-700/85 text-white text-[11px] font-medium px-3 py-1 rounded-full shadow-sm backdrop-blur-sm whitespace-nowrap transition-all duration-300 ease-out"
+                                  :class="showFloatingDate && floatingDateLabel ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-1'">
+                                {{ floatingDateLabel }}
+                            </span>
+                        </div>
+
+                        <template v-for="(msg, index) in activeChat" :key="msg.id">
+                            <!-- Separador de día: "Hoy" / "Ayer" / fecha completa -->
+                            <div v-if="isFirstOfDay(msg, index)" class="flex justify-center my-3" :data-date-sep="formatDateSeparator(msg.created_at)">
+                                <span class="bg-white/90 text-gray-500 text-[11px] font-medium px-3 py-1 rounded-full shadow-sm border border-gray-100">
+                                    {{ formatDateSeparator(msg.created_at) }}
+                                </span>
+                            </div>
+
+                            <div class="flex animate-fade-in"
                              :class="{ 'justify-end': isOutgoing(msg) && msg.type !== 'system' && msg.type !== 'note', 'justify-center': msg.type === 'system' || msg.type === 'note' }">
 
                             <!-- ─── Sistema (transferencias / eventos) ──────────────── -->
@@ -1451,7 +1546,10 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
                                 </template>
 
                                 <template v-else>
-                                    <p class="text-gray-900 whitespace-pre-wrap break-words px-4 pt-2">{{ msg.body }}</p>
+                                    <p class="whitespace-pre-wrap break-words px-4 pt-2"
+                                       :class="msg.type === 'unsupported' ? 'text-gray-400 italic text-sm' : 'text-gray-900'">
+                                        {{ msg.body }}
+                                    </p>
                                 </template>
 
                                 <div class="flex items-center justify-end space-x-1 px-3 pb-1.5">
@@ -1460,6 +1558,7 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
                                 </div>
                             </div>
                         </div>
+                        </template>
                     </div>
 
                     <!-- Banner conversación cerrada (con botón Reabrir) -->
