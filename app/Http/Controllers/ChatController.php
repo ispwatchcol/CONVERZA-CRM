@@ -232,6 +232,11 @@ class ChatController extends Controller
             'filter'               => $filter,
             'activeContactId'      => $activeConversation?->contact?->id,
 
+            // Precarga del modal "Nuevo chat" cuando se llega desde Contactos y el
+            // contacto todavía no tiene ninguna conversación (ver ContactController@chat).
+            'newChatPhone'         => $request->query('new_phone'),
+            'newChatName'          => $request->query('new_name'),
+
             // Etiquetas del contacto activo (refrescable solo en partial reload tras
             // asignar/quitar) y catálogo de etiquetas tipo 'contact' del tenant.
             'contactLabels'        => fn () => $activeConversation?->contact

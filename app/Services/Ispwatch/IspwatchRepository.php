@@ -76,6 +76,99 @@ class IspwatchRepository
     }
 
     /**
+     * Versión batch de customerByPhone(): resuelve el estado de "cliente ISPWatch"
+     * de VARIOS contactos con UNA sola query a ispwatch (en vez de una por contacto).
+     *
+     * Pensada para listados (ej. ContactController::index/stats), donde antes se
+     * llamaba a customerByPhone() dentro de un loop por cada contacto del tenant.
+     * Reutiliza allCustomersByNormalizedPhone() (cacheada) para el match; conserva
+     * la misma lógica de desambiguación por nombre que customerByPhone().
+     *
+     * @param  array<int|string, array{phone: ?string, name: ?string}>  $contacts  indexado por lo que el caller quiera (ej. contact id)
+     * @return array<int|string, array<string, mixed>|null>  mismo índice que $contacts, mismo shape de valor que customerByPhone()
+     */
+    public function customersByPhonesBatch(int $ispwatchTenantId, array $contacts): array
+    {
+        $candidatesByPhone = $this->allCustomersByNormalizedPhone($ispwatchTenantId);
+
+        $result = [];
+        foreach ($contacts as $key => $c) {
+            $normalized = $this->normalizeToLocal($c['phone'] ?? null);
+            $candidates = $normalized !== null ? ($candidatesByPhone->get($normalized)) : null;
+
+            if (! $candidates || $candidates->isEmpty()) {
+                $result[$key] = null;
+                continue;
+            }
+
+            $user = $this->pickBestMatch($candidates, $c['name'] ?? null);
+            $cp = $user->customerProfile;
+
+            $result[$key] = [
+                'user_id'         => (int) $user->id,
+                'tenant_id'       => (int) $user->tenant_id,
+                'name'            => trim(($cp->name ?: $user->name) . ' ' . ($cp->last_name ?? '')),
+                'email'           => $user->email,
+                'tel'             => $user->tel,
+                'cedula'          => $cp->cedula,
+                'document_number' => $cp->document_number,
+                'pppoe_username'  => $cp->pppoe_username,
+                'service_status'  => $cp->service_status,
+                'credit_balance'  => $cp->credit_balance,
+                'ip_user'         => $cp->ip_user,
+                'address'         => $cp->address,
+                'ambiguous'       => $candidates->count() > 1,
+            ];
+        }
+
+        return $result;
+    }
+
+    /**
+     * Cuenta cuántos de los teléfonos dados corresponden a un cliente ISPWatch,
+     * con UNA sola query batch (no una por teléfono). No hace desambiguación por
+     * nombre porque para un conteo solo importa "¿existe algún candidato?".
+     *
+     * @param  array<int, ?string>  $phones
+     */
+    public function countCustomersAmongPhones(int $ispwatchTenantId, array $phones): int
+    {
+        $candidatesByPhone = $this->allCustomersByNormalizedPhone($ispwatchTenantId);
+
+        $count = 0;
+        foreach ($phones as $phone) {
+            $normalized = $this->normalizeToLocal($phone);
+            if ($normalized !== null && $candidatesByPhone->has($normalized)) {
+                $count++;
+            }
+        }
+
+        return $count;
+    }
+
+    /**
+     * Todos los `IspwatchUser` con customer_profile del tenant, agrupados por su
+     * teléfono normalizado (10 dígitos locales). Es LA query que antes se hacía
+     * una vez POR CONTACTO (ver customerByPhone); aquí se hace una sola vez y se
+     * cachea 60s, igual que el resto del repositorio.
+     *
+     * @return \Illuminate\Support\Collection<string, \Illuminate\Support\Collection<int, IspwatchUser>>
+     */
+    private function allCustomersByNormalizedPhone(int $ispwatchTenantId): \Illuminate\Support\Collection
+    {
+        $cacheKey = "ispwatch:customers_by_phone:t{$ispwatchTenantId}";
+
+        return Cache::remember($cacheKey, self::CACHE_TTL_SECONDS, function () use ($ispwatchTenantId) {
+            return IspwatchUser::query()
+                ->with('customerProfile')
+                ->where('tenant_id', $ispwatchTenantId)
+                ->whereHas('customerProfile')
+                ->get()
+                ->groupBy(fn (IspwatchUser $u) => $this->normalizeToLocal($u->tel));
+        });
+    }
+
+    /**
      * Elige el mejor candidato entre varios `IspwatchUser` que comparten teléfono.
      *
      * Score = nº de tokens del nombre de contacto que aparecen en `name + last_name`

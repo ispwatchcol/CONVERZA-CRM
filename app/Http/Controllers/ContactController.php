@@ -45,19 +45,27 @@ class ContactController extends Controller
         $contacts = $query->orderByDesc('updated_at')->paginate(20)->withQueryString();
 
         // ── Enriquecimiento ISPWatch + post-filtro por estado ────────────────
-        $contacts->getCollection()->transform(function (Contact $c) use ($ispwatchTenantId) {
+        // Batch: UNA sola query a ispwatch para las 20 filas de la página, en vez
+        // de una llamada por contacto (ver IspwatchRepository::customersByPhonesBatch).
+        $pageIspwatchData = [];
+        if ($ispwatchTenantId) {
+            $forBatch = $contacts->getCollection()
+                ->mapWithKeys(fn (Contact $c) => [$c->id => ['phone' => $c->phone, 'name' => $c->name]])
+                ->all();
+            $pageIspwatchData = $this->ispwatch->customersByPhonesBatch($ispwatchTenantId, $forBatch);
+        }
+
+        $contacts->getCollection()->transform(function (Contact $c) use ($pageIspwatchData) {
             $ispwatchCustomer = null;
-            if ($ispwatchTenantId && $c->phone) {
-                $cust = $this->ispwatch->customerByPhone($ispwatchTenantId, $c->phone, $c->name);
-                if ($cust) {
-                    $ispwatchCustomer = [
-                        'name'           => $cust['name'],
-                        'service_status' => $cust['service_status'],
-                        'pppoe_username' => $cust['pppoe_username'],
-                        'ip_user'        => $cust['ip_user'],
-                        'credit_balance' => $cust['credit_balance'],
-                    ];
-                }
+            $cust = $pageIspwatchData[$c->id] ?? null;
+            if ($cust) {
+                $ispwatchCustomer = [
+                    'name'           => $cust['name'],
+                    'service_status' => $cust['service_status'],
+                    'pppoe_username' => $cust['pppoe_username'],
+                    'ip_user'        => $cust['ip_user'],
+                    'credit_balance' => $cust['credit_balance'],
+                ];
             }
 
             return [
@@ -161,9 +169,13 @@ class ContactController extends Controller
             return redirect()->route('chat.index', ['conversation' => $conv->id]);
         }
 
-        // Sin conversación previa: ir al chat, el usuario puede crear una con "Nuevo chat"
-        return redirect()->route('chat.index')
-            ->with('info', 'Este contacto no tiene conversaciones aún. Usa "Nuevo chat" para iniciar.');
+        // Sin conversación previa: ir al chat con el modal "Nuevo chat" precargado
+        // (teléfono + nombre), para no dejar al usuario en una pantalla vacía sin
+        // explicación de por qué no se abrió ningún hilo.
+        return redirect()->route('chat.index', [
+            'new_phone' => $contact->phone,
+            'new_name'  => $contact->name,
+        ]);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -209,19 +221,13 @@ class ContactController extends Controller
             'prospects'    => 0,
         ];
 
-        // Conteo de "clientes ISP" vs "prospectos" — recorre todos los contactos
-        // del tenant. Si crece mucho, conviene materializar en una columna o un
-        // sync periódico, pero para volúmenes razonables es OK.
+        // Conteo de "clientes ISP" vs "prospectos": una sola query batch a ispwatch
+        // (ver IspwatchRepository::countCustomersAmongPhones) en vez de una por contacto.
         if ($ispwatchTenantId !== null) {
-            $contacts = Contact::query()->where('tenant_id', $tenantId)->get(['id', 'phone', 'name']);
-            foreach ($contacts as $c) {
-                $isCustomer = $this->ispwatch->customerByPhone($ispwatchTenantId, $c->phone, $c->name) !== null;
-                if ($isCustomer) {
-                    $stats['customers']++;
-                } else {
-                    $stats['prospects']++;
-                }
-            }
+            $phones = (clone $base)->pluck('phone')->all();
+            $customersCount = $this->ispwatch->countCustomersAmongPhones($ispwatchTenantId, $phones);
+            $stats['customers'] = $customersCount;
+            $stats['prospects'] = $stats['total'] - $customersCount;
         } else {
             $stats['prospects'] = $stats['total'];
         }
