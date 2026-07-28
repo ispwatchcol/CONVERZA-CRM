@@ -23,6 +23,8 @@ const props = defineProps({
     activeContactId: { type: Number, default: null },
     contactLabels: { type: Array, default: () => [] }, // etiquetas asignadas al contacto activo
     labels: { type: Array, default: () => [] },         // todas las etiquetas (tipo contact) del tenant
+    newChatPhone: { type: String, default: null }, // precarga del modal "Nuevo chat" (viene de Contactos)
+    newChatName: { type: String, default: null },
 });
 
 // Nombres de otros agentes viendo este chat ahora (detección de colisión).
@@ -117,6 +119,18 @@ onMounted(() => {
     // así el primer polling no arrastra al usuario hacia abajo.
     trackedConvForScroll = props.activeConversationId;
     lastChatSignature = chatSignature(props.activeChat);
+
+    // Viene desde Contactos y el contacto no tiene conversación previa: abrir
+    // "Nuevo chat" precargado en vez de dejar la pantalla vacía. Se limpia la
+    // URL para que un refresh o el polling no reabran el modal.
+    if (props.newChatPhone) {
+        newChatForm.phone = props.newChatPhone;
+        showNewChatModal.value = true;
+        const url = new URL(window.location.href);
+        url.searchParams.delete('new_phone');
+        url.searchParams.delete('new_name');
+        window.history.replaceState(history.state, '', url.toString());
+    }
 });
 
 watch(() => props.activeConversationId, (val) => {
@@ -2061,7 +2075,8 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
                 <div class="fixed inset-0 bg-black/50" @click="showNewChatModal = false"></div>
                 <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-md animate-scale-in">
                     <div class="p-6">
-                        <h3 class="text-lg font-bold text-gray-900 mb-4">Nuevo Chat</h3>
+                        <h3 class="text-lg font-bold text-gray-900" :class="newChatName ? 'mb-1' : 'mb-4'">Nuevo Chat</h3>
+                        <p v-if="newChatName" class="text-xs text-gray-500 mb-3">Iniciando conversación con <span class="font-medium text-gray-700">{{ newChatName }}</span> — este contacto aún no tiene mensajes.</p>
                         <form @submit.prevent="startNewChat" class="space-y-4">
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-1">Teléfono</label>
