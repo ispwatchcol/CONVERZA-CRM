@@ -2,12 +2,13 @@
 
 namespace App\Http\Controllers;
 
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 
 class MediaController extends Controller
 {
-    public function serve(string $path)
+    public function serve(Request $request, string $path)
     {
         $mediaDisk = config('filesystems.media_disk', 'public');
 
@@ -68,6 +69,7 @@ class MediaController extends Controller
             '3gp'  => 'video/3gpp',
             'pdf'  => 'application/pdf',
             'txt'  => 'text/plain',
+            'csv'  => 'text/csv',
             'doc'  => 'application/msword',
             'xls'  => 'application/vnd.ms-excel',
             'ppt'  => 'application/vnd.ms-powerpoint',
@@ -79,6 +81,20 @@ class MediaController extends Controller
 
         // Cache media files for 1 hour to avoid re-fetching on every play
         $headers['Cache-Control'] = 'private, max-age=3600';
+
+        // ?download=1&name=factura.pdf fuerza la descarga con el nombre original.
+        // En disco los archivos se guardan con un UUID, así que sin esto el usuario
+        // bajaría "9f3c…-a12.pdf". El atributo HTML `download` solo renombra en
+        // same-origin; forzarlo acá también cubre "abrir en pestaña nueva".
+        if ($request->boolean('download')) {
+            // basename() corta cualquier ruta; el resto limpia caracteres de control
+            // y separadores que podrían romper la cabecera Content-Disposition.
+            $name = basename((string) $request->query('name', ''));
+            $name = preg_replace('/[\x00-\x1F\x7F"\\\\\/]/', '', $name);
+            $name = trim($name) !== '' ? $name : basename($full);
+
+            return response()->download($full, $name, $headers);
+        }
 
         // BinaryFileResponse handles Range requests automatically, which
         // is required for audio seeking and playback in browsers.
