@@ -3,11 +3,26 @@ import AppLayout from '@/Layouts/AppLayout.vue';
 import { Link } from '@inertiajs/vue3';
 
 const props = defineProps({
-    stats:            Object,
-    renewing_soon:    Array,
-    overdue_services: { type: Array, default: () => [] },
-    recent_accounts:  Array,
+    stats:             Object,
+    renewing_soon:     Array,
+    overdue_services:  { type: Array, default: () => [] },
+    plan_limit_alerts: { type: Array, default: () => [] },
+    recent_accounts:   Array,
 });
+
+// Semáforo de uso vs tope del plan. Informativo: no bloquea altas en ispwatch.
+const usageChip = {
+    warn: 'bg-yellow-100 text-yellow-800',
+    high: 'bg-orange-100 text-orange-800',
+    over: 'bg-red-100 text-red-800',
+};
+// Solo se listan las dimensiones que ya están apretadas; 'ok'/'unlimited' no molestan.
+function tightUsages(a) {
+    return [
+        { label: 'clientes', unit: 'clientes', u: a.clients },
+        { label: 'agentes',  unit: 'agentes',  u: a.agents  },
+    ].filter(r => r.u && ['warn', 'high', 'over'].includes(r.u.state));
+}
 
 // Convierte un mapa {moneda: monto} a texto "US$88 · $1.200.000" (o "—" si vacío).
 function money(map) {
@@ -145,6 +160,31 @@ function formatAmount(amount, currency) {
                             </p>
                         </div>
                         <Link :href="route('brain.accounts.show', a.id)" class="text-xs font-medium text-red-700 bg-red-50 border border-red-200 px-3 py-1.5 rounded-lg hover:bg-red-100 transition">Revisar</Link>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Cerca del tope del plan (oportunidad de upgrade) -->
+            <div v-if="plan_limit_alerts.length > 0" class="bg-orange-50 border border-orange-200 rounded-xl p-5">
+                <h2 class="text-sm font-semibold text-orange-900 mb-1 flex items-center gap-2">
+                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z" /></svg>
+                    Cerca del tope del plan ({{ plan_limit_alerts.length }})
+                </h2>
+                <p class="text-xs text-orange-700/80 mb-3">Momento de ofrecer el upgrade. El tope de clientes no se bloquea desde acá: ispwatch se lee en modo solo lectura.</p>
+                <div class="space-y-2">
+                    <div v-for="a in plan_limit_alerts" :key="a.id"
+                        class="flex items-center justify-between gap-3 bg-white rounded-lg px-4 py-2.5 border border-orange-100">
+                        <div class="min-w-0">
+                            <Link :href="route('brain.accounts.show', a.id)" class="font-medium text-gray-900 hover:text-violet-700 transition text-sm">{{ a.name }}</Link>
+                            <p class="text-xs text-gray-600 mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+                                <span v-for="r in tightUsages(a)" :key="r.label" class="inline-flex items-center gap-1">
+                                    <span class="text-[10px] font-semibold px-1.5 py-0.5 rounded" :class="usageChip[r.u.state]">{{ r.u.pct }}%</span>
+                                    {{ r.u.used }}/{{ r.u.limit }} {{ r.unit }}
+                                    <span class="text-gray-400">· {{ r.u.plan_name }}</span>
+                                </span>
+                            </p>
+                        </div>
+                        <Link :href="route('brain.accounts.show', a.id)" class="shrink-0 text-xs font-medium text-orange-800 bg-orange-50 border border-orange-200 px-3 py-1.5 rounded-lg hover:bg-orange-100 transition">Ver cuenta</Link>
                     </div>
                 </div>
             </div>

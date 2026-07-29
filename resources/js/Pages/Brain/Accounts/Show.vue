@@ -9,10 +9,13 @@ const props = defineProps({
     ispwatch_live:  Object,
     internal_users: Array,
     invoices:       Array,
+    payments:       { type: Array, default: () => [] },
+    balance:        { type: Object, default: () => ({}) },
     tickets:        Array,
     notes:          Array,
     tenants:        { type: Array, default: () => [] },
     plan_catalog:   { type: Object, default: () => ({ base_currency: 'USD', ispwatch: [], converza: [], combo: [] }) },
+    plan_usage:     { type: Object, default: () => ({ clients: null, agents: null }) },
 });
 
 const baseCurrency = props.plan_catalog.base_currency ?? 'USD';
@@ -61,6 +64,19 @@ const billingStats = computed(() => {
     return { totalByCurrency, pendingByCurrency, overdueCount: active.filter(i => i.status === 'overdue').length };
 });
 
+// Saldo de la cuenta: positivo = saldo a favor (pagó de más), negativo = debe.
+// Lo calcula el backend (Account::balanceByCurrency) para que no se desincronice.
+const creditByCurrency = computed(() =>
+    Object.fromEntries(Object.entries(props.balance).filter(([, v]) => Number(v) > 0))
+);
+const debtByCurrency = computed(() =>
+    Object.fromEntries(Object.entries(props.balance).filter(([, v]) => Number(v) < 0).map(([c, v]) => [c, Math.abs(Number(v))]))
+);
+const hasCredit = computed(() => Object.keys(creditByCurrency.value).length > 0);
+function creditIn(currency) { return Number(props.balance?.[currency] ?? 0) > 0 ? Number(props.balance[currency]) : 0; }
+
+const methodLabel = { transfer:'Transferencia', cash:'Efectivo', card:'Tarjeta', other:'Otro' };
+
 // ── Edit account ───────────────────────────────────────────────────────────
 const showEdit = ref(false);
 const editForm = useForm({
@@ -70,7 +86,8 @@ const editForm = useForm({
     owner_user_id: props.account.owner?.id ?? '', contact_name: props.account.contact_name ?? '',
     contact_email: props.account.contact_email ?? '', contact_phone: props.account.contact_phone ?? '',
     country: props.account.country ?? 'CO', onboarding_at: props.account.onboarding_at ?? '',
-    renewal_at: props.account.renewal_at ?? '', notes: props.account.notes ?? '',
+    renewal_at: props.account.renewal_at ?? '', billing_day: props.account.billing_day ?? '',
+    notes: props.account.notes ?? '',
 });
 function submitEdit() { editForm.put(route('brain.accounts.update', props.account.id), { onSuccess: () => { showEdit.value = false; } }); }
 
@@ -95,6 +112,25 @@ function expiryInfo(dateStr) {
     if (days <= 7) return { tone: 'text-amber-600 bg-amber-50 border-amber-200', label: `Vence en ${days} d` };
     return null;
 }
+
+// ── Uso vs tope del plan ───────────────────────────────────────────────────
+// Semáforo informativo: el tope de clientes NO se puede bloquear desde acá (la BD de
+// ispwatch se lee read-only), sirve para ver a tiempo cuándo toca ofrecer el upgrade.
+const usageStyle = {
+    ok:        { bar:'bg-green-500',  text:'text-green-700',  chip:'bg-green-50 text-green-700 border-green-200',    label:'En rango' },
+    warn:      { bar:'bg-yellow-500', text:'text-yellow-700', chip:'bg-yellow-50 text-yellow-700 border-yellow-200', label:'Cerca del tope' },
+    high:      { bar:'bg-orange-500', text:'text-orange-700', chip:'bg-orange-50 text-orange-700 border-orange-200', label:'Al límite' },
+    over:      { bar:'bg-red-500',    text:'text-red-700',    chip:'bg-red-50 text-red-700 border-red-200',          label:'Excedido' },
+    unlimited: { bar:'bg-gray-300',   text:'text-gray-500',   chip:'bg-gray-50 text-gray-500 border-gray-200',       label:'Ilimitado' },
+};
+const usageRows = computed(() => [
+    { key:'clients', title:'Clientes en ispwatch', unit:'clientes', u:props.plan_usage?.clients },
+    { key:'agents',  title:'Agentes de Converza',  unit:'agentes',  u:props.plan_usage?.agents  },
+].filter(r => r.u));
+const hasPlanUsage = computed(() => usageRows.value.length > 0);
+// Ancho de la barra: se topa en 100% para que un excedido no se salga de la caja.
+function usageWidth(u) { return u.state === 'unlimited' ? 100 : Math.min(100, u.pct ?? 0); }
+function usageLeft(u) { return u.limit === null ? null : u.limit - u.used; }
 
 // ── Products ───────────────────────────────────────────────────────────────
 const showProductModal = ref(false);
@@ -134,8 +170,39 @@ function deleteProduct(p) { if (!confirm(`¿Eliminar ${productLabel[p.product]}?
 // ── Invoices ───────────────────────────────────────────────────────────────
 const showInvoiceModal = ref(false);
 const editingInvoice   = ref(null);
-const invoiceForm = useForm({ account_product_id:'', number:'', concept:'', amount:'', tax:'0', currency:'COP', issued_at:'', due_at:'', period_start:'', period_end:'' });
-function openAddInvoice() { editingInvoice.value=null; invoiceForm.reset(); invoiceForm.tax='0'; invoiceForm.currency='COP'; invoiceForm.issued_at=new Date().toISOString().split('T')[0]; showInvoiceModal.value=true; }
+const invoiceForm = useForm({ account_product_id:'', number:'', concept:'', amount:'', tax:'0', currency:'COP', issued_at:'', due_at:'', period_start:'', period_end:'', apply_credit:true });
+
+// Mismo día del mes N meses después, recortado si el mes destino no lo tiene
+// (31 de enero + 1 mes = 28/29 de febrero, no el 2 o 3 de marzo).
+function shiftMonth(iso, months) {
+    const d = new Date(iso + 'T00:00:00');
+    const lastDayOfTarget = new Date(d.getFullYear(), d.getMonth() + months + 1, 0).getDate();
+    return new Date(d.getFullYear(), d.getMonth() + months, Math.min(d.getDate(), lastDayOfTarget));
+}
+function toIso(d) { return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
+
+function openAddInvoice() {
+    editingInvoice.value = null;
+    invoiceForm.reset();
+    invoiceForm.tax = '0';
+    invoiceForm.apply_credit = true;
+
+    // Arranca del producto activo: su moneda y su valor son lo que se cobra.
+    const products = props.account.products ?? [];
+    const main = products.find(p => p.status === 'active' && Number(p.amount) > 0) ?? products[0];
+    invoiceForm.currency = main?.currency ?? 'COP';
+    if (main) { invoiceForm.account_product_id = main.id; invoiceForm.amount = main.amount; }
+
+    // Si la cuenta tiene día de facturación propio, las fechas salen de ahí.
+    const start = props.account.next_billing_at ?? new Date().toISOString().split('T')[0];
+    invoiceForm.issued_at    = start;
+    invoiceForm.due_at       = start;
+    invoiceForm.period_start = start;
+    const end = shiftMonth(start, 1); end.setDate(end.getDate() - 1);
+    invoiceForm.period_end = toIso(end);
+
+    showInvoiceModal.value = true;
+}
 function openEditInvoice(inv) { editingInvoice.value=inv; Object.assign(invoiceForm, { account_product_id:inv.account_product_id??'', number:inv.number, concept:inv.concept, amount:inv.amount, tax:inv.tax, currency:inv.currency, issued_at:inv.issued_at??'', due_at:inv.due_at??'', period_start:inv.period_start??'', period_end:inv.period_end??'' }); showInvoiceModal.value=true; }
 function submitInvoice() {
     const opts = { onSuccess: () => { showInvoiceModal.value=false; } };
@@ -269,12 +336,52 @@ function deleteAccount() { if (!confirm(`¿Eliminar "${props.account.name}"?`)) 
 
             <!-- ── Tab: Resumen ────────────────────────────────────────────── -->
             <div v-show="activeTab === 'summary'" class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <!-- Uso vs tope del plan -->
+                <div v-if="hasPlanUsage" class="lg:col-span-2 bg-white rounded-xl border border-gray-200 p-5 space-y-4">
+                    <div class="flex items-center gap-2">
+                        <h3 class="text-sm font-semibold text-gray-900">Uso del plan</h3>
+                        <span class="text-xs text-gray-400">— informativo, no bloquea altas en ispwatch</span>
+                    </div>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-5">
+                        <div v-for="row in usageRows" :key="row.key" class="space-y-2">
+                            <div class="flex items-baseline justify-between gap-2">
+                                <span class="text-xs font-medium text-gray-600">{{ row.title }}</span>
+                                <span class="text-[10px] font-semibold px-1.5 py-0.5 rounded-full border" :class="usageStyle[row.u.state].chip">
+                                    {{ usageStyle[row.u.state].label }}
+                                </span>
+                            </div>
+                            <div class="flex items-baseline gap-1.5">
+                                <span class="text-2xl font-bold text-gray-900">{{ row.u.used }}</span>
+                                <span class="text-sm text-gray-400">/ {{ row.u.limit ?? '∞' }}</span>
+                                <span v-if="row.u.pct !== null" class="ml-auto text-xs font-semibold" :class="usageStyle[row.u.state].text">{{ row.u.pct }}%</span>
+                            </div>
+                            <div class="h-2 w-full bg-gray-100 rounded-full overflow-hidden">
+                                <div class="h-full rounded-full transition-all" :class="usageStyle[row.u.state].bar" :style="{ width: usageWidth(row.u) + '%' }"></div>
+                            </div>
+                            <p class="text-[11px] text-gray-500">
+                                {{ row.u.plan_name }}<template v-if="row.u.limit !== null"> ·
+                                    <span v-if="usageLeft(row.u) > 0">quedan <strong>{{ usageLeft(row.u) }}</strong> {{ row.unit }}</span>
+                                    <span v-else class="text-red-600 font-semibold">excedido en {{ -usageLeft(row.u) }} {{ row.unit }} — toca upgrade</span>
+                                </template>
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
                     <h3 class="text-sm font-semibold text-gray-900">Datos de la cuenta</h3>
                     <dl class="space-y-2 text-sm">
                         <div class="flex justify-between"><dt class="text-gray-500">País</dt><dd class="font-medium">{{ account.country ?? '—' }}</dd></div>
                         <div class="flex justify-between"><dt class="text-gray-500">Inicio</dt><dd class="font-medium">{{ account.onboarding_at ?? '—' }}</dd></div>
                         <div class="flex justify-between"><dt class="text-gray-500">Renovación</dt><dd class="font-medium">{{ account.renewal_at ?? '—' }}</dd></div>
+                        <div class="flex justify-between">
+                            <dt class="text-gray-500">Día de facturación</dt>
+                            <dd v-if="account.billing_day" class="font-medium text-right">
+                                <span class="inline-flex items-center gap-1 text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded text-xs">día {{ account.billing_day }}</span>
+                                <span class="block text-[11px] text-gray-400 mt-0.5">próxima: {{ fmtDate(account.next_billing_at) }}</span>
+                            </dd>
+                            <dd v-else class="font-medium text-gray-400">Sin excepción</dd>
+                        </div>
                         <div class="flex justify-between"><dt class="text-gray-500">ispwatch ID</dt><dd class="font-mono text-xs font-medium">{{ account.ispwatch_tenant_id ?? '—' }}</dd></div>
                         <div class="flex justify-between items-center">
                             <dt class="text-gray-500">Tenant Converza</dt>
@@ -366,6 +473,23 @@ function deleteAccount() { if (!confirm(`¿Eliminar "${props.account.name}"?`)) 
                         <p class="text-xs text-gray-500 uppercase tracking-wider">Por cobrar {{ cur }}</p>
                         <p class="text-lg font-bold mt-1" :class="Number(pend)>0?'text-red-600':'text-gray-900'">{{ formatAmount(pend, cur) }}</p>
                     </div>
+                    <div v-for="(cred, cur) in creditByCurrency" :key="'c'+cur" class="bg-emerald-50 rounded-xl border border-emerald-200 p-4 text-center">
+                        <p class="text-xs text-emerald-700 uppercase tracking-wider">Saldo a favor {{ cur }}</p>
+                        <p class="text-lg font-bold text-emerald-700 mt-1">{{ formatAmount(cred, cur) }}</p>
+                    </div>
+                </div>
+
+                <!-- Saldo a favor: se descuenta solo en la próxima factura -->
+                <div v-if="hasCredit" class="bg-emerald-50 border border-emerald-200 rounded-xl px-5 py-3 flex items-start gap-3">
+                    <svg class="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                    <p class="text-sm text-emerald-900">
+                        Este cliente tiene
+                        <strong v-for="(cred, cur) in creditByCurrency" :key="'t'+cur">{{ formatAmount(cred, cur) }}</strong>
+                        de saldo a favor. Se le va a descontar automáticamente en la próxima factura que le crees.
+                    </p>
+                </div>
+                <div v-for="(deb, cur) in debtByCurrency" :key="'d'+cur" class="bg-red-50 border border-red-200 rounded-xl px-5 py-3 text-sm text-red-900">
+                    Saldo en contra: debe <strong>{{ formatAmount(deb, cur) }}</strong> (facturado menos recaudado).
                 </div>
 
                 <div class="flex items-center justify-between">
@@ -416,6 +540,38 @@ function deleteAccount() { if (!confirm(`¿Eliminar "${props.account.name}"?`)) 
                             <button @click="deletePayment(p)" class="text-red-400 hover:text-red-600 transition">×</button>
                         </div>
                     </div>
+                </div>
+
+                <!-- Recaudos: TODOS los pagos, incluidos los que no van contra factura -->
+                <div class="pt-2">
+                    <div class="flex items-center justify-between mb-3">
+                        <h3 class="text-sm font-semibold text-gray-900">Recaudos ({{ payments.length }})</h3>
+                        <button @click="openPayment(null)" class="text-xs text-green-700 hover:underline">Registrar pago</button>
+                    </div>
+                    <div v-if="payments.length === 0" class="py-8 text-center text-gray-400 text-sm bg-white rounded-xl border border-dashed border-gray-200">
+                        Sin recaudos registrados.
+                    </div>
+                    <div v-else class="bg-white rounded-xl border border-gray-200 overflow-hidden divide-y divide-gray-100">
+                        <div v-for="p in payments" :key="p.id" class="flex items-center justify-between gap-4 px-5 py-3">
+                            <div class="flex items-center gap-3 min-w-0">
+                                <span class="font-bold" :class="p.is_credit_application ? 'text-emerald-600' : 'text-green-600'">{{ formatAmount(p.amount, p.currency) }}</span>
+                                <span class="text-xs text-gray-500">{{ fmtDate(p.paid_at) }}</span>
+                                <span v-if="p.is_credit_application" class="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 shrink-0">SALDO A FAVOR APLICADO</span>
+                                <span v-else class="text-xs text-gray-400">{{ methodLabel[p.method] ?? p.method }}</span>
+                                <span v-if="p.reference && !p.is_credit_application" class="text-xs text-gray-400 truncate">· {{ p.reference }}</span>
+                            </div>
+                            <div class="flex items-center gap-3 shrink-0">
+                                <span v-if="p.invoice_number" class="text-xs font-mono text-gray-500">#{{ p.invoice_number }}</span>
+                                <span v-else class="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700">SIN FACTURA</span>
+                                <button @click="deletePayment(p)" class="p-1 rounded hover:bg-red-50 text-gray-300 hover:text-red-500 transition" title="Eliminar recaudo">
+                                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <p v-if="payments.some(p => !p.invoice_number)" class="text-xs text-gray-500 mt-2">
+                        Los recaudos <strong>sin factura</strong> quedan como saldo a favor de la cuenta y se descuentan solos en la próxima factura.
+                    </p>
                 </div>
             </div>
 
@@ -559,6 +715,12 @@ function deleteAccount() { if (!confirm(`¿Eliminar "${props.account.name}"?`)) 
                             <div><label class="block text-xs font-semibold text-gray-700 mb-1">Teléfono</label><input v-model="editForm.contact_phone" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400" /></div>
                             <div><label class="block text-xs font-semibold text-gray-700 mb-1">Inicio</label><input v-model="editForm.onboarding_at" type="date" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400" /></div>
                             <div><label class="block text-xs font-semibold text-gray-700 mb-1">Renovación</label><input v-model="editForm.renewal_at" type="date" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400" /></div>
+                            <div class="col-span-2">
+                                <label class="block text-xs font-semibold text-gray-700 mb-1">Día de facturación <span class="font-normal text-gray-400">— excepción de este cliente</span></label>
+                                <input v-model="editForm.billing_day" type="number" min="1" max="31" placeholder="Sin excepción (fechas a mano)" class="w-full px-3 py-2 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400" :class="editForm.errors.billing_day?'border-red-400':'border-gray-300'" />
+                                <p v-if="editForm.errors.billing_day" class="text-xs text-red-500 mt-1">{{ editForm.errors.billing_day }}</p>
+                                <p v-else class="text-xs text-gray-400 mt-1">Día del mes en que se le cobra a este cliente (ej. 9 = los 9 de cada mes). Si el mes no tiene ese día, se usa el último. Vacío = sin excepción.</p>
+                            </div>
                             <div><label class="block text-xs font-semibold text-gray-700 mb-1">Manager</label><select v-model="editForm.owner_user_id" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400"><option value="">Sin asignar</option><option v-for="u in internal_users" :key="u.id" :value="u.id">{{ u.name }}</option></select></div>
                         </div>
                         <div><label class="block text-xs font-semibold text-gray-700 mb-1">Notas</label><textarea v-model="editForm.notes" rows="3" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 resize-none"></textarea></div>
@@ -619,6 +781,15 @@ function deleteAccount() { if (!confirm(`¿Eliminar "${props.account.name}"?`)) 
                             <div><label class="block text-xs font-semibold text-gray-700 mb-1">Período inicio</label><input v-model="invoiceForm.period_start" type="date" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400" /></div>
                             <div><label class="block text-xs font-semibold text-gray-700 mb-1">Período fin</label><input v-model="invoiceForm.period_end" type="date" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400" /></div>
                         </div>
+                        <!-- Descuento automático del saldo a favor -->
+                        <label v-if="!editingInvoice && creditIn(invoiceForm.currency) > 0"
+                            class="flex items-start gap-2.5 bg-emerald-50 border border-emerald-200 rounded-lg px-4 py-3 cursor-pointer">
+                            <input v-model="invoiceForm.apply_credit" type="checkbox" class="mt-0.5 rounded border-emerald-300 text-emerald-600 focus:ring-emerald-400" />
+                            <span class="text-sm text-emerald-900">
+                                Descontar el saldo a favor de <strong>{{ formatAmount(creditIn(invoiceForm.currency), invoiceForm.currency) }}</strong>
+                                <span class="block text-xs text-emerald-700/80 mt-0.5">Se aplica hasta el total de la factura; lo que sobre queda de saldo para la siguiente.</span>
+                            </span>
+                        </label>
                         <div class="flex justify-end gap-3 pt-2"><button type="button" @click="showInvoiceModal=false" class="px-4 py-2 text-sm text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 transition">Cancelar</button><button type="submit" :disabled="invoiceForm.processing" class="px-6 py-2 text-sm font-medium text-white bg-amber-600 rounded-lg hover:bg-amber-700 disabled:opacity-60 transition">{{ invoiceForm.processing?'Guardando...':editingInvoice?'Actualizar':'Crear factura' }}</button></div>
                     </form>
                 </div>
