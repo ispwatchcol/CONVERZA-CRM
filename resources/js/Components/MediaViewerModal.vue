@@ -5,6 +5,8 @@ const props = defineProps({
     open:     { type: Boolean, default: false },
     type:     { type: String, default: null }, // 'image' | 'video' | 'document'
     url:      { type: String, default: null },
+    // URL que fuerza la descarga con el nombre original. Si no llega, se cae a `url`.
+    downloadUrl: { type: String, default: null },
     filename: { type: String, default: null },
     mime:     { type: String, default: null },
     caption:  { type: String, default: null },
@@ -16,6 +18,8 @@ const emit = defineEmits(['close', 'navigate']);
 
 const closeBtn = ref(null);
 const mediaError = ref(false);
+
+const dlHref = computed(() => props.downloadUrl || props.url);
 
 const hasGallery = computed(() => props.type === 'image' && props.items.length > 1);
 const canPrev = computed(() => hasGallery.value && props.index > 0);
@@ -89,7 +93,7 @@ onUnmounted(() => {
                 <div class="flex items-center gap-1 shrink-0">
                     <a
                         v-if="url"
-                        :href="url"
+                        :href="dlHref"
                         :download="filename || true"
                         class="p-2 rounded-full hover:bg-white/15 transition"
                         title="Descargar"
@@ -178,7 +182,7 @@ onUnmounted(() => {
                         <p class="text-sm font-medium text-gray-900 break-words">{{ filename || 'Documento' }}</p>
                         <p v-if="mimeLabel" class="text-xs text-gray-500">{{ mimeLabel }}</p>
                         <p class="text-xs text-gray-400">La previsualización no está disponible para este tipo de archivo.</p>
-                        <a :href="url" target="_blank" rel="noopener noreferrer" class="mt-1 inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-accent text-white text-sm font-medium hover:bg-accent-hover transition">
+                        <a :href="dlHref" :download="filename || true" target="_blank" rel="noopener noreferrer" class="mt-1 inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-accent text-white text-sm font-medium hover:bg-accent-hover transition">
                             <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3"/></svg>
                             Abrir / descargar
                         </a>

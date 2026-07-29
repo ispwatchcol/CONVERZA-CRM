@@ -481,11 +481,15 @@ class WhatsAppService
     }
 
     /**
-     * Send an image or audio to a WhatsApp contact using a previously uploaded media_id.
+     * Send an image, audio, video or document to a WhatsApp contact using a
+     * previously uploaded media_id.
      *
-     * @param string $type 'image' | 'audio' | 'document'
+     * @param string      $type     'image' | 'audio' | 'video' | 'document'
+     * @param string|null $filename Nombre original del archivo. Solo lo usa el tipo
+     *                              'document': es el título que ve el destinatario.
+     *                              Sin él, WhatsApp muestra el media_id como nombre.
      */
-    public function sendMedia(string $to, string $type, string $mediaId, ?string $caption = null): array
+    public function sendMedia(string $to, string $type, string $mediaId, ?string $caption = null, ?string $filename = null): array
     {
         $baseUrl = $this->baseUrl();
         $token   = $this->token();
@@ -498,6 +502,9 @@ class WhatsAppService
         $mediaPayload = ['id' => $mediaId];
         if ($caption && in_array($type, ['image', 'video', 'document'])) {
             $mediaPayload['caption'] = $caption;
+        }
+        if ($type === 'document' && $filename) {
+            $mediaPayload['filename'] = $filename;
         }
 
         try {

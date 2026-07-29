@@ -10,15 +10,22 @@ class AccountPayment extends Model
 {
     protected $fillable = [
         'account_id', 'account_invoice_id', 'recorded_by',
-        'amount', 'currency', 'method', 'reference', 'paid_at',
+        'amount', 'currency', 'method', 'is_credit_application', 'reference', 'paid_at',
     ];
 
     protected function casts(): array
     {
         return [
-            'amount'  => 'decimal:2',
-            'paid_at' => 'date',
+            'amount'                => 'decimal:2',
+            'paid_at'               => 'date',
+            'is_credit_application' => 'boolean',
         ];
+    }
+
+    /** Plata que entró de verdad (excluye las aplicaciones de saldo a favor). */
+    public function scopeRealMoney($query)
+    {
+        return $query->where('is_credit_application', false);
     }
 
     public function account(): BelongsTo  { return $this->belongsTo(Account::class); }

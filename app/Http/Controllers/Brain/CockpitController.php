@@ -5,11 +5,16 @@ namespace App\Http\Controllers\Brain;
 use App\Http\Controllers\Controller;
 use App\Models\Brain\Account;
 use App\Models\Brain\AccountInvoice;
+use App\Services\Brain\PlanCatalog;
+use App\Services\Ispwatch\IspwatchRepository;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
 
 class CockpitController extends Controller
 {
+    public function __construct(protected IspwatchRepository $ispwatch) {}
+
     public function index()
     {
         $today    = now()->toDateString();
@@ -111,8 +116,78 @@ class CockpitController extends Controller
             'stats'            => $stats,
             'renewing_soon'    => $renewingSoon,
             'overdue_services' => $overdueServices,
+            'plan_limit_alerts'=> $this->planLimitAlerts(),
             'recent_accounts'  => $recentAccounts,
         ]);
+    }
+
+    /**
+     * Cuentas que van cerca (o por encima) del tope de su plan — la señal para ofrecer
+     * el upgrade antes de que el cliente se estrelle contra el límite.
+     *
+     * Es INFORMATIVO: Converza lee la BD de ispwatch en read-only y no puede impedir
+     * que den de alta el cliente 801. El tope de clientes se mide contra el total en el
+     * sistema (activos + suspendidos), porque un suspendido sigue ocupando cupo.
+     *
+     * @return list<array>
+     */
+    private function planLimitAlerts(): array
+    {
+        $accounts = Account::whereIn('status', ['active', 'past_due'])
+            ->with(['products' => fn ($q) => $q->where('status', 'active')])
+            ->get();
+
+        // Dos consultas agregadas para todas las cuentas, no dos por cuenta.
+        $ispwatchIds = $accounts->pluck('ispwatch_tenant_id')->filter()->all();
+        $ispwatchInfo = $ispwatchIds === [] ? [] : $this->ispwatch->tenantInfoBatch($ispwatchIds);
+
+        $staffByTenant = DB::table('users')
+            ->selectRaw('tenant_id, count(*) as n')
+            ->whereNotNull('tenant_id')
+            ->groupBy('tenant_id')
+            ->pluck('n', 'tenant_id');
+
+        $severity = ['over' => 3, 'high' => 2, 'warn' => 1];
+        $alerts   = [];
+
+        foreach ($accounts as $a) {
+            $limits = PlanCatalog::limitsFor($a->products->pluck('plan_key'));
+
+            $clientsUsed = $a->ispwatch_tenant_id !== null
+                ? ($ispwatchInfo[(int) $a->ispwatch_tenant_id]['customers_count'] ?? null)
+                : null;
+            $agentsUsed = $a->tenant_id !== null
+                ? (int) ($staffByTenant[$a->tenant_id] ?? 0)
+                : null;
+
+            $usage = [
+                'clients' => PlanCatalog::usage($limits['clients'], $clientsUsed),
+                'agents'  => PlanCatalog::usage($limits['agents'], $agentsUsed),
+            ];
+
+            $worst = 0;
+            foreach ($usage as $u) {
+                $worst = max($worst, $severity[$u['state'] ?? ''] ?? 0);
+            }
+
+            if ($worst === 0) {
+                continue;   // todo en rango o ilimitado
+            }
+
+            $alerts[] = [
+                'id'       => $a->id,
+                'name'     => $a->name,
+                'status'   => $a->status,
+                'clients'  => $usage['clients'],
+                'agents'   => $usage['agents'],
+                '_severity'=> $worst,
+                '_pct'     => max($usage['clients']['pct'] ?? 0, $usage['agents']['pct'] ?? 0),
+            ];
+        }
+
+        usort($alerts, fn ($x, $y) => [$y['_severity'], $y['_pct']] <=> [$x['_severity'], $x['_pct']]);
+
+        return array_map(fn ($a) => Arr::except($a, ['_severity', '_pct']), $alerts);
     }
 
     /**

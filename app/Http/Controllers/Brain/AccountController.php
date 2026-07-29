@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Brain\Account;
 use App\Models\Brain\AccountInvoice;
 use App\Models\Brain\AccountNote;
+use App\Models\Brain\AccountPayment;
 use App\Models\Brain\AccountProduct;
 use App\Models\Brain\SupportTicket;
 use App\Models\Tenant;
@@ -109,6 +110,16 @@ class AccountController extends Controller
             }
         }
 
+        // Uso vs tope del plan. El de clientes es INFORMATIVO: Converza lee ispwatch en
+        // read-only y no puede bloquear altas allá, así que el semáforo existe para
+        // decidir el upgrade a tiempo. Se compara contra el total de clientes en el
+        // sistema (no solo los activos): un suspendido sigue ocupando cupo.
+        $limits    = PlanCatalog::limitsFor($account->products->pluck('plan_key'));
+        $planUsage = [
+            'clients' => PlanCatalog::usage($limits['clients'], $ispwatchLive['customers_count'] ?? null),
+            'agents'  => PlanCatalog::usage($limits['agents'], $converzaLive['staff_count'] ?? null),
+        ];
+
         $internalUsers = User::where(fn ($q) =>
             $q->whereNotNull('internal_role')->orWhere('is_superadmin', true)
         )->get(['id', 'name']);
@@ -143,6 +154,26 @@ class AccountController extends Controller
                     'reference' => $p->reference,
                     'paid_at'   => $p->paid_at?->toDateString(),
                 ]),
+            ]);
+
+        // Recaudos: TODOS los pagos de la cuenta, incluidos los que no van contra una
+        // factura (esos son los que quedaban invisibles y se vuelven saldo a favor).
+        $payments = AccountPayment::where('account_id', $account->id)
+            ->with(['invoice:id,number', 'recordedBy:id,name'])
+            ->orderByDesc('paid_at')
+            ->orderByDesc('id')
+            ->get()
+            ->map(fn ($p) => [
+                'id'                    => $p->id,
+                'amount'                => (string) $p->amount,
+                'currency'              => $p->currency,
+                'method'                => $p->method,
+                'reference'             => $p->reference,
+                'paid_at'               => $p->paid_at?->toDateString(),
+                'is_credit_application' => $p->is_credit_application,
+                'invoice_id'            => $p->account_invoice_id,
+                'invoice_number'        => $p->invoice?->number,
+                'recorded_by_name'      => $p->recordedBy?->name,
             ]);
 
         // Tickets
@@ -192,8 +223,11 @@ class AccountController extends Controller
             'account'        => $this->mapDetail($account),
             'converza_live'  => $converzaLive,
             'ispwatch_live'  => $ispwatchLive,
+            'plan_usage'     => $planUsage,
             'internal_users' => $internalUsers,
             'invoices'       => $invoices,
+            'payments'       => $payments,
+            'balance'        => $account->loadMissing(['payments', 'invoices'])->balanceByCurrency(),
             'tickets'        => $tickets,
             'notes'          => $notes,
             'tenants'        => $this->linkableTenants(),
@@ -217,6 +251,8 @@ class AccountController extends Controller
             'country'            => ['nullable', 'string', 'max:5'],
             'onboarding_at'      => ['nullable', 'date'],
             'renewal_at'         => ['nullable', 'date'],
+            // Excepción de facturación por cliente: el día del mes en que se le cobra.
+            'billing_day'        => ['nullable', 'integer', 'between:1,31'],
             'notes'              => ['nullable', 'string', 'max:2000'],
             // Productos opcionales (para "solo ispwatch", "solo converza" o combo).
             // El frontend expande un combo en sus DOS filas antes de enviar.
@@ -281,6 +317,8 @@ class AccountController extends Controller
             'country'            => ['nullable', 'string', 'max:5'],
             'onboarding_at'      => ['nullable', 'date'],
             'renewal_at'         => ['nullable', 'date'],
+            // Excepción de facturación por cliente: el día del mes en que se le cobra.
+            'billing_day'        => ['nullable', 'integer', 'between:1,31'],
             'notes'              => ['nullable', 'string', 'max:2000'],
         ]);
 
@@ -397,6 +435,8 @@ class AccountController extends Controller
             'country'            => $a->country,
             'onboarding_at'      => $a->onboarding_at?->toDateString(),
             'renewal_at'         => $a->renewal_at?->toDateString(),
+            'billing_day'        => $a->billing_day,
+            'next_billing_at'    => $a->nextBillingDate()?->toDateString(),
             'notes'              => $a->notes,
             'owner'              => $a->ownerUser?->only('id', 'name'),
             'tenant'             => $a->tenant?->only('id', 'name', 'slug'),

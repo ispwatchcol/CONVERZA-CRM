@@ -167,6 +167,15 @@ class ChatController extends Controller
                     'type'           => $msg->type ?? 'text',
                     'caption'        => $msg->caption,
                     'media_url'      => $msg->media_path ? route('media.serve', ['path' => $msg->media_path]) : null,
+                    // URL separada que fuerza Content-Disposition: attachment con el
+                    // nombre original (en disco el archivo se llama por su UUID).
+                    'media_download_url' => $msg->media_path
+                        ? route('media.serve', array_filter([
+                            'path'     => $msg->media_path,
+                            'download' => 1,
+                            'name'     => $msg->media_filename,
+                        ]))
+                        : null,
                     'media_mime'     => $msg->media_mime,
                     'media_filename' => $msg->media_filename,
                     'sender_name'    => $msg->sender?->name,
@@ -357,7 +366,7 @@ class ChatController extends Controller
     }
 
     /**
-     * Envía una imagen o audio al cliente vía WhatsApp Cloud API.
+     * Envía una imagen, audio, video o documento al cliente vía WhatsApp Cloud API.
      * Funciona dentro de la ventana de 24h sin costo adicional por mensaje.
      */
     public function sendMedia(Request $request)
@@ -367,14 +376,19 @@ class ChatController extends Controller
 
         $request->validate([
             'phone'           => 'required|string',
-            // Imagen: jpeg/png/webp hasta 5 MB. Audio: ogg/mp3/m4a/aac/amr y webm
-            // (grabado desde el navegador, se transcodifica abajo) hasta 16 MB.
-            'file'            => 'required|file|max:16384|mimes:jpeg,jpg,png,webp,ogg,oga,mp3,m4a,aac,amr,webm,weba',
+            // Imagen: jpeg/png/webp/gif. Audio: ogg/mp3/m4a/aac/amr y webm (grabado
+            // desde el navegador, se transcodifica abajo). Video: mp4/3gp.
+            // Documento: pdf, Word, Excel, PowerPoint, txt y csv.
+            'file'            => 'required|file|max:16384|mimes:jpeg,jpg,png,webp,gif,ogg,oga,mp3,m4a,aac,amr,webm,weba,mp4,3gp,pdf,doc,docx,xls,xlsx,ppt,pptx,txt,csv',
             'caption'         => 'nullable|string|max:1024',
             'conversation_id' => [
                 'nullable', 'integer',
                 Rule::exists('conversations', 'id')->where('tenant_id', $tenantId),
             ],
+        ], [
+            'file.required' => 'No llegó ningún archivo. Si el archivo es grande puede estar excediendo el límite de subida del servidor (upload_max_filesize / post_max_size en PHP).',
+            'file.max'      => 'El archivo supera el límite de 16 MB.',
+            'file.mimes'    => 'Tipo de archivo no permitido. Se aceptan imágenes, audio, video y documentos (PDF, Word, Excel, PowerPoint, TXT, CSV).',
         ]);
 
         $phone     = Contact::normalizePhone($request->input('phone'));
@@ -382,14 +396,26 @@ class ChatController extends Controller
         $mimeType  = $uploaded->getMimeType();
         $origName  = $uploaded->getClientOriginalName();
         $caption   = $request->input('caption');
-        $type      = str_starts_with($mimeType, 'image/') ? 'image' : 'audio';
         $content   = file_get_contents($uploaded->getRealPath());
-        $ext       = $uploaded->getClientOriginalExtension();
+        // getClientOriginalExtension() viene vacío en archivos pegados desde el
+        // portapapeles; extension() la deduce del MIME real detectado.
+        $ext       = $uploaded->getClientOriginalExtension() ?: $uploaded->extension();
+        $baseMime  = strtolower(Str::before($mimeType, ';'));
+
+        // El tipo de mensaje de WhatsApp se deriva del MIME. Todo lo que no sea
+        // imagen/audio/video (pdf, Word, Excel, txt…) viaja como 'document'.
+        // Antes se asumía audio para cualquier cosa que no fuera imagen, así que
+        // un PDF entraba al transcodificador de ffmpeg y el envío fallaba.
+        $type = match (true) {
+            str_starts_with($baseMime, 'image/') => 'image',
+            str_starts_with($baseMime, 'video/') => 'video',
+            str_starts_with($baseMime, 'audio/') => 'audio',
+            default                              => 'document',
+        };
 
         // WhatsApp no acepta webm para audio. Las grabaciones del navegador
         // (Chrome/Edge → webm/opus) se transcodifican a OGG/opus con ffmpeg.
         if ($type === 'audio') {
-            $baseMime = strtolower(Str::before($mimeType, ';'));
             $accepted = ['audio/ogg', 'audio/mpeg', 'audio/mp3', 'audio/amr', 'audio/aac', 'audio/mp4'];
             if (! in_array($baseMime, $accepted, true)) {
                 $converted = $this->transcodeToOggOpus($content, $ext ?: 'webm');
@@ -434,7 +460,9 @@ class ChatController extends Controller
             return back()->withErrors(['file' => 'Error al subir el archivo a WhatsApp.']);
         }
 
-        $result = $this->whatsappService->sendMedia($phone, $type, $waMediaId, $caption);
+        // El filename solo aplica a documentos: es el nombre que ve el destinatario
+        // en su WhatsApp. Sin él, Meta muestra el media_id como título del archivo.
+        $result = $this->whatsappService->sendMedia($phone, $type, $waMediaId, $caption, $origName);
 
         if (! $result['success']) {
             return back()->withErrors(['file' => 'Error al enviar: ' . ($result['error'] ?? 'Error desconocido')]);
@@ -472,11 +500,24 @@ class ChatController extends Controller
             ]);
         }
 
+        $typeLabel = match ($type) {
+            'image'    => 'Imagen',
+            'video'    => 'Video',
+            'audio'    => 'Audio',
+            default    => 'Documento',
+        };
+        $defaultBody = match ($type) {
+            'image'    => '📷 Imagen',
+            'video'    => '🎥 Video',
+            'audio'    => '🎤 Audio',
+            default    => '📄 ' . ($origName ?: 'Documento'),
+        };
+
         Message::create([
             'tenant_id'       => $tenantId,
             'conversation_id' => $conversation->id,
             'contact_id'      => $contact->id,
-            'body'            => $caption ?? ($type === 'image' ? '📷 Imagen' : '🎤 Audio'),
+            'body'            => $caption ?? $defaultBody,
             'status'          => 'sent',
             'type'            => $type,
             'media_path'      => $path,
@@ -489,7 +530,7 @@ class ChatController extends Controller
 
         $conversation->touch();
 
-        return back()->with('success', ($type === 'image' ? 'Imagen' : 'Audio') . ' enviado.');
+        return back()->with('success', $typeLabel . ' enviado.');
     }
 
     /**

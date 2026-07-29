@@ -1,6 +1,7 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
 import MediaViewerModal from '@/Components/MediaViewerModal.vue';
+import LinkedText from '@/Components/LinkedText.vue';
 import { useForm, router, Link, Head, usePage } from '@inertiajs/vue3';
 import { ref, onMounted, onUnmounted, nextTick, watch, computed } from 'vue';
 
@@ -274,7 +275,11 @@ function useQuickReply(qr) {
     });
 }
 
-// ── Adjuntar medios (imagen / audio) ─────────────────────────────────────────
+// ── Adjuntar medios (imagen / audio / video / documento) ─────────────────────
+// Debe coincidir con la regla `mimes:` de ChatController@sendMedia.
+const DOC_ACCEPT = '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,application/pdf';
+const MAX_FILE_MB = 16;
+
 function openFileInput(accept) {
     if (fileInputRef.value) {
         fileInputRef.value.accept = accept;
@@ -290,7 +295,13 @@ function setSelectedFile(file) {
     mediaForm.clearErrors();
     mediaForm.phone = props.activePhone || '';
     mediaForm.conversation_id = props.activeConversationId;
+    // Avisar acá evita subir 40 MB para que el servidor los rechace al final.
+    if (fileTooBig.value) {
+        mediaForm.setError('file', `El archivo pesa ${(file.size / 1048576).toFixed(1)} MB y el límite es ${MAX_FILE_MB} MB.`);
+    }
 }
+
+const fileTooBig = computed(() => !!selectedFile.value && selectedFile.value.size > MAX_FILE_MB * 1024 * 1024);
 
 function onFileSelected(event) {
     setSelectedFile(event.target.files[0]);
@@ -298,22 +309,65 @@ function onFileSelected(event) {
     event.target.value = '';
 }
 
-// Pegar imagen desde el portapapeles (Ctrl+V dentro del cuadro de mensaje).
+// Pegar un archivo desde el portapapeles (Ctrl+V dentro del cuadro de mensaje).
+// Acepta cualquier `kind === 'file'`, no solo imágenes: copiar un PDF desde el
+// explorador de archivos y pegarlo acá lo adjunta igual que en WhatsApp Web.
 function onPaste(event) {
     const items = event.clipboardData?.items;
     if (!items) return;
     for (const item of items) {
-        if (item.type && item.type.startsWith('image/')) {
-            const blob = item.getAsFile();
-            if (blob) {
-                event.preventDefault();
-                const ext = (item.type.split('/')[1] || 'png').replace('jpeg', 'jpg');
-                const file = new File([blob], `pegado-${Date.now()}.${ext}`, { type: item.type });
-                setSelectedFile(file);
-            }
-            break;
-        }
+        if (item.kind !== 'file') continue;
+        const blob = item.getAsFile();
+        if (!blob) continue;
+        event.preventDefault();
+        // Una captura de pantalla llega como blob sin nombre ("image.png" genérico);
+        // un archivo copiado del explorador sí trae su nombre real, que hay que
+        // conservar porque es el que ve el destinatario en su WhatsApp.
+        const name = blob.name && blob.name !== 'image.png'
+            ? blob.name
+            : `pegado-${Date.now()}.${(item.type.split('/')[1] || 'png').replace('jpeg', 'jpg')}`;
+        setSelectedFile(new File([blob], name, { type: blob.type || item.type }));
+        break;
     }
+}
+
+// Arrastrar y soltar sobre el panel de conversación.
+const isDraggingFile = ref(false);
+let dragDepth = 0;
+
+function onDragEnter(event) {
+    if (!event.dataTransfer?.types?.includes('Files')) return;
+    dragDepth++;
+    isDraggingFile.value = true;
+}
+function onDragOver(event) {
+    if (!event.dataTransfer?.types?.includes('Files')) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+}
+// dragleave dispara también al pasar entre hijos del contenedor; el contador
+// evita que el overlay parpadee mientras se arrastra por encima.
+function onDragLeave() {
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0) isDraggingFile.value = false;
+}
+function onDrop(event) {
+    dragDepth = 0;
+    isDraggingFile.value = false;
+    const file = event.dataTransfer?.files?.[0];
+    if (file) setSelectedFile(file);
+}
+
+// Etiqueta e ícono del archivo adjunto en la tarjeta de previsualización.
+function fileKind(file) {
+    const t = file?.type || '';
+    if (t.startsWith('image/')) return 'image';
+    if (t.startsWith('audio/')) return 'audio';
+    if (t.startsWith('video/')) return 'video';
+    return 'document';
+}
+function fileKindLabel(file) {
+    return { image: 'Imagen', audio: 'Audio', video: 'Video', document: 'Documento' }[fileKind(file)];
 }
 
 // ── Grabación de audio con el micrófono ───────────────────────────────────────
@@ -478,7 +532,7 @@ function clearSelectedFile() {
 }
 
 function submitMedia() {
-    if (!selectedFile.value) return;
+    if (!selectedFile.value || fileTooBig.value) return;
     mediaForm.file = selectedFile.value;
     mediaForm.phone = props.activePhone || '';
     mediaForm.conversation_id = props.activeConversationId;
@@ -777,7 +831,7 @@ function onImgError(id) { imgErrors.value[id] = true; }
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ── Visor de media (modal para imagen / video / documento) ──────────────────
-const mediaViewer = ref({ open: false, type: null, url: null, filename: null, mime: null, caption: null, items: [], index: 0 });
+const mediaViewer = ref({ open: false, type: null, url: null, downloadUrl: null, filename: null, mime: null, caption: null, items: [], index: 0 });
 
 // Imágenes visibles en la conversación activa, para navegación anterior/siguiente en el visor.
 const galleryImages = computed(() => props.activeChat.filter(m => m.type === 'image' && m.media_url));
@@ -788,6 +842,7 @@ function openMediaViewer(msg, type) {
         open: true,
         type,
         url: msg.media_url,
+        downloadUrl: msg.media_download_url || msg.media_url,
         filename: msg.media_filename || null,
         mime: msg.media_mime || null,
         caption: msg.caption || null,
@@ -810,6 +865,7 @@ function onGalleryNavigate(delta) {
     mediaViewer.value = {
         ...mediaViewer.value,
         url: next.media_url,
+        downloadUrl: next.media_download_url || next.media_url,
         filename: next.media_filename || null,
         mime: next.media_mime || null,
         caption: next.caption || null,
@@ -1171,7 +1227,20 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
             </div>
 
             <!-- Chat Area -->
-            <div class="flex-1 flex flex-col bg-[#efeae2] relative" :class="{ 'hidden md:flex': !mobileShowChat && conversations.length }">
+            <!-- Arrastrar y soltar un archivo en cualquier parte del panel lo adjunta. -->
+            <div class="flex-1 flex flex-col bg-[#efeae2] relative" :class="{ 'hidden md:flex': !mobileShowChat && conversations.length }"
+                 @dragenter="canWrite && activeConversationId ? onDragEnter($event) : null"
+                 @dragover="canWrite && activeConversationId ? onDragOver($event) : null"
+                 @dragleave="onDragLeave"
+                 @drop.prevent="canWrite && activeConversationId ? onDrop($event) : null">
+
+                <!-- Overlay de arrastre -->
+                <div v-if="isDraggingFile && canWrite && activeConversationId"
+                     class="absolute inset-2 z-30 rounded-2xl border-2 border-dashed border-accent bg-accent/10 backdrop-blur-[1px] flex flex-col items-center justify-center gap-2 pointer-events-none">
+                    <svg class="w-10 h-10 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 16.5V9.75m0 0l3 3m-3-3l-3 3M6.75 19.5a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.233-2.33 3 3 0 013.758 3.848A3.752 3.752 0 0118 19.5H6.75z"/></svg>
+                    <p class="text-sm font-medium text-accent">Soltá el archivo para adjuntarlo</p>
+                </div>
+
                 <!-- Chat Pattern BG -->
                 <div class="absolute inset-0 opacity-5 pointer-events-none" style="background-image: url('data:image/svg+xml,%3Csvg width=&quot;60&quot; height=&quot;60&quot; viewBox=&quot;0 0 60 60&quot; xmlns=&quot;http://www.w3.org/2000/svg&quot;%3E%3Cg fill=&quot;none&quot; fill-rule=&quot;evenodd&quot;%3E%3Cg fill=&quot;%239C92AC&quot; fill-opacity=&quot;0.4&quot;%3E%3Cpath d=&quot;M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z&quot;/%3E%3C/g%3E%3C/g%3E%3C/svg%3E')"></div>
 
@@ -1356,7 +1425,7 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
                                         <span v-if="msg.sender_name" class="text-[10px] text-amber-600">· {{ msg.sender_name }}</span>
                                         <span class="text-[9px] text-amber-500/80 italic ml-auto">solo el equipo</span>
                                     </div>
-                                    <p class="text-sm text-amber-900 whitespace-pre-wrap break-words">{{ msg.body }}</p>
+                                    <p class="text-sm text-amber-900 whitespace-pre-wrap break-words"><LinkedText :text="msg.body" link-class="text-amber-700 underline decoration-amber-300 hover:text-amber-900 break-all" /></p>
                                     <div class="flex items-center justify-end mt-0.5">
                                         <span class="text-[10px] text-amber-500">{{ formatTime(msg.created_at) }}</span>
                                     </div>
@@ -1419,7 +1488,7 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
                                 </div>
                                 <!-- Caption -->
                                 <div v-if="msg.caption" class="px-3 pb-1.5 pt-0.5">
-                                    <p class="text-sm text-gray-900 whitespace-pre-wrap break-words">{{ msg.caption }}</p>
+                                    <p class="text-sm text-gray-900 whitespace-pre-wrap break-words"><LinkedText :text="msg.caption" /></p>
                                     <div class="flex items-center justify-end space-x-1 mt-0.5">
                                         <span class="text-[10px] text-gray-500">{{ formatTime(msg.created_at) }}</span>
                                         <svg v-if="isOutgoing(msg)" class="h-3.5 w-3.5 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
@@ -1470,7 +1539,7 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
                                     <p class="text-sm text-gray-400 italic">Video no disponible</p>
                                 </div>
                                 <div v-if="msg.caption" class="px-3 pt-0.5 pb-1">
-                                    <p class="text-sm text-gray-900 whitespace-pre-wrap break-words">{{ msg.caption }}</p>
+                                    <p class="text-sm text-gray-900 whitespace-pre-wrap break-words"><LinkedText :text="msg.caption" /></p>
                                 </div>
                                 <div class="flex items-center justify-end gap-1 px-3 pb-1.5">
                                     <span class="text-[10px] text-gray-500">{{ formatTime(msg.created_at) }}</span>
@@ -1603,7 +1672,7 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
                                             <p class="text-[10px] text-gray-500">Toca para ver</p>
                                         </div>
                                         <a
-                                            :href="msg.media_url"
+                                            :href="msg.media_download_url || msg.media_url"
                                             :download="msg.media_filename || true"
                                             @click.stop
                                             class="p-1.5 rounded-full hover:bg-black/10 shrink-0 transition"
@@ -1616,13 +1685,13 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
                                         <svg class="w-8 h-8 text-gray-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" /></svg>
                                         <p class="text-sm text-gray-400 italic">Documento no disponible</p>
                                     </div>
-                                    <p v-if="msg.caption" class="px-3 pb-1 text-sm text-gray-900 whitespace-pre-wrap break-words">{{ msg.caption }}</p>
+                                    <p v-if="msg.caption" class="px-3 pb-1 text-sm text-gray-900 whitespace-pre-wrap break-words"><LinkedText :text="msg.caption" /></p>
                                 </template>
 
                                 <template v-else>
                                     <p class="whitespace-pre-wrap break-words px-4 pt-2"
                                        :class="msg.type === 'unsupported' ? 'text-gray-400 italic text-sm' : 'text-gray-900'">
-                                        {{ msg.body }}
+                                        <LinkedText :text="msg.body" />
                                     </p>
                                 </template>
 
@@ -1654,14 +1723,16 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
                         <div v-if="selectedFile" class="mb-2 bg-white rounded-xl border border-gray-200 shadow-sm p-3 flex items-center gap-3">
                             <!-- Preview imagen -->
                             <img v-if="filePreviewUrl" :src="filePreviewUrl" class="w-14 h-14 rounded-lg object-cover shrink-0" />
-                            <!-- Ícono audio -->
+                            <!-- Ícono según tipo (audio / video / documento) -->
                             <div v-else class="w-14 h-14 rounded-lg bg-accent/10 flex items-center justify-center shrink-0">
-                                <svg class="w-7 h-7 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z"/></svg>
+                                <svg v-if="fileKind(selectedFile) === 'audio'" class="w-7 h-7 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z"/></svg>
+                                <svg v-else-if="fileKind(selectedFile) === 'video'" class="w-7 h-7 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z"/></svg>
+                                <svg v-else class="w-7 h-7 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"/></svg>
                             </div>
                             <div class="flex-1 min-w-0">
                                 <p class="text-sm font-medium text-gray-900 truncate">{{ selectedFile.name }}</p>
-                                <p class="text-xs text-gray-500">{{ isAudioFile(selectedFile) ? 'Audio' : 'Imagen' }} · {{ (selectedFile.size / 1024).toFixed(0) }} KB</p>
-                                <!-- Caption solo para imágenes -->
+                                <p class="text-xs text-gray-500">{{ fileKindLabel(selectedFile) }} · {{ selectedFile.size >= 1048576 ? (selectedFile.size / 1048576).toFixed(1) + ' MB' : (selectedFile.size / 1024).toFixed(0) + ' KB' }}</p>
+                                <!-- WhatsApp no admite descripción en audios -->
                                 <input v-if="!isAudioFile(selectedFile)" v-model="mediaForm.caption" type="text" placeholder="Añadir descripción (opcional)" class="mt-1 w-full text-xs border-0 border-b border-gray-200 bg-transparent focus:ring-0 focus:border-accent px-0 py-0.5" />
                                 <p v-if="mediaForm.errors.file" class="mt-1 text-xs text-red-500">{{ mediaForm.errors.file }}</p>
                             </div>
@@ -1669,7 +1740,7 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
                                 <button type="button" @click="clearSelectedFile" class="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition">
                                     <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
                                 </button>
-                                <button type="button" @click="submitMedia" :disabled="mediaForm.processing" class="p-2 bg-accent text-white rounded-lg hover:bg-accent-hover disabled:opacity-50 transition">
+                                <button type="button" @click="submitMedia" :disabled="mediaForm.processing || fileTooBig" class="p-2 bg-accent text-white rounded-lg hover:bg-accent-hover disabled:opacity-50 transition">
                                     <svg v-if="!mediaForm.processing" class="w-4 h-4 rotate-90" fill="currentColor" viewBox="0 0 20 20"><path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z"/></svg>
                                     <svg v-else class="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
                                 </button>
@@ -1691,6 +1762,14 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
                                         title="Enviar imagen">
                                     <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z"/></svg>
                                     <span class="absolute -top-8 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-[10px] px-2 py-0.5 rounded-md whitespace-nowrap opacity-0 group-hover:opacity-100 transition pointer-events-none">Imagen</span>
+                                </button>
+
+                                <!-- Botón Documento (PDF, Word, Excel, PowerPoint, TXT, CSV) -->
+                                <button type="button" @click="openFileInput(DOC_ACCEPT)"
+                                        class="p-2.5 text-gray-500 hover:text-accent transition rounded-lg hover:bg-white group relative"
+                                        title="Enviar documento">
+                                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"/></svg>
+                                    <span class="absolute -top-8 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-[10px] px-2 py-0.5 rounded-md whitespace-nowrap opacity-0 group-hover:opacity-100 transition pointer-events-none">Documento</span>
                                 </button>
 
                                 <!-- Botón Audio (subir archivo) -->
@@ -2101,6 +2180,7 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
             :open="mediaViewer.open"
             :type="mediaViewer.type"
             :url="mediaViewer.url"
+            :download-url="mediaViewer.downloadUrl"
             :filename="mediaViewer.filename"
             :mime="mediaViewer.mime"
             :caption="mediaViewer.caption"
