@@ -25,6 +25,9 @@ use Carbon\Carbon;
  */
 class EventCatalog
 {
+    /** Máximo de facturas que se enumeran en `detalle_pendientes` (ver debtValues). */
+    private const DETAIL_MAX_INVOICES = 6;
+
     /**
      * Definición de los eventos disponibles y sus variables.
      *
@@ -77,17 +80,18 @@ class EventCatalog
 
             'invoice_created' => [
                 'label'       => 'Factura generada',
-                'description' => 'Avisa al cliente que su factura del ciclo ya fue generada.',
-                'trigger'     => 'El día que el router crea la factura (campo create_invoice del billing).',
+                'description' => 'Avisa al cliente que su factura del ciclo ya fue generada. No se envía si la factura quedó cubierta por completo con el saldo a favor del cliente.',
+                'trigger'     => 'El día que el router crea la factura (campo create_invoice del billing). Solo a clientes que quedan debiendo algo.',
                 'auto'        => true,
                 'variables'   => [
                     'nombre_cliente'    => ['label' => 'Nombre del cliente',    'description' => 'Nombre del cliente en ispwatch.',        'sample' => 'Juan Pérez'],
-                    'monto'             => ['label' => 'Monto de la factura',   'description' => 'Total de la factura del ciclo.',          'sample' => '$45.000'],
+                    'monto'             => ['label' => 'Monto a pagar',         'description' => 'Lo que el cliente debe pagar de esta factura, ya descontado su saldo a favor.', 'sample' => '$45.000'],
+                    'monto_total'       => ['label' => 'Total de la factura',   'description' => 'Total facturado del ciclo, ANTES de descontar el saldo a favor.', 'sample' => '$45.000'],
                     'mes_facturado'     => ['label' => 'Mes facturado',         'description' => 'Mes al que corresponde la factura, en texto.', 'sample' => 'julio'],
                     'numero_factura'    => ['label' => 'Número de factura',     'description' => 'Consecutivo de la factura.',              'sample' => 'FAC-1234'],
                     'fecha_vencimiento' => ['label' => 'Fecha de vencimiento',  'description' => 'Fecha límite de pago (formato d/m/Y).',   'sample' => '15/06/2026'],
                     'empresa'           => ['label' => 'Tu empresa',            'description' => 'Nombre comercial de tu workspace.',       'sample' => 'Mi ISP'],
-                ],
+                ] + self::debtVariables(),
             ],
 
             'payment_reminder' => [
@@ -97,12 +101,12 @@ class EventCatalog
                 'auto'        => true,
                 'variables'   => [
                     'nombre_cliente'    => ['label' => 'Nombre del cliente',    'description' => 'Nombre del cliente en ispwatch.',        'sample' => 'Juan Pérez'],
-                    'saldo'             => ['label' => 'Saldo pendiente',       'description' => 'Saldo aún por pagar de la factura.',      'sample' => '$45.000'],
+                    'saldo'             => ['label' => 'Saldo pendiente',       'description' => 'Saldo aún por pagar de la factura de este ciclo.', 'sample' => '$45.000'],
                     'mes_facturado'     => ['label' => 'Mes facturado',         'description' => 'Mes al que corresponde la factura, en texto.', 'sample' => 'julio'],
                     'numero_factura'    => ['label' => 'Número de factura',     'description' => 'Consecutivo de la factura.',              'sample' => 'FAC-1234'],
                     'fecha_vencimiento' => ['label' => 'Fecha de vencimiento',  'description' => 'Fecha límite de pago (formato d/m/Y).',   'sample' => '15/06/2026'],
                     'empresa'           => ['label' => 'Tu empresa',            'description' => 'Nombre comercial de tu workspace.',       'sample' => 'Mi ISP'],
-                ],
+                ] + self::debtVariables(),
             ],
 
             'service_suspension' => [
@@ -112,13 +116,13 @@ class EventCatalog
                 'auto'        => true,
                 'variables'   => [
                     'nombre_cliente'    => ['label' => 'Nombre del cliente',    'description' => 'Nombre del cliente en ispwatch.',        'sample' => 'Juan Pérez'],
-                    'saldo'             => ['label' => 'Saldo pendiente',       'description' => 'Saldo aún por pagar de la factura.',      'sample' => '$45.000'],
+                    'saldo'             => ['label' => 'Saldo pendiente',       'description' => 'Saldo aún por pagar de la factura de este ciclo.', 'sample' => '$45.000'],
                     'mes_facturado'     => ['label' => 'Mes facturado',         'description' => 'Mes al que corresponde la factura, en texto.', 'sample' => 'julio'],
                     'numero_factura'    => ['label' => 'Número de factura',     'description' => 'Consecutivo de la factura.',              'sample' => 'FAC-1234'],
                     'fecha_vencimiento' => ['label' => 'Fecha de vencimiento',  'description' => 'Fecha límite de pago (formato d/m/Y).',   'sample' => '15/06/2026'],
                     'fecha_corte'       => ['label' => 'Fecha de corte',        'description' => 'Fecha en que se suspende el servicio (hoy).', 'sample' => '30/06/2026'],
                     'empresa'           => ['label' => 'Tu empresa',            'description' => 'Nombre comercial de tu workspace.',       'sample' => 'Mi ISP'],
-                ],
+                ] + self::debtVariables(),
             ],
 
             'service_activated' => [
@@ -184,6 +188,26 @@ class EventCatalog
                     'hora_actual'    => ['label' => 'Hora actual',        'description' => 'Hora actual (HH:mm).',                'sample' => '15:10'],
                 ],
             ],
+        ];
+    }
+
+    /**
+     * Variables de DEUDA compartidas por los tres avisos de facturación
+     * (factura generada, recordatorio y suspensión). Son OPCIONALES: quien no
+     * las use en su plantilla sigue viendo solo la factura del ciclo. Existen
+     * porque el aviso solo habla del mes en curso, y un cliente que arrastra
+     * mora de meses anteriores no tenía forma de verla en el mensaje.
+     *
+     * @return array<string, array{label: string, description: string, sample: string}>
+     */
+    private static function debtVariables(): array
+    {
+        return [
+            'saldo_total'         => ['label' => 'Deuda total',          'description' => 'Suma de TODAS las facturas pendientes del cliente, incluidos meses anteriores.', 'sample' => '$100.000'],
+            'saldo_anterior'      => ['label' => 'Deuda anterior',       'description' => 'Solo el arrastre de meses anteriores (deuda total menos la factura de este ciclo).', 'sample' => '$50.000'],
+            'facturas_pendientes' => ['label' => 'Facturas pendientes',  'description' => 'Cuántas facturas tiene el cliente sin pagar.', 'sample' => '2'],
+            'detalle_pendientes'  => ['label' => 'Detalle de pendientes', 'description' => 'Lista de las facturas sin pagar con su valor y vencimiento.', 'sample' => '00000608 $50.000 (vence 08/07/2026), 00001467 $50.000 (vence 10/08/2026)'],
+            'saldo_favor'         => ['label' => 'Saldo a favor',        'description' => 'Saldo a favor que le queda al cliente después de aplicarlo a sus facturas.', 'sample' => '$0'],
         ];
     }
 
@@ -295,14 +319,19 @@ class EventCatalog
         };
 
         return match ($eventKey) {
+            // `monto` es lo que el cliente DEBE PAGAR (balance_due), no el total
+            // facturado: ispwatch descuenta el saldo a favor al crear la factura,
+            // y cobrarle el bruto es cobrarle algo ya saldado. Quien necesite el
+            // bruto tiene `monto_total`.
             'invoice_created' => [
                 'nombre_cliente'    => (string) $row['customer_name'],
-                'monto'             => $money($row['total'] ?? $row['balance_due']),
+                'monto'             => $money($row['balance_due'] ?? $row['total']),
+                'monto_total'       => $money($row['total'] ?? $row['balance_due']),
                 'mes_facturado'     => $month($row['issue_date'] ?? $row['due_date'] ?? null),
                 'numero_factura'    => (string) ($row['invoice_number'] ?? ''),
                 'fecha_vencimiento' => $date($row['due_date'] ?? null),
                 'empresa'           => (string) $tenant->name,
-            ],
+            ] + self::debtValues($row, $money, $date),
             'payment_reminder' => [
                 'nombre_cliente'    => (string) $row['customer_name'],
                 'saldo'             => $money($row['balance_due'] ?? $row['total']),
@@ -310,7 +339,7 @@ class EventCatalog
                 'numero_factura'    => (string) ($row['invoice_number'] ?? ''),
                 'fecha_vencimiento' => $date($row['due_date'] ?? null),
                 'empresa'           => (string) $tenant->name,
-            ],
+            ] + self::debtValues($row, $money, $date),
             'service_suspension' => [
                 'nombre_cliente'    => (string) $row['customer_name'],
                 'saldo'             => $money($row['balance_due'] ?? $row['total']),
@@ -320,7 +349,7 @@ class EventCatalog
                 // Se envía el día de corte, así que "hoy" es la fecha de corte.
                 'fecha_corte'       => Carbon::now()->format('d/m/Y'),
                 'empresa'           => (string) $tenant->name,
-            ],
+            ] + self::debtValues($row, $money, $date),
             'service_activated' => [
                 'nombre_cliente' => (string) $row['customer_name'],
                 'primer_nombre'  => $first($row['customer_name'] ?? ''),
@@ -352,6 +381,45 @@ class EventCatalog
             'general' => self::generalValues($row, $tenant, $agentName, $money),
             default   => [],
         };
+    }
+
+    /**
+     * Valores de las variables de DEUDA (ver {@see debtVariables()}), calculados
+     * desde la fila de IspwatchRepository::cycleCustomersForBilling.
+     *
+     * `detalle_pendientes` sale en UNA sola línea, separado por comas: Meta
+     * rechaza saltos de línea y tabs dentro de los parámetros de una plantilla.
+     * Se listan como máximo {@see DETAIL_MAX_INVOICES} facturas y el resto se
+     * resume ("y N más"), para no pasarse del largo que Meta acepta en un
+     * parámetro con un cliente que arrastre muchos meses de mora.
+     *
+     * @param  array<string, mixed>  $row
+     * @return array<string, string>
+     */
+    private static function debtValues(array $row, callable $money, callable $date): array
+    {
+        $pending = is_array($row['pending_detail'] ?? null) ? $row['pending_detail'] : [];
+        $extra   = max(0, count($pending) - self::DETAIL_MAX_INVOICES);
+
+        $detalle = array_map(
+            fn (array $inv): string => trim(
+                ($inv['number'] ?? '') . ' ' . $money($inv['balance_due'] ?? 0)
+                . ($inv['due_date'] ?? null ? ' (vence ' . $date($inv['due_date']) . ')' : '')
+            ),
+            array_slice($pending, 0, self::DETAIL_MAX_INVOICES),
+        );
+
+        if ($extra > 0) {
+            $detalle[] = "y {$extra} más";
+        }
+
+        return [
+            'saldo_total'         => $money($row['total_due'] ?? 0),
+            'saldo_anterior'      => $money($row['previous_due'] ?? 0),
+            'facturas_pendientes' => (string) ($row['pending_invoices'] ?? 0),
+            'detalle_pendientes'  => implode(', ', $detalle),
+            'saldo_favor'         => $money($row['credit_balance'] ?? 0),
+        ];
     }
 
     /**

@@ -55,6 +55,12 @@ use Illuminate\Support\Facades\Log;
  * sobre el tope; el día agendado siempre drena (la compuerta de recursos solo
  * aplica en días de catch-up), así que con horario normal todo sale el mismo día.
  *
+ * Saldo a favor: ispwatch aplica el `credit_balance` del cliente en el mismo
+ * segundo en que crea la factura, dejándola en `balance_due = 0` y `status =
+ * paid`. Los TRES avisos omiten al cliente sin saldo pendiente y usan siempre
+ * `balance_due` (no `total`) como monto, para no cobrarle por WhatsApp algo que
+ * su saldo a favor ya cubrió.
+ *
  * Todo intento queda registrado (sent / skipped+motivo / failed) para la
  * bitácora del sidebar.
  *
@@ -78,11 +84,12 @@ class SendBillingNotifications extends Command
     protected $description = 'Envía avisos de factura generada y recordatorios de pago por WhatsApp según las fechas del router en ispwatch.';
 
     /** Valores en el orden que las plantillas esperan sus variables {{1}}, {{2}}, … */
-    private function templateValues(string $kind, array $row, Tenant $tenant): array
+    private function templateValues(array $row, Tenant $tenant): array
     {
-        $amount = in_array($kind, [BillingNotificationLog::KIND_REMINDER, BillingNotificationLog::KIND_SUSPENSION], true)
-            ? ($row['balance_due'] ?? $row['total'])
-            : ($row['total'] ?? $row['balance_due']);
+        // Siempre el SALDO, en los tres avisos: ispwatch descuenta el saldo a
+        // favor del cliente al crear la factura, así que el `total` puede estar
+        // ya saldado (ver IspwatchRepository::cycleCustomersForBilling).
+        $amount = $row['balance_due'] ?? $row['total'];
 
         // Convención documentada (ver plan): nombre, monto, n° factura,
         // vencimiento, empresa, … Las plantillas actuales usan las primeras 1-2.
@@ -363,10 +370,16 @@ class SendBillingNotifications extends Command
 
         // Skips SIGNIFICATIVOS (el cliente sí tenía factura pero no se le envió):
         // se registran con motivo para que el ISP lo vea en la bitácora.
+        //
+        // El filtro de saldo aplica a los TRES avisos, incluido "factura
+        // generada": ispwatch aplica el saldo a favor del cliente en el mismo
+        // segundo en que crea la factura, dejándola en balance_due = 0 /
+        // status = paid. Sin este filtro se le cobraba por WhatsApp una factura
+        // que su saldo a favor ya había cubierto.
+        $balanceDue = (float) ($row['balance_due'] ?? $row['total'] ?? 0);
+
         $skipReason = match (true) {
-            in_array($kind, [BillingNotificationLog::KIND_REMINDER, BillingNotificationLog::KIND_SUSPENSION], true)
-                && (float) ($row['balance_due'] ?? 0) <= 0
-                            => 'La factura ya está pagada',
+            $balanceDue <= 0 => 'La factura no tiene saldo pendiente (ya pagada o cubierta con el saldo a favor)',
             ! $phone        => "Teléfono inválido ({$row['phone']})",
             default         => null,
         };
@@ -557,7 +570,7 @@ class SendBillingNotifications extends Command
         // Legado posicional.
         $positional = Template::positionalVariablesIn($tpl->body);
         $varCount   = $positional ? max($positional) : 0;
-        $values     = $this->templateValues($kind, $row, $tenant);
+        $values     = $this->templateValues($row, $tenant);
 
         $params = [];
         for ($i = 0; $i < $varCount; $i++) {

@@ -421,6 +421,20 @@ class IspwatchRepository
      * `issue_date` cae entre $cycleStart y $cycleEnd). `invoice_id` viene null
      * si el cliente no tiene factura este ciclo (motivo de skip en el aviso).
      *
+     * Ojo con `total` vs `balance_due`: ispwatch aplica el SALDO A FAVOR del
+     * cliente (`customer_profile.credit_balance`) al crear la factura, en el
+     * mismo segundo. Una factura de $52.500 cubierta por saldo queda con
+     * `total = 52500` pero `balance_due = 0` y `status = paid`. Lo que el aviso
+     * debe decirle al cliente es SIEMPRE `balance_due` (lo que le queda por
+     * pagar); usar `total` le cobra algo que ya está saldado.
+     *
+     * Además del ciclo actual se agrega la DEUDA COMPLETA del cliente
+     * (`total_due` / `pending_invoices` / `pending_detail`): todas sus facturas
+     * abiertas, incluidas las de meses anteriores. El query del ciclo solo mira
+     * el mes en curso, así que sin este agregado un cliente que arrastra mora no
+     * puede verla en el aviso. Es un solo GROUP BY por tenant, no un subquery
+     * por cliente.
+     *
      * Una fila por cliente (DISTINCT ON). Sin caché: batch.
      *
      * @return array<int, array<string, mixed>>
@@ -436,15 +450,19 @@ class IspwatchRepository
                 u.id   as customer_user_id,
                 u.tel  as phone,
                 u.name as user_name,
-                cp.name      as cp_name,
-                cp.last_name as cp_last_name,
+                cp.name           as cp_name,
+                cp.last_name      as cp_last_name,
+                cp.credit_balance as credit_balance,
                 i.id          as invoice_id,
                 i.number      as invoice_number,
                 i.total       as total,
                 i.balance_due as balance_due,
                 i.status      as invoice_status,
                 i.due_date    as due_date,
-                i.issue_date  as issue_date
+                i.issue_date  as issue_date,
+                d.total_due        as total_due,
+                d.pending_invoices as pending_invoices,
+                d.pending_detail   as pending_detail
             from customer_profile cp
             join users u  on u.id = cp.user_id
             join router r on r.id = cp.router_id
@@ -452,6 +470,21 @@ class IspwatchRepository
                    on i.customer_id = u.id
                   and i.tenant_id   = ?
                   and i.issue_date between ? and ?
+            left join (
+                select customer_id,
+                       sum(balance_due) as total_due,
+                       count(*)         as pending_invoices,
+                       json_agg(json_build_object(
+                           'number',      number,
+                           'balance_due', balance_due,
+                           'due_date',    due_date
+                       ) order by issue_date) as pending_detail
+                  from invoices
+                 where tenant_id = ?
+                   and balance_due > 0
+                   and status not in ('paid', 'void', 'cancelled')
+                 group by customer_id
+            ) d on d.customer_id = u.id
             where r.billing_router_id = ?
               and u.tenant_id = ?
               and cp.status = true
@@ -462,22 +495,53 @@ class IspwatchRepository
             $ispwatchTenantId,
             $cycleStart,
             $cycleEnd,
+            $ispwatchTenantId,
             $billingId,
             $ispwatchTenantId,
         ]);
 
-        return array_map(fn ($r) => [
-            'customer_user_id' => (int) $r->customer_user_id,
-            'phone'            => $r->phone,
-            'customer_name'    => trim(($r->cp_name ?: $r->user_name) . ' ' . ($r->cp_last_name ?? '')) ?: 'Cliente',
-            'invoice_id'       => $r->invoice_id !== null ? (int) $r->invoice_id : null,
-            'invoice_number'   => $r->invoice_number,
-            'total'            => $r->total !== null ? (string) $r->total : null,
-            'balance_due'      => $r->balance_due !== null ? (string) $r->balance_due : null,
-            'invoice_status'   => $r->invoice_status,
-            'due_date'         => $r->due_date,
-            'issue_date'       => $r->issue_date,
-        ], $rows);
+        return array_map(function ($r) {
+            $balance = $r->balance_due !== null ? (float) $r->balance_due : 0.0;
+            $totalDue = $r->total_due !== null ? (float) $r->total_due : 0.0;
+
+            return [
+                'customer_user_id' => (int) $r->customer_user_id,
+                'phone'            => $r->phone,
+                'customer_name'    => trim(($r->cp_name ?: $r->user_name) . ' ' . ($r->cp_last_name ?? '')) ?: 'Cliente',
+                'invoice_id'       => $r->invoice_id !== null ? (int) $r->invoice_id : null,
+                'invoice_number'   => $r->invoice_number,
+                'total'            => $r->total !== null ? (string) $r->total : null,
+                'balance_due'      => $r->balance_due !== null ? (string) $r->balance_due : null,
+                'invoice_status'   => $r->invoice_status,
+                'due_date'         => $r->due_date,
+                'issue_date'       => $r->issue_date,
+                // Saldo a favor vigente del cliente (lo que aún NO se ha aplicado).
+                'credit_balance'   => $r->credit_balance !== null ? (string) $r->credit_balance : '0',
+                // Deuda total abierta (esta factura + arrastre de meses anteriores).
+                'total_due'        => (string) $totalDue,
+                // Solo el arrastre: deuda total menos la factura de este ciclo.
+                'previous_due'     => (string) max(0, $totalDue - $balance),
+                'pending_invoices' => (int) ($r->pending_invoices ?? 0),
+                'pending_detail'   => $this->decodePendingDetail($r->pending_detail),
+            ];
+        }, $rows);
+    }
+
+    /**
+     * Facturas abiertas del cliente como lista PHP. Postgres devuelve `json_agg`
+     * como string (o null si no hay ninguna).
+     *
+     * @return array<int, array{number: ?string, balance_due: ?string, due_date: ?string}>
+     */
+    private function decodePendingDetail(mixed $raw): array
+    {
+        if (! is_string($raw) || $raw === '') {
+            return [];
+        }
+
+        $decoded = json_decode($raw, true);
+
+        return is_array($decoded) ? $decoded : [];
     }
 
     /**
