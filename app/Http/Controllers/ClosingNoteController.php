@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\ClosingNote;
 use App\Models\Conversation;
+use App\Models\ConversationRead;
 use App\Models\Message;
 use App\Models\User;
 use App\Services\Ispwatch\IspwatchRepository;
@@ -160,6 +161,10 @@ class ClosingNoteController extends Controller
                             'sent_by_user_id' => $request->user()->id,
                             'wa_message_id'   => $waResult['data']['messages'][0]['id'] ?? null,
                         ]);
+
+                        // Cerrar con nota es atenderla: nadie del equipo debería
+                        // seguir viéndola en verde como si estuviera pendiente.
+                        ConversationRead::markAnsweredForTeam($tenant->id, $conversation->id);
                     } catch (\Throwable $e) {
                         \Log::warning('ClosingNoteController@store: WA closing message failed', [
                             'conversation_id' => $conversation->id,
