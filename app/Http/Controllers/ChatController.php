@@ -358,6 +358,7 @@ class ChatController extends Controller
             ]);
 
             $conversation->touch();
+            ConversationRead::markAnsweredForTeam($tenantId, $conversation->id);
 
             return back()->with('success', 'Mensaje enviado.');
         }
@@ -529,6 +530,7 @@ class ChatController extends Controller
         ]);
 
         $conversation->touch();
+        ConversationRead::markAnsweredForTeam($tenantId, $conversation->id);
 
         return back()->with('success', $typeLabel . ' enviado.');
     }
@@ -856,6 +858,12 @@ class ChatController extends Controller
      * $staffMemberId: sin fila en conversation_reads, o con last_read_at
      * anterior al mensaje. Reutilizado por el filtro "unread", filterCounts()
      * y el conteo agrupado por conversación en index().
+     *
+     * Las reacciones quedan afuera: el webhook las guarda como entrantes
+     * (status='received', igual que cualquier mensaje), así que un 👍 del
+     * cliente a nuestra propia respuesta devolvía la conversación al verde
+     * como si tuviera algo pendiente. Un emoji sobre un mensaje ya contestado
+     * no pide respuesta. Se siguen viendo en el timeline del chat.
      */
     private function applyUnreadJoin(QueryBuilder $query, int $tenantId, int $staffMemberId): QueryBuilder
     {
@@ -867,6 +875,9 @@ class ChatController extends Controller
             })
             ->where('m.tenant_id', $tenantId)
             ->where('m.status', 'received')
+            ->where(function ($q) {
+                $q->whereNull('m.type')->orWhere('m.type', '!=', 'reaction');
+            })
             ->where(function ($q) {
                 $q->whereNull('cr.last_read_at')->orWhereColumn('m.created_at', '>', 'cr.last_read_at');
             });
