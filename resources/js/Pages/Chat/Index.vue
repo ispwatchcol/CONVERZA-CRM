@@ -2,6 +2,7 @@
 import AppLayout from '@/Layouts/AppLayout.vue';
 import MediaViewerModal from '@/Components/MediaViewerModal.vue';
 import LinkedText from '@/Components/LinkedText.vue';
+import MessageStatus from '@/Components/MessageStatus.vue';
 import { useForm, router, Link, Head, usePage } from '@inertiajs/vue3';
 import { ref, onMounted, onUnmounted, nextTick, watch, computed } from 'vue';
 
@@ -1201,7 +1202,10 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
                                     </div>
                                     <p class="text-xs truncate" :class="isConvUnread(conv) ? 'text-gray-900 font-semibold' : 'text-gray-500'">
                                         <span v-if="conv.last_message_status !== 'received'" class="mr-1">
-                                            <svg class="h-3 w-3 inline text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+                                            <!-- Rojo si el último mensaje del hilo no se entregó: así la
+                                                 bandeja delata el problema sin tener que abrir el chat. -->
+                                            <svg v-if="conv.last_message_status === 'failed'" class="h-3 w-3 inline text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5" title="No se entregó"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" /></svg>
+                                            <svg v-else class="h-3 w-3 inline" :class="conv.last_message_status === 'read' ? 'text-blue-500' : 'text-gray-400'" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
                                         </span>
                                         {{ conv.last_message || 'Sin mensajes' }}
                                     </p>
@@ -1440,7 +1444,7 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
                                 </div>
                                 <div class="mt-1 flex items-center gap-1 px-1">
                                     <span class="text-[10px] text-gray-400">{{ formatTime(msg.created_at) }}</span>
-                                    <svg v-if="isOutgoing(msg)" class="h-3 w-3 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+                                    <MessageStatus v-if="isOutgoing(msg)" :status="msg.status" :reason="msg.status_reason" size="sm" />
                                 </div>
                             </div>
 
@@ -1452,7 +1456,7 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
                                 </div>
                                 <div class="mt-1 flex items-center gap-1 px-1">
                                     <span class="text-[10px] text-gray-400">{{ formatTime(msg.created_at) }}</span>
-                                    <svg v-if="isOutgoing(msg)" class="h-3 w-3 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+                                    <MessageStatus v-if="isOutgoing(msg)" :status="msg.status" :reason="msg.status_reason" size="sm" />
                                 </div>
                             </div>
 
@@ -1476,7 +1480,7 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
                                     />
                                     <div v-if="!msg.caption" class="absolute bottom-2 right-2 inline-flex items-center space-x-1 bg-black/55 backdrop-blur-sm rounded-full px-2 py-0.5">
                                         <span class="text-[10px] text-white/95">{{ formatTime(msg.created_at) }}</span>
-                                        <svg v-if="isOutgoing(msg)" class="h-3 w-3 text-blue-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+                                        <MessageStatus v-if="isOutgoing(msg)" :status="msg.status" :reason="msg.status_reason" size="sm" on-dark />
                                     </div>
                                 </div>
                                 <!-- Imagen no disponible o error de carga -->
@@ -1491,13 +1495,13 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
                                     <p class="text-sm text-gray-900 whitespace-pre-wrap break-words"><LinkedText :text="msg.caption" /></p>
                                     <div class="flex items-center justify-end space-x-1 mt-0.5">
                                         <span class="text-[10px] text-gray-500">{{ formatTime(msg.created_at) }}</span>
-                                        <svg v-if="isOutgoing(msg)" class="h-3.5 w-3.5 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+                                        <MessageStatus v-if="isOutgoing(msg)" :status="msg.status" :reason="msg.status_reason" />
                                     </div>
                                 </div>
                                 <!-- Hora sola cuando no hay caption y la imagen falló -->
                                 <div v-else-if="!msg.media_url || imgErrors[msg.id]" class="flex items-center justify-end gap-1 px-3 pb-1.5">
                                     <span class="text-[10px] text-gray-500">{{ formatTime(msg.created_at) }}</span>
-                                    <svg v-if="isOutgoing(msg)" class="h-3.5 w-3.5 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+                                    <MessageStatus v-if="isOutgoing(msg)" :status="msg.status" :reason="msg.status_reason" />
                                 </div>
                             </div>
 
@@ -1543,7 +1547,7 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
                                 </div>
                                 <div class="flex items-center justify-end gap-1 px-3 pb-1.5">
                                     <span class="text-[10px] text-gray-500">{{ formatTime(msg.created_at) }}</span>
-                                    <svg v-if="isOutgoing(msg)" class="h-3.5 w-3.5 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+                                    <MessageStatus v-if="isOutgoing(msg)" :status="msg.status" :reason="msg.status_reason" />
                                 </div>
                             </div>
 
@@ -1695,9 +1699,21 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
                                     </p>
                                 </template>
 
+                                <!-- Fallo de entrega: el icono solo no basta. Sin este cartel el
+                                     asesor cree que respondió y el cliente cree que lo ignoraron. -->
+                                <div v-if="msg.status === 'failed'" class="mx-3 mb-1.5 flex items-start gap-1.5 rounded-lg bg-red-50 border border-red-200 px-2 py-1.5">
+                                    <svg class="w-3.5 h-3.5 text-red-500 shrink-0 mt-px" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+                                    </svg>
+                                    <p class="text-[11px] leading-snug text-red-900">
+                                        <strong>No se entregó.</strong>
+                                        {{ msg.status_reason || 'El cliente no recibió este mensaje.' }}
+                                    </p>
+                                </div>
+
                                 <div class="flex items-center justify-end space-x-1 px-3 pb-1.5">
                                     <span class="text-[10px] text-gray-500">{{ formatTime(msg.created_at) }}</span>
-                                    <svg v-if="isOutgoing(msg)" class="h-3.5 w-3.5 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+                                    <MessageStatus v-if="isOutgoing(msg)" :status="msg.status" :reason="msg.status_reason" />
                                 </div>
                             </div>
                         </div>

@@ -179,6 +179,8 @@ class ChatController extends Controller
                     'media_mime'     => $msg->media_mime,
                     'media_filename' => $msg->media_filename,
                     'sender_name'    => $msg->sender?->name,
+                    // Solo viaja en los mensajes fallidos: explica POR QUÉ no llegó.
+                    'status_reason'  => $this->failureReason($msg),
                     'created_at'     => $msg->created_at->toIso8601String(),
                 ])
                 ->all();
@@ -754,6 +756,38 @@ class ChatController extends Controller
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Motivo legible de que un mensaje NO se haya entregado, o null si el
+     * mensaje no falló.
+     *
+     * WhatsApp acepta el envío (200 + wamid) y recién después reporta el fallo
+     * por webhook, así que el asesor ya vio su mensaje "enviado". La causa casi
+     * siempre es la ventana de 24 h, y la salida es una plantilla — pero el
+     * título que manda Meta viene en inglés y orientado a depurar la API, así
+     * que aquí lo traducimos a la acción concreta que el asesor debe tomar.
+     *
+     * Códigos: https://developers.facebook.com/docs/whatsapp/cloud-api/support/error-codes
+     */
+    private function failureReason(Message $msg): ?string
+    {
+        if ($msg->status !== 'failed') {
+            return null;
+        }
+
+        $failure = $msg->raw_metadata['failure'] ?? [];
+        $code    = (int) ($failure['code'] ?? 0);
+
+        return match ($code) {
+            131047, 470 => 'Pasaron más de 24 h desde el último mensaje del cliente, así que WhatsApp no permite texto libre. Envíale una plantilla aprobada para reabrir la conversación.',
+            131026      => 'El número no puede recibir mensajes de WhatsApp (no tiene cuenta, o está inactivo).',
+            131049      => 'WhatsApp limitó este envío para cuidar la experiencia del usuario. Inténtalo más tarde.',
+            131050      => 'El cliente pidió no recibir mensajes de tu empresa.',
+            131000      => 'Error temporal de WhatsApp. Puedes reintentar.',
+            0           => $failure['title'] ?? 'El cliente no recibió este mensaje.',
+            default     => $failure['title'] ?? "WhatsApp rechazó el envío (código {$code}).",
+        };
+    }
 
     private function resolveIspwatchData(?string $phone, ?string $contactName): array
     {

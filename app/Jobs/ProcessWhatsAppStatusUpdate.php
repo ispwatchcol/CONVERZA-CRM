@@ -68,19 +68,49 @@ class ProcessWhatsAppStatusUpdate implements ShouldQueue
             return;
         }
 
-        $this->updateMessage($tenant, $waMessageId, $statusValue);
+        $this->updateMessage($tenant, $waMessageId, $statusValue, $status);
         $this->updateCampaignSend($tenant, $waMessageId, $statusValue, $status);
     }
 
-    private function updateMessage(Tenant $tenant, string $waMessageId, string $statusValue): void
+    private function updateMessage(Tenant $tenant, string $waMessageId, string $statusValue, array $status): void
     {
         if (! in_array($statusValue, ['delivered', 'read', 'failed'], true)) {
             return;
         }
 
-        Message::where('tenant_id', $tenant->id)
+        if ($statusValue !== 'failed') {
+            Message::where('tenant_id', $tenant->id)
+                ->where('wa_message_id', $waMessageId)
+                ->update(['status' => $statusValue]);
+            return;
+        }
+
+        // En 'failed' guardamos además el MOTIVO que reporta Meta. Sin él, el
+        // chat solo podía decir "no se entregó" sin explicar que casi siempre
+        // es la ventana de 24h y que la salida es mandar una plantilla. La
+        // rama de campañas ya guardaba el error; la del chat lo tiraba.
+        //
+        // No se usa el update() masivo porque `raw_metadata` tiene cast a array
+        // y el query builder lo escribiría sin serializar.
+        $error = $status['errors'][0] ?? [];
+
+        $failure = array_filter([
+            'code'    => $error['code'] ?? null,
+            'title'   => $error['title'] ?? $error['message'] ?? null,
+            'details' => $error['error_data']['details'] ?? null,
+            'at'      => now()->toIso8601String(),
+        ], fn ($v) => $v !== null && $v !== '');
+
+        $messages = Message::where('tenant_id', $tenant->id)
             ->where('wa_message_id', $waMessageId)
-            ->update(['status' => $statusValue]);
+            ->get();
+
+        foreach ($messages as $message) {
+            $message->update([
+                'status'       => 'failed',
+                'raw_metadata' => array_merge((array) $message->raw_metadata, ['failure' => $failure]),
+            ]);
+        }
     }
 
     private function updateCampaignSend(Tenant $tenant, string $waMessageId, string $statusValue, array $status): void
