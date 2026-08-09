@@ -9,11 +9,16 @@ use App\Models\Label;
 use App\Models\Message;
 use App\Models\QuickReply;
 use App\Models\StaffMember;
+use App\Models\Template;
+use App\Models\Tenant;
 use App\Services\Ispwatch\IspwatchRepository;
+use App\Services\Notifications\EventCatalog;
 use App\Services\Presence\PresenceService;
+use App\Services\Templates\TemplateRenderer;
 use App\Services\WhatsAppService;
 use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
@@ -117,6 +122,7 @@ class ChatController extends Controller
         $activeChat = [];
         $activeConversation = null;
         $activeAssignedTo = null;
+        $serviceWindowExpiresAt = null;
 
         // En full page loads el elseif auto-selecciona la primera conversación cuando
         // no hay ?conversation= en la URL. En partial reloads (polling) ese auto-select
@@ -206,6 +212,20 @@ class ChatController extends Controller
                 ['conversation_id' => $activeConversation->id, 'staff_member_id' => $myStaffMember->id],
                 ['tenant_id' => $tenantId, 'last_read_at' => now()],
             );
+
+            // Ventana de servicio de 24 h: WhatsApp solo permite texto libre
+            // dentro de las 24 h siguientes al último mensaje DEL CLIENTE. Fuera
+            // de ella Meta acepta el envío y lo rechaza después, así que el
+            // agente creía haber respondido. Se expone al front para avisarlo
+            // ANTES de escribir. null = nunca escribió (ventana cerrada).
+            $lastInboundAt = Message::where('tenant_id', $tenantId)
+                ->where('conversation_id', $activeConversation->id)
+                ->where('status', 'received')
+                ->max('created_at');
+
+            $serviceWindowExpiresAt = $lastInboundAt
+                ? Carbon::parse($lastInboundAt)->addDay()->toIso8601String()
+                : null;
         }
 
         // Heartbeat de presencia: registra que este usuario está en línea y, si
@@ -242,6 +262,31 @@ class ChatController extends Controller
             'myStaffMemberId'      => $myStaffMember->id,
             'filter'               => $filter,
             'activeContactId'      => $activeConversation?->contact?->id,
+            // Cuándo se cierra la ventana de 24 h. null = cerrada (o el contacto
+            // nunca escribió). El front calcula el tiempo restante en vivo.
+            'serviceWindowExpiresAt' => $serviceWindowExpiresAt,
+
+            // Plantillas aprobadas para reabrir la conversación fuera de la
+            // ventana. Closure: no se evalúa en el polling de 5s.
+            'templates'            => fn () => Template::where('tenant_id', $tenantId)
+                ->where('is_active', true)
+                ->where('status', 'approved')
+                ->orderBy('name')
+                ->get(['id', 'name', 'body', 'language', 'event_key'])
+                ->map(function (Template $t) {
+                    [$sendable, $reason] = $this->templateSendability($t);
+
+                    return [
+                        'id'        => $t->id,
+                        'name'      => $t->name,
+                        'body'      => $t->body,
+                        'language'  => $t->language,
+                        'variables' => Template::namedVariablesIn($t->body),
+                        'sendable'  => $sendable,
+                        'reason'    => $reason,
+                    ];
+                })
+                ->all(),
 
             // Precarga del modal "Nuevo chat" cuando se llega desde Contactos y el
             // contacto todavía no tiene ninguna conversación (ver ContactController@chat).
@@ -366,6 +411,172 @@ class ChatController extends Controller
         }
 
         return back()->withErrors(['message' => 'Error al enviar: ' . ($result['error'] ?? 'Error desconocido')]);
+    }
+
+    /**
+     * Envía una PLANTILLA aprobada desde el chat.
+     *
+     * Es la ÚNICA forma de escribirle al cliente fuera de la ventana de 24 h, y
+     * hasta ahora el chat no la tenía: cuando la ventana se cerraba, el agente
+     * solo podía mandar texto libre, Meta lo rechazaba en silencio y la
+     * conversación quedaba muerta sin que nadie se enterara.
+     *
+     * Las variables se rellenan solas con el propósito "general" del catálogo de
+     * eventos (datos del cliente en ispwatch + empresa + fecha/hora), que existía
+     * justamente para este envío manual y nunca se había cableado.
+     */
+    public function sendTemplate(Request $request)
+    {
+        $tenant   = app('tenant');
+        $tenantId = $tenant->id;
+
+        $validated = $request->validate([
+            'phone'           => 'required|string',
+            'template_id'     => [
+                'required', 'integer',
+                Rule::exists('templates', 'id')
+                    ->where('tenant_id', $tenantId)
+                    ->where('is_active', true)
+                    ->where('status', 'approved'),
+            ],
+            'conversation_id' => [
+                'nullable', 'integer',
+                Rule::exists('conversations', 'id')->where('tenant_id', $tenantId),
+            ],
+        ], [
+            'template_id.exists' => 'Esa plantilla no está aprobada por Meta o está desactivada.',
+        ]);
+
+        $template = Template::where('tenant_id', $tenantId)->findOrFail($validated['template_id']);
+
+        // Defensa en profundidad: la UI ya deshabilita estas plantillas, pero
+        // enviarla igual le llegaría al cliente con los huecos vacíos.
+        [$sendable, $reason] = $this->templateSendability($template);
+        if (! $sendable) {
+            return back()->withErrors(['template' => 'Esta plantilla no se puede enviar desde el chat. ' . $reason]);
+        }
+
+        $phone = Contact::normalizePhone($validated['phone']);
+
+        $contact = Contact::firstOrCreate(
+            ['phone' => $phone, 'tenant_id' => $tenantId],
+            ['phone' => $phone, 'tenant_id' => $tenantId],
+        );
+
+        $conversation = null;
+        if ($request->conversation_id) {
+            $conversation = Conversation::where('tenant_id', $tenantId)->find($request->conversation_id);
+        }
+        if (! $conversation) {
+            $conversation = Conversation::firstOrCreate(
+                ['contact_id' => $contact->id, 'status' => 'open', 'tenant_id' => $tenantId],
+                ['contact_id' => $contact->id, 'tenant_id' => $tenantId],
+            );
+        }
+        if ($conversation->status === 'closed') {
+            return back()->withErrors(['template' => 'La conversación está cerrada. Reabrela primero para enviar la plantilla.']);
+        }
+
+        $params = $this->templateParams($template, $contact, $tenant, $request->user()->name);
+
+        $result = $this->whatsappService->sendTemplate(
+            $phone,
+            $template->name,
+            $template->language ?: 'es_CO',
+            $params,
+        );
+
+        if (! $result['success']) {
+            return back()->withErrors([
+                'template' => 'Error al enviar la plantilla: ' . ($result['error'] ?? 'Error desconocido'),
+            ]);
+        }
+
+        Message::create([
+            'tenant_id'       => $tenantId,
+            'conversation_id' => $conversation->id,
+            'contact_id'      => $contact->id,
+            // Se guarda el texto YA renderizado: en el chat el agente tiene que
+            // leer lo que el cliente recibió, no la plantilla con {{variables}}.
+            'body'            => TemplateRenderer::renderBody($template, $params),
+            'status'          => 'sent',
+            'type'            => 'template',
+            'sent_by_user_id' => $request->user()->id,
+            'wa_message_id'   => $result['data']['messages'][0]['id'] ?? null,
+        ]);
+
+        $conversation->touch();
+        ConversationRead::markAnsweredForTeam($tenantId, $conversation->id);
+
+        return back()->with('success', 'Plantilla enviada. La ventana de 24 h se reabre cuando el cliente responda.');
+    }
+
+    /**
+     * ¿Se puede enviar esta plantilla a mano desde el chat, y si no, por qué?
+     *
+     * El envío manual solo sabe rellenar las variables del propósito "general"
+     * del catálogo (datos del cliente, empresa, fecha). Una plantilla de
+     * facturación pide `monto`, `mes_facturado`… que solo existen en el contexto
+     * de un ciclo concreto: enviarla desde aquí le llegaría al cliente con los
+     * huecos VACÍOS ("por un valor de: **"), que es peor que no ofrecerla.
+     *
+     * Las posicionales legadas ({{1}}) quedan fuera porque no hay forma de saber
+     * qué significa cada posición en un envío manual.
+     *
+     * @return array{0: bool, 1: ?string}
+     */
+    private function templateSendability(Template $template): array
+    {
+        if (Template::positionalVariablesIn($template->body) !== []) {
+            return [false, 'Usa variables numeradas ({{1}}); solo puede enviarse desde una campaña o un aviso automático.'];
+        }
+
+        $missing = array_diff(
+            Template::namedVariablesIn($template->body),
+            EventCatalog::variableNames('general'),
+        );
+
+        if ($missing !== []) {
+            return [false, 'Necesita datos que solo existen en un aviso automático: ' . implode(', ', $missing) . '.'];
+        }
+
+        return [true, null];
+    }
+
+    /**
+     * Valores de las variables de una plantilla enviada a mano desde el chat.
+     *
+     * Si el contacto está en ispwatch se usan sus datos reales; si no —o el
+     * tenant no está vinculado— se cae al nombre que tengamos del contacto, para
+     * que al menos el saludo salga bien en vez de quedar vacío.
+     *
+     * @return array<int|string, string>
+     */
+    private function templateParams(Template $template, Contact $contact, Tenant $tenant, string $agentName): array
+    {
+        $row = ['name' => (string) ($contact->name ?? '')];
+
+        if ($tenant->ispwatch_tenant_id) {
+            $customer = $this->ispwatch->customerByPhone(
+                (int) $tenant->ispwatch_tenant_id,
+                $contact->phone,
+                $contact->name,
+            );
+            if ($customer) {
+                $row = $customer;
+            }
+        }
+
+        $values = EventCatalog::resolveValues('general', $row, $tenant, $agentName);
+
+        // Solo variables NOMBRADAS: templateSendability() ya descartó las
+        // posicionales y las que piden datos fuera del propósito "general".
+        $params = [];
+        foreach (Template::namedVariablesIn($template->body) as $name) {
+            $params[$name] = (string) ($values[$name] ?? '');
+        }
+
+        return $params;
     }
 
     /**

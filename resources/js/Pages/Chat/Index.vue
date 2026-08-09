@@ -27,7 +27,80 @@ const props = defineProps({
     labels: { type: Array, default: () => [] },         // todas las etiquetas (tipo contact) del tenant
     newChatPhone: { type: String, default: null }, // precarga del modal "Nuevo chat" (viene de Contactos)
     newChatName: { type: String, default: null },
+    serviceWindowExpiresAt: { type: String, default: null }, // fin de la ventana de 24h; null = cerrada
+    templates: { type: Array, default: () => [] },           // plantillas aprobadas del tenant
 });
+
+// ── Ventana de servicio de 24 h ──────────────────────────────────────────────
+// WhatsApp solo acepta texto libre dentro de las 24 h siguientes al último
+// mensaje DEL CLIENTE. Fuera de ella Meta acepta el envío (200 + wamid) y lo
+// rechaza DESPUÉS por webhook: el agente creía haber respondido y el cliente
+// nunca recibía nada. Avisamos antes de escribir y ofrecemos la única salida
+// real, que es mandar una plantilla.
+//
+// No bloqueamos el envío: la ventana se infiere de los mensajes que tenemos
+// guardados, y Meta es la autoridad. Si por un fallo de webhook nos faltara un
+// entrante, bloquear dejaría al agente sin poder responder algo que sí era
+// válido. Avisar + hacer visible el fallo cubre el caso sin ese riesgo.
+const clockNow = ref(Date.now());
+let windowClockInterval = null;
+
+const windowMsLeft = computed(() => {
+    if (!props.serviceWindowExpiresAt) return 0;
+    return new Date(props.serviceWindowExpiresAt).getTime() - clockNow.value;
+});
+const windowOpen = computed(() => windowMsLeft.value > 0);
+// Aviso preventivo: mejor reaccionar antes de que se cierre, no después.
+const windowClosingSoon = computed(() => windowOpen.value && windowMsLeft.value < 2 * 60 * 60 * 1000);
+
+const windowLeftLabel = computed(() => {
+    const ms = windowMsLeft.value;
+    if (ms <= 0) return '';
+    const h = Math.floor(ms / 3600000);
+    const m = Math.floor((ms % 3600000) / 60000);
+    return h > 0 ? `${h} h ${m} min` : `${m} min`;
+});
+
+onMounted(() => { windowClockInterval = setInterval(() => { clockNow.value = Date.now(); }, 30000); });
+onUnmounted(() => { if (windowClockInterval) clearInterval(windowClockInterval); });
+
+// ── Envío de plantilla ───────────────────────────────────────────────────────
+const showTemplatePicker = ref(false);
+const templateSearch = ref('');
+const selectedTemplateId = ref(null);
+const templateForm = useForm({ phone: '', template_id: null, conversation_id: null });
+
+const filteredTemplates = computed(() => {
+    const q = templateSearch.value.trim().toLowerCase();
+    if (!q) return props.templates;
+    return props.templates.filter(t =>
+        (t.name || '').toLowerCase().includes(q) || (t.body || '').toLowerCase().includes(q)
+    );
+});
+
+const selectedTemplate = computed(
+    () => props.templates.find(t => t.id === selectedTemplateId.value) || null
+);
+
+function openTemplatePicker() {
+    templateSearch.value = '';
+    selectedTemplateId.value = null;
+    showTemplatePicker.value = true;
+}
+
+function sendTemplate() {
+    if (!selectedTemplateId.value) return;
+    templateForm.phone = props.activePhone;
+    templateForm.template_id = selectedTemplateId.value;
+    templateForm.conversation_id = props.activeConversationId;
+    templateForm.post(route('chat.send-template'), {
+        preserveScroll: true,
+        onSuccess: () => {
+            showTemplatePicker.value = false;
+            selectedTemplateId.value = null;
+        },
+    });
+}
 
 // Nombres de otros agentes viendo este chat ahora (detección de colisión).
 const viewerNames = computed(() => (props.presence?.viewers ?? []).map(v => v.name).join(', '));
@@ -1078,7 +1151,12 @@ onMounted(() => {
         // 'presence' + 'staffMembers' también registran el heartbeat de presencia
         // en el backend (el partial reload ejecuta ChatController::index completo).
         router.reload({
-            only: ['conversations', 'activeChat', 'staffMembers', 'presence'],
+            // serviceWindowExpiresAt va en la lista porque cuando el cliente
+            // responde la ventana de 24h se REABRE: sin refrescarlo, el aviso de
+            // "fuera de la ventana" quedaría pegado hasta recargar la página.
+            // No cuesta nada: el controlador ya calcula ese valor en cada poll,
+            // el `only` solo decide si se serializa.
+            only: ['conversations', 'activeChat', 'staffMembers', 'presence', 'serviceWindowExpiresAt'],
             data: reloadData,
             replace: true,
             preserveScroll: true,
@@ -1766,6 +1844,42 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
                         <!-- Error de grabación de micrófono -->
                         <p v-if="recordError" class="mb-2 text-xs text-red-500">{{ recordError }}</p>
 
+                        <!-- ── Ventana de 24 h ─────────────────────────────────────
+                             Cerrada: lo que escriba a mano NO va a llegar. Se lo
+                             decimos antes de que lo escriba y le damos la salida. -->
+                        <div v-if="!windowOpen && !noteMode"
+                             class="mb-2 flex flex-col sm:flex-row sm:items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5">
+                            <div class="flex items-start gap-2 flex-1 min-w-0">
+                                <svg class="w-4 h-4 text-amber-600 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                </svg>
+                                <p class="text-xs text-amber-900 leading-snug">
+                                    <strong>Fuera de la ventana de 24 h.</strong>
+                                    WhatsApp no entregará un mensaje escrito a mano: llegará como fallido.
+                                    Envía una plantilla para reabrir la conversación.
+                                </p>
+                            </div>
+                            <button type="button" @click="openTemplatePicker"
+                                    class="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-amber-600 text-white hover:bg-amber-700 transition">
+                                <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+                                </svg>
+                                Enviar plantilla
+                            </button>
+                        </div>
+
+                        <!-- Por cerrarse: aviso preventivo -->
+                        <div v-else-if="windowClosingSoon && !noteMode"
+                             class="mb-2 flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
+                            <svg class="w-4 h-4 text-amber-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                            <p class="text-xs text-amber-900">
+                                La ventana de 24 h se cierra en <strong>{{ windowLeftLabel }}</strong>.
+                                Después solo podrás escribirle con una plantilla.
+                            </p>
+                        </div>
+
                         <form @submit.prevent="submit" class="flex items-end space-x-2">
                             <!-- Hidden file input -->
                             <input ref="fileInputRef" type="file" class="hidden" @change="onFileSelected" />
@@ -2082,6 +2196,78 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
         </div>
 
         <!-- ═══════════════ Modal: Cerrar conversación ═══════════════ -->
+        <!-- ── Selector de plantilla ───────────────────────────────────────── -->
+        <Teleport to="body">
+            <div v-if="showTemplatePicker" class="fixed inset-0 z-[60] flex items-center justify-center p-4">
+                <div class="fixed inset-0 bg-black/50" @click="showTemplatePicker = false"></div>
+                <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-2xl animate-scale-in flex flex-col max-h-[85vh]">
+                    <div class="p-5 border-b border-gray-100">
+                        <h3 class="text-lg font-bold text-gray-900">Enviar plantilla</h3>
+                        <p class="text-xs text-gray-500 mt-0.5">
+                            Para {{ activeName }}. Las variables se rellenan solas con los datos del cliente.
+                        </p>
+                        <input
+                            v-model="templateSearch"
+                            type="search"
+                            placeholder="Buscar plantilla…"
+                            class="mt-3 w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:ring-1 focus:ring-accent focus:border-accent"
+                        />
+                    </div>
+
+                    <div class="flex-1 overflow-y-auto p-3 space-y-2">
+                        <p v-if="!templates.length" class="text-sm text-gray-500 px-2 py-6 text-center">
+                            No tienes plantillas aprobadas.
+                            <Link :href="route('templates.index')" class="text-accent underline">Sincronízalas desde Meta</Link>.
+                        </p>
+                        <p v-else-if="!filteredTemplates.length" class="text-sm text-gray-500 px-2 py-6 text-center">
+                            Ninguna plantilla coincide con "{{ templateSearch }}".
+                        </p>
+                        <button
+                            v-for="t in filteredTemplates"
+                            :key="t.id"
+                            type="button"
+                            :disabled="!t.sendable"
+                            @click="selectedTemplateId = t.id"
+                            class="w-full text-left rounded-xl border p-3 transition"
+                            :class="!t.sendable
+                                ? 'border-gray-200 bg-gray-50 opacity-60 cursor-not-allowed'
+                                : (selectedTemplateId === t.id
+                                    ? 'border-accent bg-accent/5 ring-1 ring-accent/30'
+                                    : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50')"
+                        >
+                            <div class="flex items-center justify-between gap-2 mb-1">
+                                <span class="text-sm font-semibold text-gray-900 truncate">{{ t.name }}</span>
+                                <span class="text-[10px] uppercase tracking-wide text-gray-400 shrink-0">{{ t.language }}</span>
+                            </div>
+                            <p class="text-xs text-gray-600 whitespace-pre-wrap line-clamp-4">{{ t.body }}</p>
+                            <p v-if="t.sendable && t.variables.length" class="mt-1.5 text-[11px] text-gray-400">
+                                Se rellenan solas: {{ t.variables.join(', ') }}
+                            </p>
+                            <!-- Enviarla dejaría los huecos vacíos en el mensaje del cliente. -->
+                            <p v-if="!t.sendable" class="mt-1.5 text-[11px] text-amber-700">
+                                No disponible aquí. {{ t.reason }}
+                            </p>
+                        </button>
+                    </div>
+
+                    <div class="p-4 border-t border-gray-100 flex items-center justify-end gap-2">
+                        <p v-if="templateForm.errors.template" class="text-xs text-red-500 mr-auto">
+                            {{ templateForm.errors.template }}
+                        </p>
+                        <button type="button" @click="showTemplatePicker = false"
+                                class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition">
+                            Cancelar
+                        </button>
+                        <button type="button" @click="sendTemplate"
+                                :disabled="!selectedTemplate || templateForm.processing"
+                                class="px-4 py-2 text-sm font-semibold text-white bg-accent hover:bg-accent-hover rounded-lg disabled:opacity-50 transition">
+                            {{ templateForm.processing ? 'Enviando…' : 'Enviar' }}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </Teleport>
+
         <Teleport to="body">
             <div v-if="showCloseModal" class="fixed inset-0 z-[60] flex items-center justify-center p-4">
                 <div class="fixed inset-0 bg-black/50" @click="showCloseModal = false"></div>

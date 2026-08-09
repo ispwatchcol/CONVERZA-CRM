@@ -65,6 +65,8 @@ Route::middleware('auth')->group(function () {
     Route::get('/chat', [ChatController::class, 'index'])->name('chat.index');
     Route::post('/chat/send', [ChatController::class, 'sendMessage'])->middleware('role:agent')->name('chat.send');
     Route::post('/chat/send-media', [ChatController::class, 'sendMedia'])->middleware('role:agent')->name('chat.send-media');
+    // Única vía para escribirle al cliente fuera de la ventana de 24h.
+    Route::post('/chat/send-template', [ChatController::class, 'sendTemplate'])->middleware('role:agent')->name('chat.send-template');
     Route::patch('/chat/conversations/{conversation}/assign', [ChatController::class, 'assign'])->middleware('role:agent')->name('chat.conversations.assign');
     Route::post('/chat/conversations/{conversation}/notes', [ChatController::class, 'storeNote'])->middleware('role:agent')->name('chat.notes.store');
     Route::post('/chat/conversations/{conversation}/reopen', [ChatController::class, 'reopen'])->middleware('role:agent')->name('chat.conversations.reopen');
