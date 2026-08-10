@@ -81,7 +81,13 @@ class HandleInertiaRequests extends Middleware
                 'success' => fn() => $request->session()->get('success'),
                 'error' => fn() => $request->session()->get('error'),
             ],
-            'whatsappStatus' => fn() => app(WhatsAppService::class)->checkConnection(),
+            // Solo para usuarios con sesión. En las páginas públicas (/ayuda,
+            // /login) un invitado no tiene qué hacer con este estado, y evaluarlo
+            // dispararía una llamada al Graph API —con las credenciales del .env—
+            // por cada visita anónima.
+            'whatsappStatus' => fn() => $request->user()
+                ? app(WhatsAppService::class)->checkConnection()
+                : null,
         ];
     }
 }

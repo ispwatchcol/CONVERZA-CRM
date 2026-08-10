@@ -12,6 +12,7 @@ const props = defineProps({
     activeConversationId: { type: Number, default: null },
     activePhone: { type: String, default: null },
     activeName: { type: String, default: null },
+    activeWhatsappName: { type: String, default: null },
     activeStatus: { type: String, default: null },
     activeAssignedTo: { type: Object, default: null },
     quickReplies: { type: Array, default: () => [] },
@@ -695,7 +696,12 @@ function selectConversation(conv) {
 const filteredConversations = () => {
     if (!search.value) return props.conversations;
     const s = search.value.toLowerCase();
-    return props.conversations.filter(c => c.name?.toLowerCase().includes(s) || c.phone?.includes(s));
+    // whatsapp_name: cuando se muestra el titular de ISPWatch, el chat se sigue
+    // encontrando buscando por el nombre del perfil de WhatsApp.
+    return props.conversations.filter(c =>
+        c.name?.toLowerCase().includes(s)
+        || c.whatsapp_name?.toLowerCase().includes(s)
+        || c.phone?.includes(s));
 };
 
 const deleteConfirm = ref({ show: false, id: null, name: '' });
@@ -1337,13 +1343,16 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
                         </div>
                         <div class="flex-1 min-w-0">
                             <h2 class="text-sm font-semibold text-gray-900 truncate">{{ activeName }}</h2>
-                            <p v-if="activeStatus === 'closed'" class="text-[11px] text-gray-500 flex items-center gap-1">
-                                <span class="w-1.5 h-1.5 rounded-full bg-gray-400"></span>
-                                Conversación cerrada
-                            </p>
-                            <p v-else class="text-[11px] text-accent flex items-center gap-1">
-                                <span class="w-1.5 h-1.5 rounded-full bg-accent"></span>
-                                En línea
+                            <p class="text-[11px] flex items-center gap-1 truncate">
+                                <span class="w-1.5 h-1.5 rounded-full shrink-0" :class="activeStatus === 'closed' ? 'bg-gray-400' : 'bg-accent'"></span>
+                                <span :class="activeStatus === 'closed' ? 'text-gray-500' : 'text-accent'">
+                                    {{ activeStatus === 'closed' ? 'Conversación cerrada' : 'En línea' }}
+                                </span>
+                                <!-- El titular del servicio manda en el nombre; si quien escribe
+                                     tiene otro nombre en su perfil de WhatsApp, se aclara aquí. -->
+                                <span v-if="activeWhatsappName" class="text-gray-400 truncate" :title="`Nombre en WhatsApp: ${activeWhatsappName}`">
+                                    · WhatsApp: {{ activeWhatsappName }}
+                                </span>
                             </p>
                         </div>
 

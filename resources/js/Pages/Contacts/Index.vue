@@ -95,6 +95,19 @@ function openDetail(contact) {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+// Mismo criterio que el chat: manda el titular del servicio en ISPWatch; solo si
+// el número no está allí se usa el nombre del perfil de WhatsApp.
+function displayName(c) {
+    return c?.ispwatch_customer?.name || c?.name || '';
+}
+
+// Nombre del perfil de WhatsApp cuando NO es el que se muestra (para no repetirlo).
+function whatsappAlias(c) {
+    const shown = displayName(c);
+    if (!c?.name || !shown) return '';
+    return shown.trim().toLowerCase() === c.name.trim().toLowerCase() ? '' : c.name;
+}
+
 function formatPhone(phone) {
     if (!phone) return '';
     if (phone.startsWith('57') && phone.length === 12) {
@@ -216,15 +229,18 @@ function serviceBadge(status) {
                                 <td class="px-4 py-3">
                                     <div class="flex items-center">
                                         <div class="w-9 h-9 rounded-full bg-gradient-to-br from-accent to-accent-light flex items-center justify-center text-white text-xs font-bold shrink-0">
-                                            {{ (c.name || c.phone || '?')[0].toUpperCase() }}
+                                            {{ (displayName(c) || c.phone || '?')[0].toUpperCase() }}
                                         </div>
                                         <div class="ml-3 min-w-0">
                                             <div class="flex items-center gap-2">
-                                                <p class="text-sm font-medium text-gray-900 truncate">{{ c.name || 'Sin nombre' }}</p>
+                                                <p class="text-sm font-medium text-gray-900 truncate">{{ displayName(c) || 'Sin nombre' }}</p>
                                                 <span v-if="hasIspwatch && c.ispwatch_customer" class="px-1.5 py-0.5 rounded text-[9px] uppercase font-semibold tracking-wide bg-emerald-100 text-emerald-700 shrink-0">ISP</span>
                                                 <span v-else-if="hasIspwatch" class="px-1.5 py-0.5 rounded text-[9px] uppercase font-semibold tracking-wide bg-amber-50 text-amber-700 shrink-0">Prospecto</span>
                                             </div>
-                                            <p class="text-xs text-gray-500 truncate">{{ formatPhone(c.phone) }}</p>
+                                            <p class="text-xs text-gray-500 truncate">
+                                                {{ formatPhone(c.phone) }}
+                                                <span v-if="whatsappAlias(c)" class="text-gray-400">· WhatsApp: {{ whatsappAlias(c) }}</span>
+                                            </p>
                                         </div>
                                     </div>
                                 </td>
@@ -243,7 +259,7 @@ function serviceBadge(status) {
                                 <td class="px-4 py-3 text-sm text-gray-500 hidden lg:table-cell whitespace-nowrap">{{ formatRelative(c.updated_at) }}</td>
                                 <td class="px-4 py-3 text-right whitespace-nowrap" @click.stop>
                                     <div class="flex items-center justify-end gap-1">
-                                        <Link :href="route('contacts.chat', c.id)" :title="`Ir al chat con ${c.name || c.phone}`"
+                                        <Link :href="route('contacts.chat', c.id)" :title="`Ir al chat con ${displayName(c) || c.phone}`"
                                               class="p-2 rounded-lg text-accent hover:bg-accent/10 transition">
                                             <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8.625 12a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H8.25m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H12m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 01-2.555-.337A5.972 5.972 0 015.41 20.97a5.969 5.969 0 01-.474-.065 4.48 4.48 0 00.978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25z"/></svg>
                                         </Link>
@@ -291,11 +307,14 @@ function serviceBadge(status) {
                         <!-- Header del contacto -->
                         <div class="flex items-start gap-3 mb-4">
                             <div class="w-14 h-14 rounded-full bg-gradient-to-br from-accent to-accent-light flex items-center justify-center text-white font-bold text-lg shrink-0">
-                                {{ (selectedContact.name || selectedContact.phone || '?')[0].toUpperCase() }}
+                                {{ (displayName(selectedContact) || selectedContact.phone || '?')[0].toUpperCase() }}
                             </div>
                             <div class="flex-1 min-w-0">
-                                <h3 class="text-lg font-semibold text-gray-900 truncate">{{ selectedContact.name || 'Sin nombre' }}</h3>
+                                <h3 class="text-lg font-semibold text-gray-900 truncate">{{ displayName(selectedContact) || 'Sin nombre' }}</h3>
                                 <p class="text-sm text-gray-500 font-mono">{{ formatPhone(selectedContact.phone) }}</p>
+                                <p v-if="whatsappAlias(selectedContact)" class="text-xs text-gray-400 truncate">
+                                    Nombre en WhatsApp: {{ whatsappAlias(selectedContact) }}
+                                </p>
                                 <div class="mt-1.5 flex flex-wrap items-center gap-1">
                                     <span v-if="hasIspwatch && selectedContact.ispwatch_customer" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-100 text-emerald-700">
                                         <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>

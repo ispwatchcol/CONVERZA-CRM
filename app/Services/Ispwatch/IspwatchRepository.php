@@ -125,6 +125,118 @@ class IspwatchRepository
     }
 
     /**
+     * Nombre del TITULAR en ispwatch para cada contacto dado.
+     *
+     * Existe porque el webhook de WhatsApp solo nos da el nombre del PERFIL de
+     * quien escribe (la señora que usa el teléfono), nunca el que el ISP tiene
+     * guardado: para mostrar al titular hay que preguntarle a ispwatch.
+     *
+     * Es la versión LIGERA de customersByPhonesBatch(): trae solo los nombres,
+     * no los modelos completos. Importa porque quien la consume es el listado de
+     * chats, que se refresca cada 5 s: cachear ahí la colección entera de
+     * clientes obligaría a deserializarla en cada poll.
+     *
+     * @param  array<int|string, array{phone: ?string, name: ?string}>  $contacts  indexado por lo que el caller quiera (ej. contact id)
+     * @return array<int|string, string|null>  mismo índice que $contacts; null = el teléfono no está en ispwatch
+     */
+    public function customerNamesForContacts(int $ispwatchTenantId, array $contacts): array
+    {
+        if ($contacts === []) {
+            return [];
+        }
+
+        $namesByPhone = $this->customerNamesByNormalizedPhone($ispwatchTenantId);
+
+        $result = [];
+        foreach ($contacts as $key => $c) {
+            $normalized = $this->normalizeToLocal($c['phone'] ?? null);
+            $names      = $normalized !== null ? ($namesByPhone[$normalized] ?? []) : [];
+
+            $result[$key] = $names === []
+                ? null
+                : $this->pickBestName($names, $c['name'] ?? null);
+        }
+
+        return $result;
+    }
+
+    /**
+     * Mapa [teléfono local de 10 dígitos => nombres de los clientes con ese
+     * teléfono, el más reciente primero]. Una sola query por tenant, cacheada
+     * 60 s como el resto del repositorio (un cambio de nombre en ispwatch tarda
+     * como mucho un minuto en verse en Converza).
+     *
+     * @return array<string, array<int, string>>
+     */
+    private function customerNamesByNormalizedPhone(int $ispwatchTenantId): array
+    {
+        $cacheKey = "ispwatch:customer_names_by_phone:t{$ispwatchTenantId}";
+
+        return Cache::remember($cacheKey, self::CACHE_TTL_SECONDS, function () use ($ispwatchTenantId) {
+            $rows = \DB::connection('ispwatch')
+                ->table('users as u')
+                ->join('customer_profile as cp', 'cp.user_id', '=', 'u.id')
+                ->where('u.tenant_id', $ispwatchTenantId)
+                // id descendente = el más reciente primero, mismo criterio de
+                // desempate que pickBestMatch() cuando no hay match por nombre.
+                ->orderByDesc('u.id')
+                ->get(['u.tel', 'u.name as user_name', 'cp.name as cp_name', 'cp.last_name as cp_last_name']);
+
+            $map = [];
+            foreach ($rows as $r) {
+                $phone = $this->normalizeToLocal($r->tel);
+                if ($phone === null) {
+                    continue;
+                }
+
+                $name = trim(($r->cp_name ?: $r->user_name) . ' ' . ($r->cp_last_name ?? ''));
+                if ($name === '') {
+                    continue;
+                }
+
+                $map[$phone][] = $name;
+            }
+
+            return $map;
+        });
+    }
+
+    /**
+     * Mismo desempate que pickBestMatch() pero sobre nombres sueltos (familiares
+     * que comparten teléfono): gana el que más tokens comparta con el nombre de
+     * WhatsApp; si ninguno coincide, el más reciente (primero de la lista).
+     *
+     * @param  array<int, string>  $names  no vacío, ordenado del más reciente al más viejo
+     */
+    private function pickBestName(array $names, ?string $contactName): string
+    {
+        if (count($names) === 1) {
+            return $names[0];
+        }
+
+        $contactTokens = $this->nameTokens($contactName);
+
+        if ($contactTokens !== []) {
+            $best      = null;
+            $bestScore = 0;
+
+            foreach ($names as $name) {
+                $score = count(array_intersect($contactTokens, $this->nameTokens($name)));
+                if ($score > $bestScore) {
+                    $bestScore = $score;
+                    $best      = $name;
+                }
+            }
+
+            if ($best !== null) {
+                return $best;
+            }
+        }
+
+        return $names[0];
+    }
+
+    /**
      * Cuenta cuántos de los teléfonos dados corresponden a un cliente ISPWatch,
      * con UNA sola query batch (no una por teléfono). No hace desambiguación por
      * nombre porque para un conteo solo importa "¿existe algún candidato?".
