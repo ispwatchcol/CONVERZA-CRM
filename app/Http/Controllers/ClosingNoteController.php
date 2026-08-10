@@ -55,7 +55,6 @@ class ClosingNoteController extends Controller
 
         $notes->getCollection()->transform(function (ClosingNote $note) use ($ispwatchTenantId) {
             $contact = $note->conversation?->contact;
-            $contactName = $contact?->name ?: $contact?->phone;
 
             // Enriquecimiento ISPWatch (cacheado en el repo, no martillea)
             $ispwatchCustomer = null;
@@ -69,6 +68,10 @@ class ClosingNoteController extends Controller
                     ];
                 }
             }
+
+            // Mismo criterio que el chat: manda el titular en ispwatch, y solo
+            // si el teléfono no está allí se usa el nombre del perfil de WhatsApp.
+            $contactName = ($ispwatchCustomer['name'] ?? null) ?: ($contact?->name ?: $contact?->phone);
 
             return [
                 'id'                  => $note->id,

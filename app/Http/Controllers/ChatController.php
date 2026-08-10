@@ -85,6 +85,26 @@ class ChatController extends Controller
 
         $conversationModels = $conversationsQuery->orderByDesc('updated_at')->get();
 
+        // ── Nombre a mostrar: manda el TITULAR de ispwatch ───────────────────
+        // El webhook de WhatsApp solo trae el nombre del PERFIL de quien escribe
+        // (p. ej. la esposa que usa el teléfono), NUNCA el que el ISP tiene
+        // guardado —ese vive en la agenda del celular y Meta no lo manda—. Así
+        // que un chat del titular podía aparecer con un nombre que el ISP no
+        // reconocía. Orden: titular en ispwatch → perfil de WhatsApp → teléfono.
+        // Una sola query batch cacheada 60 s, apta para el poll de 5 s.
+        $ispwatchTenantId = $tenant->ispwatch_tenant_id ? (int) $tenant->ispwatch_tenant_id : null;
+        $ispwatchNames    = $ispwatchTenantId
+            ? $this->ispwatch->customerNamesForContacts(
+                $ispwatchTenantId,
+                $conversationModels
+                    ->filter(fn (Conversation $c) => (bool) $c->contact)
+                    ->mapWithKeys(fn (Conversation $c) => [
+                        $c->contact->id => ['phone' => $c->contact->phone, 'name' => $c->contact->name],
+                    ])
+                    ->all(),
+            )
+            : [];
+
         // Conteo de mensajes entrantes no leídos por conversación, para ESTE
         // agente (conversation_reads.staff_member_id). Una sola query agrupada
         // en vez de N+1 por fila.
@@ -94,14 +114,17 @@ class ChatController extends Controller
             ->selectRaw('m.conversation_id, COUNT(*) AS unread_count')
             ->pluck('unread_count', 'm.conversation_id');
 
-        $conversations = $conversationModels->map(function (Conversation $conv) use ($unreadCounts) {
+        $conversations = $conversationModels->map(function (Conversation $conv) use ($unreadCounts, $ispwatchNames) {
             $unread = (int) ($unreadCounts[$conv->id] ?? 0);
 
             return [
                 'id'                  => $conv->id,
                 'contact_id'          => $conv->contact_id,
                 'phone'               => $conv->contact?->phone,
-                'name'                => $conv->contact?->name ?: $conv->contact?->phone,
+                'name'                => $this->displayName($conv->contact, $ispwatchNames),
+                // Solo cuando difiere del nombre mostrado: el buscador de la
+                // lista sigue encontrando el chat por el nombre de WhatsApp.
+                'whatsapp_name'       => $this->whatsappAliasFor($conv->contact, $ispwatchNames),
                 'status'              => $conv->status,
                 'last_message'        => $conv->latestMessage?->body,
                 'last_message_status' => $conv->latestMessage?->status,
@@ -234,6 +257,16 @@ class ChatController extends Controller
         // completo aunque solo serialice algunas props.
         $this->presence->heartbeat($tenantId, $userId, $request->user()->name, $activeConversation?->id);
 
+        // La conversación activa puede no estar en la lista (filtro/rol la dejan
+        // fuera): si su contacto no quedó en el batch de arriba, se resuelve
+        // aparte. El mapa por teléfono ya está cacheado, así que no hay query extra.
+        $activeContact = $activeConversation?->contact;
+        if ($activeContact && $ispwatchTenantId && ! array_key_exists($activeContact->id, $ispwatchNames)) {
+            $ispwatchNames += $this->ispwatch->customerNamesForContacts($ispwatchTenantId, [
+                $activeContact->id => ['phone' => $activeContact->phone, 'name' => $activeContact->name],
+            ]);
+        }
+
         // Resolución de ispwatch memoizada: una sola vez por petición aunque
         // la consuman dos props (customer + invoices).
         $ispwatchData = null;
@@ -255,8 +288,12 @@ class ChatController extends Controller
             'conversations'        => $conversations,
             'activeChat'           => $activeChat,
             'activeConversationId' => $activeConversationId ? (int) $activeConversationId : null,
-            'activePhone'          => $activeConversation?->contact?->phone,
-            'activeName'           => $activeConversation?->contact?->name ?: $activeConversation?->contact?->phone,
+            'activePhone'          => $activeContact?->phone,
+            'activeName'           => $this->displayName($activeContact, $ispwatchNames),
+            // Nombre del perfil de WhatsApp cuando NO es el que se muestra: el
+            // encabezado lo aclara para que el agente sepa quién está escribiendo
+            // realmente desde el número del titular.
+            'activeWhatsappName'   => $this->whatsappAliasFor($activeContact, $ispwatchNames),
             'activeStatus'         => $activeConversation?->status,
             'activeAssignedTo'     => $activeAssignedTo,
             'myStaffMemberId'      => $myStaffMember->id,
@@ -998,6 +1035,45 @@ class ChatController extends Controller
             0           => $failure['title'] ?? 'El cliente no recibió este mensaje.',
             default     => $failure['title'] ?? "WhatsApp rechazó el envío (código {$code}).",
         };
+    }
+
+    /**
+     * Nombre con el que se muestra un contacto en la lista y el encabezado.
+     *
+     * Manda el titular del servicio en ispwatch: es el nombre con el que el ISP
+     * conoce al cliente. Solo si el teléfono no está en ispwatch se cae al
+     * nombre del perfil de WhatsApp, y en último caso al propio número.
+     *
+     * @param  array<int, string|null>  $ispwatchNames  [contact_id => nombre en ispwatch|null]
+     */
+    private function displayName(?Contact $contact, array $ispwatchNames): ?string
+    {
+        if (! $contact) {
+            return null;
+        }
+
+        return ($ispwatchNames[$contact->id] ?? null)
+            ?: ($contact->name ?: $contact->phone);
+    }
+
+    /**
+     * Nombre del perfil de WhatsApp SOLO cuando no es el que se está mostrando
+     * (es decir, cuando ganó el nombre de ispwatch y son distintos). null si
+     * coinciden o si no aporta nada, para no repetir el mismo texto en pantalla.
+     *
+     * @param  array<int, string|null>  $ispwatchNames  [contact_id => nombre en ispwatch|null]
+     */
+    private function whatsappAliasFor(?Contact $contact, array $ispwatchNames): ?string
+    {
+        if (! $contact || blank($contact->name)) {
+            return null;
+        }
+
+        $shown = $this->displayName($contact, $ispwatchNames);
+
+        return mb_strtolower(trim($shown ?? '')) === mb_strtolower(trim($contact->name))
+            ? null
+            : $contact->name;
     }
 
     private function resolveIspwatchData(?string $phone, ?string $contactName): array

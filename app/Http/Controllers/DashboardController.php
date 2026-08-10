@@ -140,7 +140,8 @@ class DashboardController extends Controller
 
             return [
                 'id'                  => $c->id,
-                'contact_name'        => $c->contact?->name ?: $c->contact?->phone,
+                // Mismo criterio que el chat: manda el titular en ispwatch.
+                'contact_name'        => ($ispwatchCustomer['name'] ?? null) ?: ($c->contact?->name ?: $c->contact?->phone),
                 'contact_phone'       => $c->contact?->phone,
                 'last_message'        => $c->latestMessage?->body,
                 'last_message_type'   => $c->latestMessage?->type,
@@ -168,7 +169,8 @@ class DashboardController extends Controller
                 $ispwatchCustomer = $this->maybeIspwatchCustomer($ispwatchTenantId, $c->contact);
                 return [
                     'id'                   => $c->id,
-                    'contact_name'         => $c->contact?->name ?: $c->contact?->phone,
+                    // Mismo criterio que el chat: manda el titular en ispwatch.
+                    'contact_name'         => ($ispwatchCustomer['name'] ?? null) ?: ($c->contact?->name ?: $c->contact?->phone),
                     'contact_phone'        => $c->contact?->phone,
                     'status'               => $c->status,
                     'last_message'         => $c->latestMessage?->body,
