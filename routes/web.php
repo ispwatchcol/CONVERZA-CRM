@@ -27,6 +27,12 @@ Route::middleware('guest')->group(function () {
     Route::post('/login', [LoginController::class, 'store']);
 });
 
+// ── Manual público (sin auth) ────────────────────────────────────────────────
+// Mismo contenido que /manual, pero accesible con solo el link: sirve para
+// pasárselo a un ISP que todavía no tiene cuenta. Es de solo lectura y no
+// expone ningún dato del workspace.
+Route::get('/ayuda', [ManualController::class, 'publicIndex'])->name('manual.public');
+
 // ── WhatsApp Webhook (public, no auth) ───────────────────────────────────────
 Route::get('/webhook', [WhatsAppController::class, 'verifyWebhook'])->name('webhook.verify');
 Route::post('/webhook', [WhatsAppController::class, 'handleWebhook'])->name('webhook.handle');

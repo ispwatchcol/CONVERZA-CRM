@@ -34,7 +34,7 @@ Sobre esa base hay cuatro capas de valor:
 |---|---|---|
 | [Arquitectura](arquitectura.md) | Devs, arquitectos | Cómo está armado, por qué, y cómo fluye un mensaje de punta a punta |
 | [Manual de desarrollador](manual-desarrollador.md) | Devs | Cómo levantarlo, dónde tocar, cómo depurar, convenciones del repo |
-| [Manual de usuario](manual-usuario.md) | Admins y asesores de un ISP | Cómo operar cada módulo del producto |
+| [Manual de usuario](manual-usuario.md) | Admins y asesores de un ISP | Puntero: el manual vive en la app ([público](https://converza-crm.duckdns.org/ayuda) · [con sesión](https://converza-crm.duckdns.org/manual)) y se edita en `Components/ManualContent.vue` |
 
 ### Referencia técnica
 
