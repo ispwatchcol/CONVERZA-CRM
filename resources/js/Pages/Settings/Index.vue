@@ -40,6 +40,21 @@ function saveAssignment() {
     assignForm.put(route('settings.assignment.update'), { preserveScroll: true });
 }
 
+// ── Cierre automático por inactividad ────────────────────────────────────────
+const autoCloseForm = useForm({
+    auto_close_enabled: props.tenant.auto_close_enabled ?? false,
+    auto_close_hours: props.tenant.auto_close_hours ?? 2,
+});
+const autoCloseHourOptions = [1, 2, 3, 4, 6, 8, 12, 24, 48];
+function saveAutoClose() {
+    autoCloseForm
+        .transform((data) => ({
+            auto_close_enabled: !!data.auto_close_enabled,
+            auto_close_hours: Number(data.auto_close_hours) || 2,
+        }))
+        .put(route('settings.autoclose.update'), { preserveScroll: true });
+}
+
 // Solo el admin del tenant configura la asignación automática.
 const isAdmin = computed(() => usePage().props.auth?.user?.role === 'admin');
 
@@ -588,6 +603,66 @@ const waBadge = computed(() => {
                             <button type="submit" :disabled="assignForm.processing"
                                     class="px-5 py-2.5 bg-accent text-white rounded-xl text-sm font-medium hover:bg-accent-hover transition disabled:opacity-50">
                                 {{ assignForm.processing ? 'Guardando…' : 'Guardar' }}
+                            </button>
+                        </div>
+                    </form>
+                </section>
+
+                <!-- ═══════════════ CIERRE AUTOMÁTICO ═══════════════ -->
+                <section v-if="isAdmin" class="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+                    <div class="flex items-center mb-4">
+                        <div class="w-9 h-9 rounded-xl bg-sky-50 flex items-center justify-center mr-3">
+                            <svg class="w-5 h-5 text-sky-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                        </div>
+                        <div>
+                            <h3 class="text-base font-semibold text-gray-900">Cierre automático</h3>
+                            <p class="text-xs text-gray-500">Cierra solo los chats que el cliente dejó sin responder, para que la bandeja muestre lo que de verdad está pendiente.</p>
+                        </div>
+                    </div>
+
+                    <form @submit.prevent="saveAutoClose" class="space-y-3">
+                        <div class="rounded-xl border p-4 flex items-center justify-between gap-3 transition-colors"
+                             :class="autoCloseForm.auto_close_enabled ? 'bg-sky-50 border-sky-100' : 'bg-gray-50 border-gray-200'">
+                            <div class="min-w-0">
+                                <p class="text-sm font-semibold flex items-center gap-2" :class="autoCloseForm.auto_close_enabled ? 'text-sky-900' : 'text-gray-700'">
+                                    <span class="w-2 h-2 rounded-full" :class="autoCloseForm.auto_close_enabled ? 'bg-sky-500' : 'bg-gray-400'"></span>
+                                    {{ autoCloseForm.auto_close_enabled ? 'Cierre automático ACTIVADO' : 'Cierre automático DESACTIVADO' }}
+                                </p>
+                                <p class="text-xs mt-1" :class="autoCloseForm.auto_close_enabled ? 'text-sky-700' : 'text-gray-500'">
+                                    Solo se cierran los chats donde <strong>ya respondimos</strong> y el cliente no volvió a escribir. Si el último mensaje es del cliente, el chat queda abierto: está esperando respuesta.
+                                </p>
+                            </div>
+                            <button type="button" @click="autoCloseForm.auto_close_enabled = !autoCloseForm.auto_close_enabled"
+                                    class="relative inline-flex h-6 w-11 shrink-0 rounded-full transition-colors"
+                                    :class="autoCloseForm.auto_close_enabled ? 'bg-sky-500' : 'bg-gray-300'"
+                                    :aria-pressed="autoCloseForm.auto_close_enabled">
+                                <span class="absolute top-0.5 h-5 w-5 bg-white rounded-full shadow transition-all"
+                                      :class="autoCloseForm.auto_close_enabled ? 'left-5' : 'left-0.5'"></span>
+                            </button>
+                        </div>
+
+                        <div class="rounded-xl border border-gray-100 p-4 flex flex-col md:flex-row md:items-center gap-3 transition-opacity"
+                             :class="{ 'opacity-50': !autoCloseForm.auto_close_enabled }">
+                            <div class="md:w-1/2 min-w-0">
+                                <p class="text-sm font-medium text-gray-800">Tiempo sin respuesta</p>
+                                <p class="text-xs text-gray-500 mt-0.5">Cuánto esperamos al cliente antes de cerrar el chat.</p>
+                            </div>
+                            <select v-model="autoCloseForm.auto_close_hours" :disabled="!autoCloseForm.auto_close_enabled"
+                                    class="w-full md:w-48 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-accent/30 focus:border-accent transition disabled:bg-gray-50">
+                                <option v-for="h in autoCloseHourOptions" :key="h" :value="h">
+                                    {{ h }} {{ h === 1 ? 'hora' : 'horas' }}
+                                </option>
+                            </select>
+                        </div>
+
+                        <p class="text-xs text-gray-500">
+                            El cierre es silencioso: <strong>no</strong> se le envía ningún mensaje al cliente. Queda una nota en el chat explicando el cierre, y si el cliente vuelve a escribir se reabre <strong>ese mismo chat</strong> con todo el historial.
+                        </p>
+
+                        <div class="flex justify-end">
+                            <button type="submit" :disabled="autoCloseForm.processing"
+                                    class="px-5 py-2.5 bg-accent text-white rounded-xl text-sm font-medium hover:bg-accent-hover transition disabled:opacity-50">
+                                {{ autoCloseForm.processing ? 'Guardando…' : 'Guardar' }}
                             </button>
                         </div>
                     </form>

@@ -405,20 +405,21 @@ class ChatController extends Controller
             ['phone' => $phone, 'tenant_id' => $tenantId],
         );
 
+        // Con conversation_id (chat abierto en pantalla) se respeta ese hilo y el
+        // cierre se valida abajo. Sin él (escribirle a un contacto desde otra
+        // pantalla) se reutiliza —y reabre— el hilo existente del contacto: el
+        // agente ya decidió escribir, y abrir un chat paralelo partiría el historial.
         $conversation = null;
         if ($request->conversation_id) {
             $conversation = Conversation::where('tenant_id', $tenantId)->find($request->conversation_id);
+
+            // Bloquear envío a conversaciones cerradas. La reapertura debe ser explícita.
+            if ($conversation && $conversation->status === 'closed') {
+                return back()->withErrors(['message' => 'La conversación está cerrada. Reabrela primero para enviar mensajes.']);
+            }
         }
         if (! $conversation) {
-            $conversation = Conversation::firstOrCreate(
-                ['contact_id' => $contact->id, 'status' => 'open', 'tenant_id' => $tenantId],
-                ['contact_id' => $contact->id, 'tenant_id' => $tenantId],
-            );
-        }
-
-        // Bloquear envío a conversaciones cerradas. La reapertura debe ser explícita.
-        if ($conversation->status === 'closed') {
-            return back()->withErrors(['message' => 'La conversación está cerrada. Reabrela primero para enviar mensajes.']);
+            $conversation = Conversation::resolveForContact($tenantId, $contact->id);
         }
 
         // Prefijo del asesor en el texto enviado a WhatsApp: "Nombre: mensaje".
@@ -503,15 +504,13 @@ class ChatController extends Controller
         $conversation = null;
         if ($request->conversation_id) {
             $conversation = Conversation::where('tenant_id', $tenantId)->find($request->conversation_id);
+
+            if ($conversation && $conversation->status === 'closed') {
+                return back()->withErrors(['template' => 'La conversación está cerrada. Reabrela primero para enviar la plantilla.']);
+            }
         }
         if (! $conversation) {
-            $conversation = Conversation::firstOrCreate(
-                ['contact_id' => $contact->id, 'status' => 'open', 'tenant_id' => $tenantId],
-                ['contact_id' => $contact->id, 'tenant_id' => $tenantId],
-            );
-        }
-        if ($conversation->status === 'closed') {
-            return back()->withErrors(['template' => 'La conversación está cerrada. Reabrela primero para enviar la plantilla.']);
+            $conversation = Conversation::resolveForContact($tenantId, $contact->id);
         }
 
         $params = $this->templateParams($template, $contact, $tenant, $request->user()->name);
@@ -688,15 +687,13 @@ class ChatController extends Controller
         $conversation = null;
         if ($request->conversation_id) {
             $conversation = Conversation::where('tenant_id', $tenantId)->find($request->conversation_id);
+
+            if ($conversation && $conversation->status === 'closed') {
+                return back()->withErrors(['file' => 'La conversación está cerrada. Reabrela primero para enviar archivos.']);
+            }
         }
         if (! $conversation) {
-            $conversation = Conversation::firstOrCreate(
-                ['contact_id' => $contact->id, 'status' => 'open', 'tenant_id' => $tenantId],
-                ['contact_id' => $contact->id, 'tenant_id' => $tenantId],
-            );
-        }
-        if ($conversation->status === 'closed') {
-            return back()->withErrors(['file' => 'La conversación está cerrada. Reabrela primero para enviar archivos.']);
+            $conversation = Conversation::resolveForContact($tenantId, $contact->id);
         }
 
         // Subir el archivo a WhatsApp para obtener un media_id
