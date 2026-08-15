@@ -88,22 +88,10 @@ class ProcessIncomingWhatsAppMessage implements ShouldQueue
             ['name'  => $contactName, 'tenant_id' => $tenantId],
         );
 
-        // Reabrir la conversación más reciente si estaba cerrada, en lugar de crear una nueva.
-        // Evita duplicar chats del mismo contacto en la lista.
-        $conversation      = Conversation::where('tenant_id', $tenantId)
-            ->where('contact_id', $contact->id)
-            ->orderByDesc('updated_at')
-            ->first();
-        $isNewConversation = false;
-
-        if ($conversation) {
-            if ($conversation->status !== 'open') {
-                $conversation->update(['status' => 'open']);
-            }
-        } else {
-            $conversation      = Conversation::create(['contact_id' => $contact->id, 'tenant_id' => $tenantId]);
-            $isNewConversation = true;
-        }
+        // Reabrir la conversación más reciente si estaba cerrada, en lugar de crear
+        // una nueva. Evita duplicar chats del mismo contacto en la lista.
+        $conversation      = Conversation::resolveForContact($tenantId, $contact->id);
+        $isNewConversation = $conversation->wasRecentlyCreated;
 
         $attributes = $this->buildAttributes($waMessageId, $type, $contact, $conversation, $whatsapp);
         $attributes['tenant_id'] = $tenantId;

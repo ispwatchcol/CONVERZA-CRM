@@ -657,10 +657,7 @@ class SendBillingNotifications extends Command
             ['name' => $row['customer_name'], 'tenant_id' => $tenant->id],
         );
 
-        $conversation = Conversation::firstOrCreate(
-            ['contact_id' => $contact->id, 'status' => 'open', 'tenant_id' => $tenant->id],
-            ['contact_id' => $contact->id, 'tenant_id' => $tenant->id],
-        );
+        $conversation = Conversation::resolveForContact($tenant->id, $contact->id);
 
         Message::create([
             'tenant_id'       => $tenant->id,

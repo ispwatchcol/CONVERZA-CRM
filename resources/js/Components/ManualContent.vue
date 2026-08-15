@@ -462,6 +462,18 @@ onUnmounted(() => {
                             Al cerrar se pide una <strong>nota de cierre</strong>. Con la conversación cerrada no se puede
                             enviar nada: hay que reabrirla primero. Si el cliente escribe, se reabre sola.
                         </p>
+                        <p class="text-sm text-gray-600 mb-2">
+                            Cada contacto tiene <strong>un solo chat</strong>. Cerrar no archiva ni parte el historial: el
+                            mismo hilo se reabre con todo lo anterior, escriba el cliente o le escribas tú, y también
+                            cuando le llega un aviso automático o una campaña.
+                        </p>
+                        <div class="p-3 bg-sky-50 border border-sky-200 rounded-lg text-sm text-sky-900 mb-2">
+                            <strong>Cierre automático (opcional):</strong> si el admin lo activa en
+                            <em>Configuración → Cierre automático</em>, los chats donde ya respondiste y el cliente no
+                            volvió a escribir se cierran solos pasadas las horas que elijas (2 por defecto). Nunca se
+                            cierra un chat cuyo último mensaje sea del cliente —ese sigue esperando respuesta— y el
+                            cliente no recibe ningún mensaje: el cierre es silencioso y queda anotado en el chat.
+                        </div>
                         <div class="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-900">
                             <strong>Irreversible:</strong> <em>Eliminar</em> (solo admin) borra la conversación y todos sus
                             mensajes sin papelera. Cerrar es casi siempre lo correcto; eliminar es para limpiar pruebas o spam.
@@ -870,6 +882,13 @@ vence el {{fecha_vencimiento}}.</pre>
                         <p class="text-sm text-gray-600">
                             Asignación de plantilla y encendido de cada evento automático; interruptor de auto-asignación
                             al agente menos ocupado; y los mensajes del bot.
+                        </p>
+
+                        <h3 class="font-semibold text-gray-800 mt-5 mb-2">Cierre automático</h3>
+                        <p class="text-sm text-gray-600">
+                            Solo admin. Cierra los chats donde el equipo ya respondió y el cliente no volvió a escribir
+                            en las horas que definas (2 por defecto). Los chats con el último mensaje del cliente nunca
+                            se cierran solos, y al cliente no le llega ningún mensaje.
                         </p>
 
                         <h3 class="font-semibold text-gray-800 mt-5 mb-2">Integración ispwatch</h3>
