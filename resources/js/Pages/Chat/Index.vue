@@ -342,12 +342,66 @@ const startNewChat = () => {
 // pasar por nota interna: siempre va al cliente.
 function useQuickReply(qr) {
     showQuickReplies.value = false;
+    closeComposerMenu();
     if (!qr.body?.trim() || form.processing) return;
     form.message = qr.body;
     form.post(route('chat.send'), {
         onSuccess: () => { form.reset('message'); scrollToBottom(); },
         preserveScroll: true,
     });
+}
+
+// ── Composer compacto ────────────────────────────────────────────────────────
+// En pantallas angostas (móvil, o desktop con el panel del cliente abierto) los
+// 6 botones de acciones aplastaban el campo de texto y dejaban el botón de
+// enviar casi fuera de la barra. Ahí las acciones se colapsan en un menú "+".
+// Medimos el ANCHO REAL del composer, no el de la ventana: en desktop el chat
+// puede quedar tan angosto como en un móvil cuando la lista y la ficha del
+// cliente están abiertas.
+const composerRef = ref(null);
+// Arrancamos con el ancho de la ventana (cota superior del composer) para que en
+// móvil ya se pinte compacto antes de la primera medición y no haya parpadeo.
+const composerWidth = ref(typeof window !== 'undefined' ? window.innerWidth : 9999);
+const compactComposer = computed(() => composerWidth.value < 520);
+
+const showComposerMenu = ref(false);
+const composerMenuView = ref('root'); // 'root' | 'quick'
+
+let composerResizeObserver = null;
+onMounted(() => {
+    if (typeof ResizeObserver === 'undefined') return;
+    composerResizeObserver = new ResizeObserver((entries) => {
+        composerWidth.value = entries[0].contentRect.width;
+    });
+    // El composer se monta/desmonta con la conversación activa, así que hay que
+    // (re)observarlo cada vez que aparece.
+    watch(composerRef, (el, prev) => {
+        if (prev) composerResizeObserver.unobserve(prev);
+        if (el) composerResizeObserver.observe(el);
+    }, { immediate: true });
+});
+onUnmounted(() => composerResizeObserver?.disconnect());
+
+// Al pasar a modo ancho el menú deja de existir: cerrarlo evita que quede
+// abierto e invisible bloqueando clics con su backdrop.
+watch(compactComposer, (compact) => { if (!compact) closeComposerMenu(); });
+
+function closeComposerMenu() {
+    showComposerMenu.value = false;
+    composerMenuView.value = 'root';
+}
+
+function toggleComposerMenu() {
+    if (showComposerMenu.value) return closeComposerMenu();
+    composerMenuView.value = 'root';
+    showComposerMenu.value = true;
+}
+
+// Ejecutar una acción del menú y cerrarlo (el input de archivo se abre después
+// de cerrar para que el menú no quede encima del diálogo del sistema).
+function runFromComposerMenu(fn) {
+    closeComposerMenu();
+    fn();
 }
 
 // ── Adjuntar medios (imagen / audio / video / documento) ─────────────────────
@@ -1820,7 +1874,7 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
                     </div>
 
                     <!-- Input Area (solo agent/admin pueden escribir) -->
-                    <div v-else-if="canWrite" class="bg-[#f0f2f5] p-3 z-10 shrink-0">
+                    <div v-else-if="canWrite" ref="composerRef" class="bg-[#f0f2f5] p-3 z-10 shrink-0">
 
                         <!-- Vista previa del archivo seleccionado -->
                         <div v-if="selectedFile" class="mb-2 bg-white rounded-xl border border-gray-200 shadow-sm p-3 flex items-center gap-3">
@@ -1895,8 +1949,88 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
 
                             <!-- Controles normales (ocultos mientras se graba) -->
                             <template v-if="!recording">
+                                <!-- ── Composer angosto: acciones colapsadas en un menú ──────
+                                     Con 6 botones sueltos el campo de texto y el botón de
+                                     enviar quedaban aplastados contra el borde. -->
+                                <div v-if="compactComposer" class="relative shrink-0">
+                                    <button type="button" @click="toggleComposerMenu"
+                                            class="p-2.5 rounded-lg transition"
+                                            :class="noteMode
+                                                ? 'text-amber-600 bg-amber-100'
+                                                : (showComposerMenu ? 'text-accent bg-white shadow-sm' : 'text-gray-500 hover:text-accent hover:bg-white')"
+                                            title="Acciones">
+                                        <svg class="w-5 h-5 transition-transform duration-150" :class="showComposerMenu ? 'rotate-45' : ''"
+                                             fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                                        </svg>
+                                    </button>
+
+                                    <!-- Backdrop hermano (no teleportado): mismo motivo que en
+                                         el dropdown de respuestas rápidas — el composer crea su
+                                         propio stacking context con z-10. -->
+                                    <div v-if="showComposerMenu" class="fixed inset-0 z-[19]" @click="closeComposerMenu"></div>
+
+                                    <div v-if="showComposerMenu"
+                                         class="absolute bottom-12 left-0 w-64 max-w-[calc(100vw-2rem)] bg-white rounded-xl shadow-xl border border-gray-200 z-20 overflow-hidden animate-scale-in">
+                                        <!-- Acciones -->
+                                        <div v-if="composerMenuView === 'root'" class="p-1.5">
+                                            <button type="button" @click="runFromComposerMenu(() => openFileInput('image/jpeg,image/jpg,image/png,image/webp'))"
+                                                    class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-gray-50 transition text-left">
+                                                <svg class="w-5 h-5 text-blue-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z"/></svg>
+                                                <span class="text-sm text-gray-700">Imagen</span>
+                                            </button>
+                                            <button type="button" @click="runFromComposerMenu(() => openFileInput(DOC_ACCEPT))"
+                                                    class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-gray-50 transition text-left">
+                                                <svg class="w-5 h-5 text-accent shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"/></svg>
+                                                <span class="text-sm text-gray-700">Documento</span>
+                                            </button>
+                                            <button type="button" @click="runFromComposerMenu(() => openFileInput('audio/ogg,audio/mpeg,audio/mp4,audio/aac,audio/amr,audio/*'))"
+                                                    class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-gray-50 transition text-left">
+                                                <svg class="w-5 h-5 text-green-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 7.5L12 3m0 0L7.5 7.5M12 3v13.5"/></svg>
+                                                <span class="text-sm text-gray-700">Subir audio</span>
+                                            </button>
+                                            <button type="button" @click="runFromComposerMenu(startRecording)"
+                                                    class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-gray-50 transition text-left">
+                                                <svg class="w-5 h-5 text-red-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z"/></svg>
+                                                <span class="text-sm text-gray-700">Grabar audio</span>
+                                            </button>
+                                            <button v-if="quickReplies.length" type="button" @click="composerMenuView = 'quick'"
+                                                    class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-gray-50 transition text-left">
+                                                <svg class="w-5 h-5 text-accent shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z"/></svg>
+                                                <span class="text-sm text-gray-700 flex-1">Respuestas rápidas</span>
+                                                <svg class="w-4 h-4 text-gray-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5"/></svg>
+                                            </button>
+                                            <button type="button" @click="runFromComposerMenu(() => noteMode = !noteMode)"
+                                                    class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition text-left"
+                                                    :class="noteMode ? 'bg-amber-50 hover:bg-amber-100' : 'hover:bg-gray-50'">
+                                                <svg class="w-5 h-5 text-amber-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z"/></svg>
+                                                <span class="text-sm" :class="noteMode ? 'text-amber-700 font-medium' : 'text-gray-700'">
+                                                    {{ noteMode ? 'Volver al chat' : 'Nota interna' }}
+                                                </span>
+                                            </button>
+                                        </div>
+
+                                        <!-- Respuestas rápidas (segundo nivel del mismo menú) -->
+                                        <div v-else class="max-h-64 overflow-y-auto">
+                                            <div class="sticky top-0 bg-white flex items-center gap-2 px-2 py-2 border-b border-gray-100">
+                                                <button type="button" @click="composerMenuView = 'root'" class="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition">
+                                                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5"/></svg>
+                                                </button>
+                                                <span class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Respuestas rápidas</span>
+                                            </div>
+                                            <div class="p-1.5">
+                                                <button v-for="qr in quickReplies" :key="qr.id" type="button" @click="useQuickReply(qr)"
+                                                        class="w-full text-left p-3 rounded-lg hover:bg-gray-50 transition">
+                                                    <p class="text-sm font-medium text-gray-900">{{ qr.title }}</p>
+                                                    <p class="text-xs text-gray-500 truncate">{{ qr.body }}</p>
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
                                 <!-- Botón Imagen (directo, sin dropdown) -->
-                                <button type="button" @click="openFileInput('image/jpeg,image/jpg,image/png,image/webp')"
+                                <button v-if="!compactComposer" type="button" @click="openFileInput('image/jpeg,image/jpg,image/png,image/webp')"
                                         class="p-2.5 text-gray-500 hover:text-blue-500 transition rounded-lg hover:bg-blue-50 group relative"
                                         title="Enviar imagen">
                                     <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z"/></svg>
@@ -1904,7 +2038,7 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
                                 </button>
 
                                 <!-- Botón Documento (PDF, Word, Excel, PowerPoint, TXT, CSV) -->
-                                <button type="button" @click="openFileInput(DOC_ACCEPT)"
+                                <button v-if="!compactComposer" type="button" @click="openFileInput(DOC_ACCEPT)"
                                         class="p-2.5 text-gray-500 hover:text-accent transition rounded-lg hover:bg-white group relative"
                                         title="Enviar documento">
                                     <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"/></svg>
@@ -1912,7 +2046,7 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
                                 </button>
 
                                 <!-- Botón Audio (subir archivo) -->
-                                <button type="button" @click="openFileInput('audio/ogg,audio/mpeg,audio/mp4,audio/aac,audio/amr,audio/*')"
+                                <button v-if="!compactComposer" type="button" @click="openFileInput('audio/ogg,audio/mpeg,audio/mp4,audio/aac,audio/amr,audio/*')"
                                         class="p-2.5 text-gray-500 hover:text-green-500 transition rounded-lg hover:bg-green-50 group relative"
                                         title="Subir audio">
                                     <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 7.5L12 3m0 0L7.5 7.5M12 3v13.5"/></svg>
@@ -1920,7 +2054,7 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
                                 </button>
 
                                 <!-- Botón Grabar audio -->
-                                <button type="button" @click="startRecording"
+                                <button v-if="!compactComposer" type="button" @click="startRecording"
                                         class="p-2.5 text-gray-500 hover:text-red-500 transition rounded-lg hover:bg-red-50 group relative"
                                         title="Grabar audio">
                                     <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z"/></svg>
@@ -1928,7 +2062,7 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
                                 </button>
 
                                 <!-- Quick replies button -->
-                                <div class="relative">
+                                <div v-if="!compactComposer" class="relative">
                                     <button type="button" @click="showQuickReplies = !showQuickReplies" class="p-2.5 text-gray-500 hover:text-accent transition rounded-lg hover:bg-white group relative">
                                         <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" /></svg>
                                         <span class="absolute -top-8 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-[10px] px-2 py-0.5 rounded-md whitespace-nowrap opacity-0 group-hover:opacity-100 transition pointer-events-none">Respuestas rápidas</span>
@@ -1953,7 +2087,7 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
                                 </div>
 
                                 <!-- Toggle: nota interna -->
-                                <button type="button" @click="noteMode = !noteMode"
+                                <button v-if="!compactComposer" type="button" @click="noteMode = !noteMode"
                                         class="p-2.5 rounded-lg transition group relative shrink-0"
                                         :class="noteMode ? 'text-amber-600 bg-amber-100' : 'text-gray-500 hover:text-amber-500 hover:bg-amber-50'"
                                         :title="noteMode ? 'Modo nota interna activo (clic para volver a chat)' : 'Escribir nota interna'">
