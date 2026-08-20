@@ -41,16 +41,31 @@ class HealthController extends Controller
             }),
         ];
 
-        $healthy = ! in_array(false, array_column($checks, 'ok'), true);
+        // La cola se separa en dos cosas distintas a propósito:
+        //
+        //  - CONECTIVIDAD (que se pueda consultar): es una dependencia caída y
+        //    cuenta para el estado general, igual que la BD o Redis.
+        //  - PROFUNDIDAD (cuántos hay en espera): informativa. Un backlog sigue
+        //    siendo un sistema que funciona y no debe despertar a nadie.
+        //
+        // Antes el chequeo de cola se añadía DESPUÉS de calcular $healthy, así que
+        // una cola inconsultable devolvía {"status":"ok", "queue":{"ok":false}} con
+        // HTTP 200: un falso verde, exactamente lo que este endpoint existe para
+        // evitar. El orden importa.
+        $pendientes = null;
+        $checks['queue'] = $this->timed(function () use (&$pendientes) {
+            $pendientes = Queue::size();
+        });
 
-        // Informativo, no tumba el health check: una cola con backlog sigue siendo
-        // un sistema que funciona, y no queremos despertar a nadie por eso.
-        try {
-            $checks['queue'] = ['ok' => true, 'pendientes' => Queue::size()];
-        } catch (\Throwable $e) {
-            $checks['queue'] = ['ok' => false, 'error' => 'no se pudo consultar'];
+        if ($pendientes !== null) {
+            $checks['queue']['pendientes'] = $pendientes;
         }
 
+        $healthy = ! in_array(false, array_column($checks, 'ok'), true);
+
+        // Contrato para el centinela externo, que debe validar el CUERPO y no solo
+        // el código: "status":"ok" ⟺ HTTP 200 ⟺ todos los checks en ok:true.
+        // No existe ningún caso de 200 con status distinto de "ok".
         return response()->json([
             'status' => $healthy ? 'ok' : 'degraded',
             'checks' => $checks,
