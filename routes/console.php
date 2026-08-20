@@ -57,3 +57,14 @@ Schedule::command('campaigns:tick')
     ->everyMinute()
     ->withoutOverlapping(2)
     ->onOneServer();
+
+// ── Cierre automático de chats sin respuesta del cliente ──────────────────
+// Cada 5 minutos: cierra los chats abiertos donde el equipo ya respondió y el
+// cliente no volvió a escribir en N horas (default 2). Opt-in por tenant
+// (Configuración → Cierre automático); si nadie lo activó, el tic es una sola
+// consulta a `tenants` y sale. La granularidad de 5 min es suficiente: el
+// umbral se mide en horas y evita 288 corridas diarias de más.
+Schedule::command('chats:auto-close')
+    ->everyFiveMinutes()
+    ->withoutOverlapping(10)
+    ->onOneServer();

@@ -180,6 +180,28 @@ class SettingsController extends Controller
     }
 
     /**
+     * Cierre automático de chats sin respuesta del cliente (ver chats:auto-close).
+     * Config del tenant ⇒ la ruta va con role:admin.
+     */
+    public function updateAutoClose(Request $request)
+    {
+        $tenant = app('tenant');
+
+        $data = $request->validate([
+            'auto_close_enabled' => ['required', 'boolean'],
+            // Tope de 720 h (30 días): más que eso no es "cierre por inactividad".
+            'auto_close_hours'   => ['required', 'integer', 'min:1', 'max:720'],
+        ]);
+
+        $tenant->update([
+            'auto_close_enabled' => (bool) $data['auto_close_enabled'],
+            'auto_close_hours'   => (int) $data['auto_close_hours'],
+        ]);
+
+        return back()->with('success', 'Cierre automático actualizado.');
+    }
+
+    /**
      * GET a la API de Meta para validar que phone_number_id + access_token sirven.
      * No envía mensajes, no cuesta créditos.
      */
@@ -297,6 +319,8 @@ class SettingsController extends Controller
             'wa_status'              => $tenant->wa_status,
             'billing_notify_enabled' => (bool) $tenant->billing_notify_enabled,
             'auto_assign_enabled'    => (bool) $tenant->auto_assign_enabled,
+            'auto_close_enabled'     => (bool) $tenant->auto_close_enabled,
+            'auto_close_hours'       => (int) ($tenant->auto_close_hours ?: 2),
             // Los tokens NO se devuelven nunca; solo si están seteados o no.
             'wa_access_token_set'    => filled($accessTokenRaw),
             'wa_app_secret_set'      => filled($appSecretRaw),

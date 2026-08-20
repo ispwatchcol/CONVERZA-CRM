@@ -211,6 +211,7 @@ Route::middleware('auth')->group(function () {
     Route::put('/settings/whatsapp', [SettingsController::class, 'updateWhatsApp'])->name('settings.whatsapp.update');
     Route::put('/settings/notifications', [SettingsController::class, 'updateNotifications'])->name('settings.notifications.update');
     Route::put('/settings/assignment', [SettingsController::class, 'updateAssignment'])->middleware('role:admin')->name('settings.assignment.update');
+    Route::put('/settings/auto-close', [SettingsController::class, 'updateAutoClose'])->middleware('role:admin')->name('settings.autoclose.update');
     Route::post('/settings/whatsapp/test', [SettingsController::class, 'testWhatsAppConnection'])->name('settings.whatsapp.test');
     Route::get('/settings/whatsapp/health', [SettingsController::class, 'whatsappHealth'])->name('settings.whatsapp.health');
     Route::get('/settings/ispwatch/status', [SettingsController::class, 'ispwatchStatus'])->name('settings.ispwatch.status');

@@ -356,6 +356,38 @@ Baja `MEDIA_CLEANUP_DAYS` o quita `document` de `MEDIA_DOWNLOAD_TYPES`: los
 documentos de WhatsApp pesan hasta 100 MB, frente a 16 MB de los vídeos. Son el
 mayor riesgo de almacenamiento.
 
+### 🟠 Un contacto aparece con varios chats
+
+Arrastre histórico: hasta agosto 2026 cada punto de envío resolvía la
+conversación con `firstOrCreate([... 'status' => 'open'])`, así que con el chat
+**cerrado** abría uno nuevo. Un cliente que escribió tres veces quedaba con tres
+hilos y el historial partido.
+
+La causa está corregida (`Conversation::resolveForContact()`: un solo hilo por
+contacto, se reabre en vez de duplicar). Para limpiar lo que ya está en la BD:
+
+```bash
+php artisan chats:merge-duplicates --dry-run          # revisar SIEMPRE primero
+php artisan chats:merge-duplicates --tenant=2         # aplicar
+```
+
+Conserva el hilo más antiguo, mueve mensajes/notas/logs del bot y consolida los
+"leídos" por agente. Si aparecen duplicados **nuevos**, es un bug: algún envío
+está creando conversaciones sin pasar por `resolveForContact()`.
+
+### 🟠 Se cierran chats solos
+
+Es el cierre automático por inactividad (`chats:auto-close`, cada 5 min), opt-in
+por tenant en Configuración → Cierre automático (`auto_close_enabled` /
+`auto_close_hours`, default 2 h). Solo cierra chats cuyo **último mensaje es
+saliente**; si el último es del cliente no se toca. No envía nada por WhatsApp:
+deja una nota de sistema en el hilo.
+
+```bash
+php artisan chats:auto-close --dry-run                # qué cerraría ahora
+php artisan chats:auto-close --tenant=2 --hours=1 --dry-run
+```
+
 ### 🔴 Un tenant ve datos de otro
 
 **Incidente crítico.** Actuación:
