@@ -79,9 +79,27 @@ class ProcessWhatsAppStatusUpdate implements ShouldQueue
         }
 
         if ($statusValue !== 'failed') {
+            // Solo se avanza en la escala sent → delivered → read, nunca se
+            // retrocede. Sin esto, un webhook reintentado por Meta —o un replay
+            // desde el log crudo— que reenvía "delivered" después de que ya
+            // marcamos "read" degrada el mensaje en el chat. La rama de campañas
+            // (updateCampaignSend) ya se protegía así; la del chat no.
+            //
+            // Filtrar por los estados de rango MENOR, en vez de leer y comparar
+            // en PHP, resuelve además la carrera entre dos webhooks simultáneos:
+            // la condición viaja dentro del UPDATE.
+            //
+            // Los estados fuera de la escala quedan intactos a propósito:
+            // 'failed' es terminal (un rechazo de Meta no debe volver a verse
+            // como entregado) y 'received' es de mensajes entrantes.
+            $rango = self::RANK[$statusValue] ?? 0;
+            $inferiores = array_keys(array_filter(self::RANK, fn ($r) => $r < $rango));
+
             Message::where('tenant_id', $tenant->id)
                 ->where('wa_message_id', $waMessageId)
+                ->where(fn ($q) => $q->whereIn('status', $inferiores)->orWhereNull('status'))
                 ->update(['status' => $statusValue]);
+
             return;
         }
 
