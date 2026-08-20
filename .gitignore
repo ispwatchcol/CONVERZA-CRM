@@ -3,6 +3,10 @@
 .env
 .env.backup
 .env.production
+# Respaldos del .env que se hacen antes de rotar credenciales. Sin esto quedan
+# como archivos sin trackear con contraseñas dentro del árbol de git.
+.env.bak*
+.env.*.bak
 .phpactor.json
 .phpunit.result.cache
 /.fleet

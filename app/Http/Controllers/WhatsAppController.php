@@ -51,14 +51,58 @@ class WhatsAppController extends Controller
     public function handleWebhook(Request $request)
     {
         $payload = $request->all();
-        Log::info('Webhook received:', $payload);
+
+        // PRIMERO de todo, antes de tocar nada que pueda fallar: dejar el payload
+        // en disco. Es la única copia del mensaje hasta que el worker lo persista,
+        // y sobrevive a que se caigan Postgres y Redis a la vez.
+        //
+        // El 20/08/2026 perdimos 18 mensajes porque esto era un Log::info() que
+        // LOG_LEVEL=error descartaba. El canal webhook_raw ignora LOG_LEVEL.
+        //
+        // Va el cuerpo CRUDO (string), no el array: Monolog normaliza como máximo
+        // 9 niveles de anidamiento y el payload de Meta los supera —entry.changes.
+        // value.messages[0].from queda justo por debajo del corte—, así que pasarle
+        // el array reemplaza el remitente y el texto por "Over 9 levels deep,
+        // aborting normalization". Como string se guarda tal cual llegó, que además
+        // es lo que hace falta para reprocesar y para validar la firma.
+        Log::channel('webhook_raw')->debug('inbound', [
+            'received_at' => now()->toIso8601String(),
+            'signature'   => $request->header('X-Hub-Signature-256', ''),
+            'body'        => $request->getContent(),
+        ]);
 
         $this->forwardWebhook($request);
 
-        // Meta puede batchear múltiples mensajes en un solo webhook. Cada entry
-        // representa una WABA (entry.id) y cada change incluye el phone_number_id
-        // bajo value.metadata. Resolvemos tenant por phone_number_id (más
-        // específico que WABA) y caemos a WABA si no hay match.
+        // De aquí en adelante ya nada puede costarnos el mensaje: el payload está
+        // en disco. Si el despacho falla (BD caída, Redis caído), lo registramos
+        // como error —para que dispare la alerta— pero le respondemos 200 a Meta.
+        //
+        // Devolver 500 no nos protege: el 20/08/2026 Meta reintentó unas 4 veces
+        // en 20 segundos y desistió. La red de seguridad es webhook-raw.log, no
+        // sus reintentos.
+        try {
+            $this->dispatchPayload($payload);
+        } catch (\Throwable $e) {
+            Log::error('Webhook: falló el despacho; el payload quedó en webhook-raw.log', [
+                'excepcion' => get_class($e),
+                'error'     => $e->getMessage(),
+            ]);
+        }
+
+        // Respond immediately — never make Meta wait or it will retry
+        return response()->json(['status' => 'EVENT_RECEIVED']);
+    }
+
+    /**
+     * Reparte un payload ya recibido (y ya persistido en disco) a sus jobs.
+     *
+     * Meta puede batchear múltiples mensajes en un solo webhook. Cada entry
+     * representa una WABA (entry.id) y cada change incluye el phone_number_id
+     * bajo value.metadata. Resolvemos tenant por phone_number_id (más
+     * específico que WABA) y caemos a WABA si no hay match.
+     */
+    private function dispatchPayload(array $payload): void
+    {
         $dispatched = 0;
         $skippedNoTenant = 0;
 
@@ -106,9 +150,6 @@ class WhatsAppController extends Controller
         if ($dispatched === 0 && $skippedNoTenant === 0) {
             Log::warning('Webhook received but no messages found in payload', ['payload' => $payload]);
         }
-
-        // Respond immediately — never make Meta wait or it will retry
-        return response()->json(['status' => 'EVENT_RECEIVED']);
     }
 
     /**

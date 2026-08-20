@@ -118,6 +118,23 @@ return [
             'replace_placeholders' => true,
         ],
 
+        // Payload crudo de cada webhook de WhatsApp, ANTES de intentar procesarlo.
+        //
+        // Deliberadamente NO usa env('LOG_LEVEL'): en producción está en 'error' y eso
+        // fue exactamente lo que nos dejó sin nada que reprocesar el 20/08/2026 —los
+        // mensajes entraron al servidor, pasaron por Log::info() y se descartaron—.
+        // Este canal escribe siempre, pase lo que pase con el nivel global.
+        //
+        // Es la única copia del mensaje que existe hasta que el worker lo guarda en BD,
+        // así que si la BD está caída, este archivo es la fuente de verdad para replay.
+        'webhook_raw' => [
+            'driver' => 'daily',
+            'path' => storage_path('logs/webhook-raw.log'),
+            'level' => 'debug',
+            'days' => env('LOG_WEBHOOK_RAW_DAYS', 30),
+            'replace_placeholders' => false,
+        ],
+
         'null' => [
             'driver' => 'monolog',
             'handler' => NullHandler::class,
