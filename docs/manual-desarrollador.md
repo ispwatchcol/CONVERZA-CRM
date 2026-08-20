@@ -327,7 +327,7 @@ cd /var/www/converza-crm && php artisan config:cache
 
 | Dónde | Qué |
 |---|---|
-| Log de prod | `Webhook received:` |
+| Log crudo de prod | una línea nueva en `storage/logs/webhook-raw-<hoy>.log` |
 | Consola de ngrok | `POST /webhook` |
 | Log local (pail) | El mismo mensaje procesado |
 
@@ -407,7 +407,9 @@ Cadenas útiles para grepear:
 
 | Cadena | Significa |
 |---|---|
-| `Webhook received:` | Llegó un webhook (payload completo) |
+| `inbound` en `webhook-raw-*.log` | Llegó un webhook (cuerpo crudo completo). **No está en `laravel.log`**: va a su propio canal, con nivel fijo, para que `LOG_LEVEL=warning` no lo descarte |
+| `falló el despacho; el payload quedó en webhook-raw.log` | El webhook entró pero no se pudo procesar (BD o Redis caídos). Se repara solo con `webhooks:reconcile` |
+| `Reconciliación de webhooks: se encontraron mensajes sin guardar` | Hubo huecos y se reprocesaron |
 | `ningún tenant coincide con phone_number_id/WABA` | El número no está en ningún tenant activo |
 | `WhatsApp API Error` / `sendTemplate Error` | Meta rechazó el envío (el body trae el motivo) |
 | `WhatsApp message type without explicit handler` | Tipo de mensaje nuevo sin `case` propio |
@@ -427,7 +429,9 @@ php artisan queue:flush            # limpiar fallidos
 
 ```php
 // ¿cuántos jobs pendientes?
-DB::table('jobs')->count();
+// OJO: en producción la cola es REDIS, así que DB::table('jobs')->count()
+// siempre devuelve 0. Queue::size() funciona con cualquier driver.
+Illuminate\Support\Facades\Queue::size();
 ```
 
 ### 9.3 Cache de ispwatch

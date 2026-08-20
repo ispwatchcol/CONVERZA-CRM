@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Jobs\ProcessIncomingWhatsAppMessage;
 use App\Jobs\ProcessWhatsAppStatusUpdate;
 use App\Models\Tenant;
+use App\Services\WhatsApp\WebhookDispatcher;
 use App\Services\WhatsAppService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
@@ -12,8 +13,10 @@ use Illuminate\Support\Facades\Log;
 
 class WhatsAppController extends Controller
 {
-    public function __construct(private WhatsAppService $whatsapp)
-    {
+    public function __construct(
+        private WhatsAppService $whatsapp,
+        private WebhookDispatcher $dispatcher,
+    ) {
     }
 
     /**
@@ -81,7 +84,7 @@ class WhatsAppController extends Controller
         // en 20 segundos y desistió. La red de seguridad es webhook-raw.log, no
         // sus reintentos.
         try {
-            $this->dispatchPayload($payload);
+            $this->dispatcher->dispatch($payload);
         } catch (\Throwable $e) {
             Log::error('Webhook: falló el despacho; el payload quedó en webhook-raw.log', [
                 'excepcion' => get_class($e),
@@ -93,101 +96,6 @@ class WhatsAppController extends Controller
         return response()->json(['status' => 'EVENT_RECEIVED']);
     }
 
-    /**
-     * Reparte un payload ya recibido (y ya persistido en disco) a sus jobs.
-     *
-     * Meta puede batchear múltiples mensajes en un solo webhook. Cada entry
-     * representa una WABA (entry.id) y cada change incluye el phone_number_id
-     * bajo value.metadata. Resolvemos tenant por phone_number_id (más
-     * específico que WABA) y caemos a WABA si no hay match.
-     */
-    private function dispatchPayload(array $payload): void
-    {
-        $dispatched = 0;
-        $skippedNoTenant = 0;
-
-        foreach ($payload['entry'] ?? [] as $entry) {
-            $wabaId = $entry['id'] ?? null;
-
-            foreach ($entry['changes'] ?? [] as $change) {
-                $value         = $change['value'] ?? [];
-                $messages      = $value['messages'] ?? [];
-                $statuses      = $value['statuses'] ?? [];
-                $contacts      = $value['contacts'] ?? [];
-                $phoneNumberId = $value['metadata']['phone_number_id'] ?? null;
-
-                if (empty($messages) && empty($statuses)) {
-                    continue; // errors, account_alerts, etc. — ignorados por ahora
-                }
-
-                $tenant = $this->resolveTenantFromPayload($phoneNumberId, $wabaId);
-
-                if (! $tenant) {
-                    $skippedNoTenant += count($messages) + count($statuses);
-                    Log::warning('Webhook: ningún tenant coincide con phone_number_id/WABA', [
-                        'phone_number_id' => $phoneNumberId,
-                        'waba_id'         => $wabaId,
-                        'message_count'   => count($messages),
-                        'status_count'    => count($statuses),
-                    ]);
-                    continue;
-                }
-
-                foreach ($messages as $message) {
-                    ProcessIncomingWhatsAppMessage::dispatch($message, $contacts, $tenant->id);
-                    $dispatched++;
-                }
-
-                if ($statuses !== []) {
-                    // sent/delivered/read/failed — alimenta el seguimiento de
-                    // entregas de las campañas masivas y el estado del chat.
-                    ProcessWhatsAppStatusUpdate::dispatch($statuses, $tenant->id);
-                    $dispatched += count($statuses);
-                }
-            }
-        }
-
-        if ($dispatched === 0 && $skippedNoTenant === 0) {
-            Log::warning('Webhook received but no messages found in payload', ['payload' => $payload]);
-        }
-    }
-
-    /**
-     * Busca el tenant dueño de este phone_number_id. Si no hay match exacto,
-     * intenta por WABA (un cliente con varios números bajo la misma WABA).
-     * En última instancia cae al tenant "default" para no perder mensajes
-     * durante la migración desde la config monoinquilino del .env.
-     */
-    private function resolveTenantFromPayload(?string $phoneNumberId, ?string $wabaId): ?Tenant
-    {
-        if ($phoneNumberId) {
-            $tenant = Tenant::where('is_active', true)
-                ->where('wa_phone_number_id', $phoneNumberId)
-                ->first();
-            if ($tenant) {
-                return $tenant;
-            }
-        }
-
-        if ($wabaId) {
-            $tenant = Tenant::where('is_active', true)
-                ->where('wa_business_account_id', $wabaId)
-                ->first();
-            if ($tenant) {
-                return $tenant;
-            }
-        }
-
-        // Fallback: tenant 'default' usa las credenciales del .env (config legacy).
-        // Solo aplica si el phone_number_id del payload coincide con el del .env,
-        // así evitamos meter mensajes ajenos en el tenant por defecto.
-        $envUrl = (string) config('services.whatsapp.url', '');
-        if ($envUrl !== '' && $phoneNumberId && str_ends_with(rtrim($envUrl, '/'), '/' . $phoneNumberId)) {
-            return Tenant::where('slug', 'default')->where('is_active', true)->first();
-        }
-
-        return null;
-    }
 
     private function forwardWebhook(Request $request): void
     {

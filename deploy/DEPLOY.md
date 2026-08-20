@@ -150,7 +150,12 @@ GitHub Actions se encarga del resto:
 ## 📊 Monitoreo en producción
 
 ```bash
-ssh root@<IP-DROPLET>
+# Lo primero, sin SSH: el chequeo profundo.
+# 200 "status":"ok" = BD (ambas conexiones), Redis y storage/logs sanos.
+# 503 = algo cayó, y el JSON dice cuál.
+curl -s https://converza-crm.duckdns.org/health | jq
+
+ssh deploy@<IP-DROPLET>
 
 # Estado de los workers
 sudo supervisorctl status converza-worker:*
@@ -158,8 +163,12 @@ sudo supervisorctl status converza-worker:*
 # Logs en vivo
 sudo tail -f /var/log/supervisor/converza-worker.log
 
-# Cuántos jobs hay encolados (idealmente cerca de 0)
-sudo -u www-data php /var/www/converza-crm/artisan tinker --execute="echo DB::table('jobs')->count();"
+# Cuántos jobs hay encolados (idealmente cerca de 0).
+# La cola de producción es REDIS: DB::table('jobs')->count() siempre da 0.
+sudo -u www-data php /var/www/converza-crm/artisan tinker --execute="echo Illuminate\Support\Facades\Queue::size();"
+
+# ¿Entró algún mensaje que no se guardó? (se repara solo cada 5 min)
+sudo -u www-data php /var/www/converza-crm/artisan webhooks:reconcile --dry-run
 
 # Jobs fallidos
 sudo -u www-data php /var/www/converza-crm/artisan queue:failed
