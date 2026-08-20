@@ -469,6 +469,26 @@ $wa->checkConnection();     // ['connected' => true, 'reason' => 'ok']
 $wa->accountHealth(true);   // quality_rating, messaging_limit_tier, …
 ```
 
+### 9.6 «¿Está mal mi `.env` o está caído el servicio?»
+
+```bash
+php artisan deploy:verify
+```
+
+Comprueba las **dos** conexiones de Postgres (`pgsql` e `ispwatch`), Redis y que
+`storage/logs` sea escribible. Imprime el motivo completo de cada falla —con
+conexión, host y puerto— y sale con código 1 si algo no responde.
+
+Es el mismo `HealthChecker` que sirve `GET /health`, a propósito: si el deploy
+comprobara menos cosas que el monitoreo, volveríamos al caso de la conexión
+`ispwatch` con la contraseña vieja pasando desapercibida. La diferencia es que
+`/health` **oculta** el detalle de la excepción, porque es una ruta pública y ese
+mensaje trae host y usuario; en consola sí se imprime, que es donde hace falta.
+
+Corre solo en cada despliegue y hace fallar el workflow si algo está mal. Para
+rotar credenciales a mano, ver
+[operaciones.md §6 bis](operaciones.md#6-bis-rotar-credenciales-sin-tumbar-producción).
+
 Para revisar la suscripción del webhook en Meta (solo lectura):
 
 ```php

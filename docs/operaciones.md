@@ -271,6 +271,66 @@ lo hace: el usuario de deploy no tiene sudo sin contraseña para `chown`/`chmod`
 
 ---
 
+## 6 bis. Rotar credenciales sin tumbar producción
+
+El 20/08/2026 se rotó la contraseña de Postgres en Supabase y producción quedó
+caída **9 h 54 m**, porque el `.env` del droplet nunca se actualizó. La rotación
+en sí fue correcta; lo que faltó fue propagarla.
+
+### Dónde vive cada credencial
+
+Una sola contraseña de Postgres aparece en **cuatro variables repartidas en dos
+máquinas**. Rotarla y tocar solo una es el error fácil:
+
+| Credencial | Dónde | Variables |
+|---|---|---|
+| Postgres (Supabase) | `.env` del droplet | `DB_PASSWORD` **y** `ISPWATCH_DB_PASSWORD` |
+| Postgres (Supabase) | `.env` local de cada dev | las mismas dos |
+| Token de WhatsApp | Columna `tenants.wa_access_token`, cifrada | — (se cambia en `/settings`) |
+| Token global de WhatsApp | `.env` del droplet | `WHATSAPP_API_TOKEN` |
+
+> Las dos conexiones de Postgres usan el **mismo usuario y la misma contraseña**;
+> solo cambian de `search_path` (`converza` vs `public`). Es facilísimo arreglar
+> una y olvidar la otra: pasó exactamente eso, y el síntoma fue que `/login`
+> funcionaba mientras el dashboard seguía en 500.
+
+### Procedimiento
+
+```bash
+# 1. Rotar en el proveedor (Supabase → Settings → Database)
+
+# 2. Propagar al droplet — LAS DOS variables
+ssh deploy@159.223.140.27
+cd /var/www/converza-crm
+cp .env .env.bak.$(date +%Y%m%d-%H%M)          # respaldo antes de tocar
+sed -i 's|^DB_PASSWORD=.*|DB_PASSWORD=<nueva>|' .env
+sed -i 's|^ISPWATCH_DB_PASSWORD=.*|ISPWATCH_DB_PASSWORD=<nueva>|' .env
+
+# 3. Aplicar. SIN config:cache el cambio NO surte efecto: prod cachea la config.
+php artisan config:cache
+sudo systemctl reload php8.2-fpm
+sudo supervisorctl restart converza-worker:*
+
+# 4. Verificar ANTES de irte — comprueba las dos conexiones, no solo una
+php artisan deploy:verify
+```
+
+`deploy:verify` es el paso que no se salta. Sale con código 1 si algo no
+responde e imprime el motivo con la conexión que falló.
+
+### Red de seguridad
+
+Desde el 20/08/2026 el despliegue corre `deploy:verify` automáticamente y
+**falla el workflow** si alguna dependencia no responde con la config
+desplegada. Antes, `migrate --force` solo ejercía `pgsql`, así que una
+`ISPWATCH_DB_PASSWORD` vieja pasaba desapercibida hasta que alguien abría el
+dashboard.
+
+Y si aun así se escapa, el centinela sobre `/health` avisa en menos de 5
+minutos (§4).
+
+---
+
 ## 7. Incidentes frecuentes
 
 ### 🔴 No entra ningún mensaje

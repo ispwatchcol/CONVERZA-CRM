@@ -368,6 +368,9 @@ perdieron 18 mensajes entrantes.
 2. ✅ Centinela externo (UptimeRobot cada 5 min, push a dos teléfonos).
 3. ✅ Log crudo de webhooks + `webhooks:replay` y `webhooks:reconcile`, para que
    una caída no cueste mensajes.
+4. ✅ `deploy:verify` en el despliegue: falla el workflow si la config publicada
+   no puede hablar con alguna dependencia. Cierra el hueco por el que
+   `ISPWATCH_DB_PASSWORD` quedó vieja sin que nadie lo notara.
 
 > ⚠️ La recomendación original de este punto —*«un healthcheck externo sobre
 > `/up`»*— **era incorrecta y conviene no repetirla.** `/up` solo confirma que

@@ -142,8 +142,13 @@ GitHub Actions se encarga del resto:
 3. `npm ci && npm run build`
 4. `php artisan migrate --force`
 5. Cache de config/routes/views
-6. Reload PHP-FPM
-7. **Restart de los queue workers** (toman el código nuevo)
+6. **`deploy:verify`** — comprueba que la config recién cacheada funcione: ambas
+   conexiones de BD, Redis y disco escribible. No aborta a media asta (dejaría
+   los workers con código viejo), pero **falla el workflow al final** si algo no
+   responde. `migrate --force` solo ejerce `pgsql`; sin este paso una
+   `ISPWATCH_DB_PASSWORD` vieja pasa desapercibida.
+7. Reload PHP-FPM
+8. **Restart de los queue workers** (toman el código nuevo)
 
 ---
 

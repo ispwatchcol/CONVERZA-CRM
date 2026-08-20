@@ -2,10 +2,8 @@
 
 namespace App\Http\Controllers;
 
+use App\Services\HealthChecker;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Queue;
-use Illuminate\Support\Facades\Redis;
 
 /**
  * Health check profundo, para monitoreo externo (UptimeRobot y similares).
@@ -15,82 +13,41 @@ use Illuminate\Support\Facades\Redis;
  * tocan, así que un monitor convencional reportaba el sistema como sano. Se
  * descubrió cuando una persona intentó entrar.
  *
- * Verifica cada dependencia que puede tumbar el sistema en silencio. Devuelve
- * 503 si alguna falla, que es lo que dispara la alerta.
- *
- * Deliberadamente NO revela hosts, usuarios ni credenciales: es una ruta pública
- * (el monitor no puede autenticarse), así que solo dice qué falló, nunca dónde
- * ni con qué.
+ * Los chequeos viven en HealthChecker, compartidos con `deploy:verify`, para que
+ * el despliegue no pueda comprobar menos cosas que el monitoreo.
  */
 class HealthController extends Controller
 {
-    public function check(): JsonResponse
+    public function check(HealthChecker $checker): JsonResponse
     {
-        $checks = [
-            'db'          => $this->timed(fn () => DB::connection('pgsql')->select('select 1')),
-            'db_ispwatch' => $this->timed(fn () => DB::connection('ispwatch')->select('select 1')),
-            'redis'       => $this->timed(fn () => Redis::connection()->ping()),
+        ['healthy' => $healthy, 'checks' => $checks] = $checker->run();
 
-            // El log crudo del webhook es nuestra única copia de un mensaje hasta
-            // que el worker lo persiste. Si el disco dejó de ser escribible, la red
-            // de seguridad desapareció sin avisar — eso es una falla dura.
-            'webhook_log' => $this->timed(function () {
-                if (! is_writable(storage_path('logs'))) {
-                    throw new \RuntimeException('storage/logs no es escribible');
-                }
-            }),
-        ];
-
-        // La cola se separa en dos cosas distintas a propósito:
+        // Contrato para el centinela externo: "status":"ok" ⟺ HTTP 200 ⟺ todos
+        // los checks en ok:true. No existe ningún caso de 200 con otro status.
         //
-        //  - CONECTIVIDAD (que se pueda consultar): es una dependencia caída y
-        //    cuenta para el estado general, igual que la BD o Redis.
-        //  - PROFUNDIDAD (cuántos hay en espera): informativa. Un backlog sigue
-        //    siendo un sistema que funciona y no debe despertar a nadie.
-        //
-        // Antes el chequeo de cola se añadía DESPUÉS de calcular $healthy, así que
-        // una cola inconsultable devolvía {"status":"ok", "queue":{"ok":false}} con
-        // HTTP 200: un falso verde, exactamente lo que este endpoint existe para
-        // evitar. El orden importa.
-        $pendientes = null;
-        $checks['queue'] = $this->timed(function () use (&$pendientes) {
-            $pendientes = Queue::size();
-        });
-
-        if ($pendientes !== null) {
-            $checks['queue']['pendientes'] = $pendientes;
-        }
-
-        $healthy = ! in_array(false, array_column($checks, 'ok'), true);
-
-        // Contrato para el centinela externo, que debe validar el CUERPO y no solo
-        // el código: "status":"ok" ⟺ HTTP 200 ⟺ todos los checks en ok:true.
-        // No existe ningún caso de 200 con status distinto de "ok".
+        // El plan gratuito del monitor solo permite HEAD, sin poder mirar el
+        // cuerpo, así que el código HTTP es la ÚNICA señal que llega. Mantener
+        // esa equivalencia no es opcional.
         return response()->json([
             'status' => $healthy ? 'ok' : 'degraded',
-            'checks' => $checks,
+            'checks' => $this->publico($checks),
             'time'   => now()->toIso8601String(),
         ], $healthy ? 200 : 503);
     }
 
     /**
-     * Corre una comprobación midiendo cuánto tarda. Nunca deja escapar la
-     * excepción: el objetivo es reportar el estado, no fallar al reportarlo.
+     * Quita el detalle de la excepción antes de responder: es una ruta pública
+     * (el monitor no puede autenticarse) y ese mensaje trae host, usuario y
+     * puerto de la conexión que falló. El nombre de la clase basta para saber
+     * qué pasó; el detalle queda para `deploy:verify`, que corre en consola.
      */
-    private function timed(callable $probe): array
+    private function publico(array $checks): array
     {
-        $inicio = microtime(true);
-
-        try {
-            $probe();
-
-            return ['ok' => true, 'ms' => (int) round((microtime(true) - $inicio) * 1000)];
-        } catch (\Throwable $e) {
-            return [
-                'ok'    => false,
-                'ms'    => (int) round((microtime(true) - $inicio) * 1000),
-                'error' => class_basename($e),
-            ];
+        foreach ($checks as $nombre => $datos) {
+            unset($datos['detalle']);
+            $checks[$nombre] = $datos;
         }
+
+        return $checks;
     }
 }

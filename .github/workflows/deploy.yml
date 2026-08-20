@@ -97,6 +97,20 @@ jobs:
             php artisan config:cache
             php artisan route:cache
 
+            # Comprueba que la config recién cacheada realmente funcione: ambas
+            # conexiones de BD, Redis y disco. `migrate --force` de arriba solo
+            # ejerce 'pgsql'; la conexión 'ispwatch' no la toca nadie hasta que
+            # alguien abre el dashboard —así se nos escapó una contraseña vieja
+            # durante casi diez horas el 20/08/2026—.
+            #
+            # NO se aborta aquí: el código ya está en disco, así que cortar a
+            # media asta dejaría los workers con código viejo y PHP-FPM con el
+            # nuevo. Se termina el deploy en estado consistente y se falla al
+            # final, que es lo que pone el workflow en rojo y avisa.
+            echo "==> Verifying configuration"
+            VERIFY_OK=1
+            php artisan deploy:verify || VERIFY_OK=0
+
             echo "==> Reloading PHP-FPM"
             sudo systemctl reload php8.2-fpm
 
@@ -105,4 +119,12 @@ jobs:
               || echo "  WARNING: workers not configured yet — see deploy/DEPLOY.md"
 
             echo "==> Deploy complete: \$(git log -1 --format='%h %s')"
+
+            if [ "\$VERIFY_OK" -ne 1 ]; then
+              echo ""
+              echo "!! El código quedó desplegado, pero alguna dependencia NO responde."
+              echo "!! Revisá el .env del servidor y corré 'php artisan config:cache'."
+              echo "!! Detalle: la salida de 'deploy:verify' más arriba."
+              exit 1
+            fi
           EOF
