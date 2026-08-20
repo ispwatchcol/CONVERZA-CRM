@@ -177,19 +177,48 @@ La defensa es doble:
 ```
 Meta ──POST /webhook──► WhatsAppController::handleWebhook
                           │
-                          ├─ forwardWebhook()  (opcional: reenvía a ngrok local)
+                          ├─ 1. Log::channel('webhook_raw')  ◄── PRIMERO, siempre
+                          │      cuerpo crudo a disco; sobrevive a BD y Redis caídos
                           │
-                          ├─ por cada entry.changes.value:
-                          │    resolveTenantFromPayload(phone_number_id, waba_id)
-                          │       1. tenants.wa_phone_number_id  (match exacto)
-                          │       2. tenants.wa_business_account_id
-                          │       3. tenant 'default' si el .env apunta a ese número
+                          ├─ 2. forwardWebhook()  (opcional: reenvía a ngrok local)
                           │
-                          ├─ messages[] ─► ProcessIncomingWhatsAppMessage::dispatch(msg, contacts, tenantId)
-                          └─ statuses[] ─► ProcessWhatsAppStatusUpdate::dispatch(statuses, tenantId)
+                          ├─ 3. try { WebhookDispatcher::dispatch($payload) }
+                          │      │  catch → Log::error, NO propaga
+                          │      │
+                          │      ├─ por cada entry.changes.value:
+                          │      │    resolveTenant(phone_number_id, waba_id)
+                          │      │       1. tenants.wa_phone_number_id  (match exacto)
+                          │      │       2. tenants.wa_business_account_id
+                          │      │       3. tenant 'default' si el .env apunta a ese número
+                          │      │
+                          │      ├─ messages[] ─► ProcessIncomingWhatsAppMessage::dispatch(...)
+                          │      └─ statuses[] ─► ProcessWhatsAppStatusUpdate::dispatch(...)
                           │
-                          └─ responde 200 EVENT_RECEIVED de inmediato
+                          └─ 4. responde 200 EVENT_RECEIVED SIEMPRE
 ```
+
+**El orden es la garantía, no un detalle.** Entre recibir los bytes y responder
+200 no puede haber nada que dependa de un recurso capaz de fallar. Si el paso 3
+revienta porque la BD o Redis están caídos, el mensaje ya está en disco y Meta
+recibe su 200; devolver 500 solo conseguiría que Meta desistiera a los 20
+segundos y el evento se perdiera para siempre.
+
+`WebhookDispatcher` vive en `app/Services/WhatsApp/` y no dentro del controlador
+para que `webhooks:replay` y `webhooks:reconcile` recorran **exactamente** el
+mismo camino que un webhook en vivo. Con lógica duplicada divergirían, y lo
+descubriríamos justo al reprocesar tras una caída.
+
+Recuperación de lo que no se llegó a procesar:
+
+| Comando | Cuándo | Qué hace |
+|---|---|---|
+| `webhooks:reconcile` | Automático, cada 5 min | Compara el log crudo contra `messages` en los últimos 60 min y despacha los huecos |
+| `webhooks:replay` | Manual, tras un corte largo | Reprocesa un rango explícito del log crudo |
+
+Reprocesar es seguro porque toda la cadena es idempotente: `wa_message_id` tiene
+índice único y el job atrapa la violación, el bot solo responde si el mensaje se
+guardó de verdad (`$savedMessage`), los acuses de estado nunca retroceden, y las
+señales de campaña están protegidas por `whereNull('replied_at')`.
 
 Responder rápido es obligatorio: si Meta no recibe un 200 en pocos segundos,
 reintenta el webhook y se generan duplicados.

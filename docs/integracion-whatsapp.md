@@ -91,18 +91,46 @@ Sin match se registra
 `Webhook: ningún tenant coincide con phone_number_id/WABA` y los mensajes se
 descartan. Es el primer log a revisar cuando "no llega nada".
 
-### 2.4 Respuesta inmediata
+### 2.4 Ingesta durable: primero el disco, después procesar
 
-El controlador solo **encola** y responde `{"status":"EVENT_RECEIVED"}` al
-instante. Si Meta no recibe un 200 rápido, reintenta y genera duplicados
-(absorbidos por el índice único de `wa_message_id`).
+El orden de `handleWebhook` es deliberado y **no se debe reordenar**:
+
+1. **Escribir el cuerpo crudo** al canal `webhook_raw`
+   (`storage/logs/webhook-raw-Y-m-d.log`, retención `LOG_WEBHOOK_RAW_DAYS`, 30 días).
+2. Reenviar a `WEBHOOK_FORWARD_URL` si está definida (§2.5).
+3. Repartir a los jobs vía `WebhookDispatcher`, dentro de `try/catch`.
+4. Responder `{"status":"EVENT_RECEIVED"}` **siempre**, pase lo que pase.
+
+La regla: entre recibir los bytes y responder 200 no puede haber **nada** que
+dependa de un recurso capaz de fallar. Si el reparto revienta —BD caída, Redis
+caído— se registra `Log::error` para que salte la alerta, pero Meta igual recibe
+200.
+
+> **Por qué 200 aunque falle.** El 20/08/2026 la base estuvo caída 9 h 54 m y el
+> webhook devolvía 500: Meta reintentó unas 4 veces en 20 segundos, desistió, y
+> se perdieron 18 eventos. Los reintentos de Meta no son una red de seguridad
+> utilizable. La red es `webhook-raw.log`, y por eso se escribe primero.
+
+El canal `webhook_raw` usa `level: debug` **fijo**, no `env('LOG_LEVEL')`: en
+producción el nivel global es `warning` y descartaría estos registros. Y guarda
+el cuerpo como **string crudo**, no como array — Monolog normaliza 9 niveles
+como máximo y el payload de Meta los supera, así que pasarle el array reemplaza
+el remitente y el texto por `"Over 9 levels deep, aborting normalization"`.
+
+Reprocesar lo guardado: `webhooks:replay` y `webhooks:reconcile`, ver
+[operaciones.md §4](operaciones.md#4-monitoreo-diario).
 
 ### 2.5 Reenvío a desarrollo
 
-Si `WEBHOOK_FORWARD_URL` está definida, producción reenvía el payload íntegro a
-esa URL (típicamente tu ngrok) con timeout de 3 s y excepción tragada. Nunca
-puede tumbar producción. Ver
+Si `WEBHOOK_FORWARD_URL` está definida, se reenvía el payload íntegro a esa URL
+(típicamente tu ngrok) con timeout de 3 s y excepción tragada. Nunca puede
+tumbar el webhook. Ver
 [manual-desarrollador.md §7](manual-desarrollador.md#7-recibir-webhooks-reales-en-local).
+
+> ⚠️ **Debe quedar vacía en producción.** Manda los mensajes de los clientes a un
+> tercero, y los dominios ngrok gratuitos se reciclan entre cuentas: si alguien
+> reclama ese nombre, empieza a recibir conversaciones ajenas. Se retiró de
+> producción el 20/08/2026 tras encontrarla apuntando a un túnel muerto.
 
 ### 2.6 ⚠️ La firma NO se verifica
 
@@ -282,6 +310,22 @@ El `language` debe coincidir **exactamente** con el de la plantilla en Meta
 - `campaign_sends` y `campaign_recipients` (embudo de campañas)
 
 El cruce es por `wa_message_id`.
+
+**El estado solo avanza, nunca retrocede.** La escala es `sent (1) → delivered
+(2) → read (3)`, y un acuse de rango menor o igual al actual se descarta. Sin
+esto, un webhook reentregado por Meta —que los manda fuera de orden— o un
+`webhooks:replay` degradaría en el chat un mensaje ya leído a "entregado".
+
+El filtro viaja dentro del propio `UPDATE` (`whereIn('status', $inferiores)`) en
+vez de leer y comparar en PHP, lo que además cierra la carrera entre dos
+webhooks simultáneos.
+
+Dos estados quedan fuera de la escala a propósito:
+
+| Estado | Por qué no se toca |
+|---|---|
+| `failed` | Terminal. Un rechazo de Meta no debe volver a verse como entregado. |
+| `received` | Es de mensajes entrantes; no recibe acuses. |
 
 ---
 

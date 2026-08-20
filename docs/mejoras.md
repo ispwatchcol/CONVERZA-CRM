@@ -355,15 +355,36 @@ grabación de audio, presencia ni filtros).
 
 ---
 
-### M-16 · Sin observabilidad
+### M-16 · Sin observabilidad — *parcialmente resuelto (20/08/2026)*
 
-No hay Sentry, ni APM, ni alertas. Un error 500 en producción solo se descubre
-si alguien mira `laravel.log` o si un cliente se queja.
+Este punto dejó de ser teórico: el 20/08/2026 producción estuvo **9 h 54 m** sin
+poder consultar la base —se rotó la contraseña de Supabase y el `.env` del
+droplet quedó con la vieja— y se descubrió cuando alguien intentó entrar. Se
+perdieron 18 mensajes entrantes.
 
-**Corrección mínima:**
-1. Sentry (plan gratuito) para excepciones.
-2. Una alerta si `DB::table('jobs')->count()` supera un umbral.
-3. Un `healthcheck` externo sobre `/up` (ya existe la ruta).
+**Ya hecho:**
+1. ✅ `GET /health` profundo: ambas conexiones de BD, Redis y `storage/logs`
+   escribible. Contrato estricto — `"status":"ok"` ⟺ 200 ⟺ todo verde.
+2. ✅ Centinela externo (UptimeRobot cada 5 min, push a dos teléfonos).
+3. ✅ Log crudo de webhooks + `webhooks:replay` y `webhooks:reconcile`, para que
+   una caída no cueste mensajes.
+
+> ⚠️ La recomendación original de este punto —*«un healthcheck externo sobre
+> `/up`»*— **era incorrecta y conviene no repetirla.** `/up` solo confirma que
+> PHP responde: habría devuelto 200 durante las diez horas de caída. Igual que
+> `/login`, que fue precisamente lo que enmascaró el incidente. Un health check
+> que no toca las dependencias no es un health check.
+
+**Lo que sigue faltando:**
+1. **Sentry** (plan gratuito) para excepciones — sin esto, un 500 aislado que no
+   tumba `/health` sigue siendo invisible.
+2. **Que las alertas de la app lleguen a una persona.** `webhooks:reconcile`
+   escribe `Log::error` cuando encuentra huecos, pero nadie vigila ese archivo.
+   Los huecos se reparan solos, así que la urgencia es menor, pero hoy no hay
+   forma de enterarse de que ocurrieron.
+3. **Alerta por profundidad de cola.** `/health` reporta `Queue::size()` pero es
+   informativo a propósito: un backlog no debería despertar a nadie de
+   madrugada. Merece su propio umbral, aparte del health check.
 
 ---
 

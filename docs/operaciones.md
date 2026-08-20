@@ -157,24 +157,61 @@ Verifica: `php artisan schedule:list`.
 
 ## 4. Monitoreo diario
 
+### 4.1 `/health` — el chequeo profundo
+
+```bash
+curl -s https://converza-crm.duckdns.org/health | jq
+```
+
+Verifica **ambas** conexiones de BD (`pgsql` y `ispwatch`), Redis, y que
+`storage/logs` siga siendo escribible por www-data. Devuelve **200** solo si todo
+responde; **503** si algo falla. Contrato:
+
+> `"status":"ok"` ⟺ HTTP 200 ⟺ todos los checks en `ok:true`.
+> No existe ningún caso de 200 con otro status.
+
+Se registra en `bootstrap/app.php`, **fuera del grupo `web`**, para que no dependa
+de sesión ni Inertia — que usan Redis y la BD, justo lo que debe diagnosticar.
+`/up` (el health de Laravel) sigue existiendo pero es superficial: solo confirma
+que PHP responde.
+
+> **No uses `/login` como health check.** Devuelve 200 con la BD caída porque no
+> la toca. El 20/08/2026 eso hizo que una caída de 9 h 54 m pasara inadvertida.
+
+### 4.2 Centinela externo
+
+UptimeRobot consulta `/health` cada 5 minutos desde fuera de DigitalOcean, con la
+app instalada en los teléfonos del equipo para que llegue como notificación push.
+
+El plan gratuito solo permite `HEAD` —sin validación de contenido—, así que **el
+código HTTP es la única señal**. Por eso importa que `/health` nunca devuelva 200
+con un chequeo en rojo: si alguien toca ese endpoint, mantener esa propiedad no es
+opcional.
+
+### 4.3 Comprobaciones manuales
+
 ```bash
 ssh deploy@159.223.140.27
 
 # ¿Los workers están vivos?
 sudo supervisorctl status converza-worker:*
 
-# ¿La cola está al día? (idealmente cerca de 0)
+# ¿La cola está al día? Prod usa REDIS, no la tabla `jobs`:
+#   DB::table('jobs')->count() siempre da 0 y no significa nada.
 sudo -u www-data php /var/www/converza-crm/artisan tinker \
-  --execute="echo DB::table('jobs')->count();"
+  --execute="echo Illuminate\Support\Facades\Queue::size();"
 
 # ¿Hay jobs fallidos?
 sudo -u www-data php /var/www/converza-crm/artisan queue:failed
+
+# ¿Entró algo que no se guardó? (repara solo, esto es para verificar)
+sudo -u www-data php /var/www/converza-crm/artisan webhooks:reconcile --dry-run
 
 # Logs en vivo
 sudo tail -f /var/www/converza-crm/storage/logs/laravel.log
 sudo tail -f /var/log/supervisor/converza-worker.log
 
-# Disco (los medios lo llenan)
+# Disco (los medios y el log crudo lo llenan)
 df -h && du -sh /var/www/converza-crm/storage/app/public/whatsapp-media
 
 # Memoria
@@ -185,9 +222,11 @@ free -m
 
 | Señal | Verde | Rojo |
 |---|---|---|
-| `jobs` count | < 50 y bajando | Sube sin parar |
+| `/health` | 200 `"status":"ok"` | 503, o sin responder |
+| `Queue::size()` | < 50 y bajando | Sube sin parar |
 | Workers | 4 RUNNING | Menos, o reiniciando en bucle |
 | `queue:failed` | Vacío | Crece |
+| `webhooks:reconcile --dry-run` | «Sin huecos» | Reporta huecos |
 | Disco | < 80 % | > 90 % |
 | Calidad del número | Verde en Meta | Amarillo o rojo |
 
@@ -239,17 +278,44 @@ lo hace: el usuario de deploy no tiene sudo sin contraseña para `chown`/`chmod`
 **Diagnóstico, en orden:**
 
 ```bash
-grep "Webhook received" storage/logs/laravel.log | tail -5
+# 1. ¿La app puede hablar con sus dependencias?
+curl -s https://converza-crm.duckdns.org/health | jq
+
+# 2. ¿Meta está llamando? El log crudo registra TODO webhook que llega,
+#    incluso si después falla el procesamiento.
+tail -3 storage/logs/webhook-raw-$(date +%F).log
+grep -c inbound storage/logs/webhook-raw-$(date +%F).log
+
+# 3. ¿Se reconoció el tenant?
 grep "ningún tenant coincide" storage/logs/laravel.log | tail -5
+
+# 4. ¿Los workers corren?
 sudo supervisorctl status converza-worker:*
 ```
 
 | Qué ves | Causa | Solución |
 |---|---|---|
-| No hay `Webhook received` | Meta no está llamando | Verificar suscripción (§7.1) |
-| Hay `Webhook received` pero `ningún tenant coincide` | `phone_number_id` no está en ningún tenant activo | Corregirlo en `/settings` |
-| Hay webhook y no hay error, pero nada aparece | La cola no corre | `sudo supervisorctl start converza-worker:*` |
-| `jobs` crece sin bajar | Workers muertos | Reiniciar; revisar el log de supervisor |
+| `/health` da 503 | Una dependencia caída — el JSON dice cuál | Según el check en rojo (§7 «Toda la app devuelve 500») |
+| El log crudo del día no existe o no crece | Meta no está llamando | Verificar suscripción (§7.1) |
+| Hay eventos en el log crudo pero `ningún tenant coincide` | `phone_number_id` no está en ningún tenant activo | Corregirlo en `/settings` |
+| Hay eventos y nada aparece en el chat | La cola no corre | `sudo supervisorctl start converza-worker:*` |
+| `Queue::size()` crece sin bajar | Workers muertos | Reiniciar; revisar el log de supervisor |
+
+> El log crudo (`webhook-raw-*.log`) reemplazó al viejo `grep "Webhook received"`
+> de `laravel.log`. Aquel era un `Log::info` que `LOG_LEVEL=warning` descarta —
+> por eso ya no aparece, y por eso existe el canal aparte.
+
+**Recuperar lo que no se guardó:** si hubo un corte y entraron mensajes durante
+él, `webhooks:reconcile` los repara solo cada 5 minutos (ventana de 60 min). Para
+un corte más largo, con rango explícito:
+
+```bash
+sudo -u www-data php artisan webhooks:replay --fecha=2026-08-20 --dry-run
+sudo -u www-data php artisan webhooks:replay --desde="2026-08-20 09:51" --hasta="2026-08-20 13:19"
+```
+
+Reprocesar es seguro: `wa_message_id` tiene índice único, el bot no responde dos
+veces y los acuses de estado no retroceden.
 
 **7.1 Verificar la suscripción en Meta** (read-only, desde tinker):
 
