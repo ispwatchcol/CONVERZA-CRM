@@ -10,7 +10,7 @@
  *
  * POR QUÉ MONITORES DE TIPO «KEYWORD» Y NO «HTTP(S)»
  * Un monitor que sólo mira el código de estado se conforma con un 200. El
- * 2026-08-20 quedó demostrado en producción: `ispwatch-crm.app/health/deep`
+ * 2026-08-20 quedó demostrado en producción: `ispwatch-crm.app/health`
  * devolvía 200 con el HTML del panel, porque la ruta no existía todavía y el
  * catch-all del SPA la atendía. Un monitor de código habría reportado ese
  * endpoint como sano para siempre. Validar el CUERPO cuesta lo mismo y detecta
@@ -48,8 +48,8 @@ const API = 'https://api.uptimerobot.com/v2/';
  */
 const MONITORES = [
     [
-        'nombre'   => 'ISPWatch — health/deep',
-        'url'      => 'https://ispwatch-crm.app/health/deep',
+        'nombre'   => 'ISPWatch — health',
+        'url'      => 'https://ispwatch-crm.app/health',
         'keyword'  => '"status":"ok"',
         'contexto' => 'Hasta desplegar feat/health-deep-and-db-failure-handling responde 200 con el HTML del panel. El monitor lo marcará CAÍDO desde el primer minuto, y es correcto: el endpoint todavía no existe. Se pondrá verde solo al desplegar.',
     ],
