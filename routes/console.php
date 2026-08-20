@@ -68,3 +68,20 @@ Schedule::command('chats:auto-close')
     ->everyFiveMinutes()
     ->withoutOverlapping(10)
     ->onOneServer();
+
+// ── Reconciliación de mensajes entrantes ──────────────────────────────────
+// Cada 5 minutos compara el log crudo de webhooks contra la tabla `messages` y
+// reprocesa lo que llegó al servidor pero no acabó guardado. Es la red que
+// convierte `webhooks:replay` (manual, hay que acordarse) en automático: tras
+// una caída de base, los mensajes entran solos cuando el sistema se recupera.
+//
+// La ventana de 60 min con 5 de solapamiento da margen de sobra para que un
+// corte breve se repare sin intervención; uno más largo se cubre corriendo
+// `webhooks:replay` con el rango explícito.
+//
+// Barato cuando no hay nada que hacer: lee el log de la ventana y hace UNA
+// consulta con whereIn para todos los ids.
+Schedule::command('webhooks:reconcile --minutos=60')
+    ->everyFiveMinutes()
+    ->withoutOverlapping(10)
+    ->onOneServer();
