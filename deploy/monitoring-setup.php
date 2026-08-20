@@ -91,6 +91,37 @@ if (! $apiKey) {
 }
 
 /**
+ * Localiza un almacén de certificados raíz.
+ *
+ * Por esta conexión viaja la API key, así que la verificación TLS NO se
+ * desactiva bajo ninguna circunstancia. En Linux basta con el almacén del
+ * sistema; el PHP de Windows suele venir sin `curl.cainfo` configurado y ahí
+ * hace falta señalarlo a mano — Git for Windows trae uno utilizable.
+ *
+ * Devuelve null si no encuentra ninguno, en cuyo caso se deja que curl use su
+ * valor por defecto: puede que php.ini sí lo tenga puesto.
+ */
+function caBundle(): ?string
+{
+    $candidatos = array_filter([
+        getenv('CURL_CA_BUNDLE') ?: null,
+        ini_get('curl.cainfo') ?: null,
+        ini_get('openssl.cafile') ?: null,
+        'C:\Program Files\Git\mingw64\etc\ssl\certs\ca-bundle.crt',
+        '/etc/ssl/certs/ca-certificates.crt',
+        '/etc/pki/tls/certs/ca-bundle.crt',
+    ]);
+
+    foreach ($candidatos as $ruta) {
+        if (is_readable($ruta)) {
+            return $ruta;
+        }
+    }
+
+    return null;
+}
+
+/**
  * @param array<string, string|int> $campos
  * @return array<string, mixed>
  */
@@ -106,12 +137,28 @@ function llamar(string $metodo, array $campos): array
         CURLOPT_HTTPHEADER     => ['Content-Type: application/x-www-form-urlencoded'],
     ]);
 
+    if ($ca = caBundle()) {
+        curl_setopt($ch, CURLOPT_CAINFO, $ca);
+    }
+
     $cuerpo = curl_exec($ch);
     $error  = curl_error($ch);
     curl_close($ch);
 
     if ($cuerpo === false) {
         fwrite(STDERR, "Error de red llamando a {$metodo}: {$error}\n");
+
+        if (str_contains(strtolower($error), 'certificate')) {
+            fwrite(STDERR, "\nNo se pudo verificar el certificado de UptimeRobot. Por esta conexión\n");
+            fwrite(STDERR, "viaja tu API key, así que la verificación no se desactiva: hay que\n");
+            fwrite(STDERR, "indicarle a PHP dónde están los certificados raíz.\n\n");
+            fwrite(STDERR, "  PowerShell:\n");
+            fwrite(STDERR, "    \$env:CURL_CA_BUNDLE = \"C:\\Program Files\\Git\\mingw64\\etc\\ssl\\certs\\ca-bundle.crt\"\n\n");
+            fwrite(STDERR, "  O de forma permanente, en php.ini:\n");
+            fwrite(STDERR, "    curl.cainfo = \"C:\\Program Files\\Git\\mingw64\\etc\\ssl\\certs\\ca-bundle.crt\"\n\n");
+            fwrite(STDERR, "En el servidor Linux no hace falta: el almacén del sistema ya sirve.\n");
+        }
+
         exit(1);
     }
 
@@ -127,7 +174,14 @@ function llamar(string $metodo, array $campos): array
 
 function abortar(string $metodo, array $respuesta): void
 {
-    // El mensaje crudo de la API se imprime a propósito: si UptimeRobot cambia
+    // UptimeRobot devuelve el valor rechazado en `passed_value`, y cuando el
+    // parámetro inválido es la propia llave eso significa imprimirla en pantalla
+    // — donde queda en el scrollback de la terminal. Se tapa.
+    if (($respuesta['error']['parameter_name'] ?? null) === 'api_key') {
+        $respuesta['error']['passed_value'] = '[oculto]';
+    }
+
+    // El resto del mensaje crudo se imprime a propósito: si UptimeRobot cambia
     // el contrato (hay una v3 con tokens Bearer), este script tiene que decir
     // exactamente qué respondió en vez de fallar en silencio.
     fwrite(STDERR, "La API rechazó {$metodo}:\n" . json_encode($respuesta, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) . "\n");
