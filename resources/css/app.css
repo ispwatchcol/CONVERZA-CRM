@@ -15,6 +15,18 @@
     --color-text-muted: #8899b4;
 }
 
+/* Alto real del viewport en móvil.
+   100vh (h-screen) mide el viewport GRANDE: incluye el alto que ocupa la barra
+   de URL mientras está visible. El layout es h-screen + overflow-hidden, así que
+   ese excedente no se puede scrollear: en el Chat el composer y los últimos
+   mensajes (los que uno acaba de enviar) quedaban debajo del borde de pantalla.
+   dvh sigue al viewport real. Fuera de @layer, así gana sobre la utilidad. */
+@supports (height: 100dvh) {
+    .h-screen {
+        height: 100dvh;
+    }
+}
+
 /* Global smooth theme transitions */
 *,
 *::before,

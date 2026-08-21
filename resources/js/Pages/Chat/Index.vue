@@ -1256,7 +1256,7 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
 <template>
     <Head title="Chat" />
     <AppLayout>
-        <div class="flex h-[calc(100vh-4rem)] overflow-hidden">
+        <div class="flex h-full overflow-hidden">
             <!-- Conversation List Sidebar -->
             <div class="w-full md:w-80 lg:w-96 border-r border-gray-200 flex flex-col bg-white shrink-0" :class="{ 'hidden md:flex': mobileShowChat }">
                 <!-- Search Header -->
@@ -1370,7 +1370,7 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
 
             <!-- Chat Area -->
             <!-- Arrastrar y soltar un archivo en cualquier parte del panel lo adjunta. -->
-            <div class="flex-1 flex flex-col bg-[#efeae2] relative" :class="{ 'hidden md:flex': !mobileShowChat && conversations.length }"
+            <div class="flex-1 min-w-0 flex flex-col bg-[#efeae2] relative" :class="{ 'hidden md:flex': !mobileShowChat && conversations.length }"
                  @dragenter="canWrite && activeConversationId ? onDragEnter($event) : null"
                  @dragover="canWrite && activeConversationId ? onDragOver($event) : null"
                  @dragleave="onDragLeave"
@@ -1530,7 +1530,7 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
                     </div>
 
                     <!-- Messages -->
-                    <div ref="messagesContainer" class="flex-1 overflow-y-auto p-4 space-y-2 z-0 relative" @scroll="onMessagesScroll">
+                    <div ref="messagesContainer" class="flex-1 overflow-y-auto p-3 sm:p-4 space-y-2 z-0 relative" @scroll="onMessagesScroll">
 
                         <!-- Indicador flotante de fecha: aparece al scrollear, muestra la
                              fecha del bloque visible y se desvanece solo tras un momento quieto.
@@ -1578,7 +1578,7 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
                             </div>
 
                             <!-- ─── Sticker (badge mínimo, no se descarga) ──────────── -->
-                            <div v-else-if="msg.type === 'sticker'" class="max-w-[75%] flex flex-col" :class="isOutgoing(msg) ? 'items-end' : 'items-start'">
+                            <div v-else-if="msg.type === 'sticker'" class="max-w-[88%] sm:max-w-[75%] flex flex-col" :class="isOutgoing(msg) ? 'items-end' : 'items-start'">
                                 <div class="inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 shadow-sm text-xs text-gray-500 italic"
                                      :class="isOutgoing(msg) ? 'bg-[#d9fdd3]' : 'bg-white'">
                                     <span>🎭</span><span>Sticker</span>
@@ -1590,7 +1590,7 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
                             </div>
 
                             <!-- ─── Reacción a un mensaje (badge mínimo, no burbuja) ─── -->
-                            <div v-else-if="msg.type === 'reaction'" class="max-w-[75%] flex flex-col" :class="isOutgoing(msg) ? 'items-end' : 'items-start'">
+                            <div v-else-if="msg.type === 'reaction'" class="max-w-[88%] sm:max-w-[75%] flex flex-col" :class="isOutgoing(msg) ? 'items-end' : 'items-start'">
                                 <div class="inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 shadow-sm text-xs text-gray-500 italic"
                                      :class="isOutgoing(msg) ? 'bg-[#d9fdd3]' : 'bg-white'">
                                     <span>{{ msg.body || 'Reaccionó a un mensaje' }}</span>
@@ -1604,7 +1604,7 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
                             <!-- ─── Imagen ─────────────────────────────────────────── -->
                             <div
                                 v-else-if="msg.type === 'image'"
-                                class="max-w-[75%] rounded-2xl shadow-sm overflow-hidden"
+                                class="max-w-[88%] sm:max-w-[75%] rounded-2xl shadow-sm overflow-hidden"
                                 :class="isOutgoing(msg) ? 'bg-[#d9fdd3] rounded-tr-sm' : 'bg-white rounded-tl-sm'"
                             >
                                 <p v-if="isOutgoing(msg) && msg.sender_name" class="px-3 pt-1.5 text-[11px] font-semibold text-emerald-600">
@@ -1649,7 +1649,7 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
                             <!-- ─── Video ──────────────────────────────────────────── -->
                             <div
                                 v-else-if="msg.type === 'video'"
-                                class="max-w-[75%] rounded-2xl shadow-sm overflow-hidden"
+                                class="max-w-[88%] sm:max-w-[75%] rounded-2xl shadow-sm overflow-hidden"
                                 :class="isOutgoing(msg) ? 'bg-[#d9fdd3] rounded-tr-sm' : 'bg-white rounded-tl-sm'"
                             >
                                 <p v-if="isOutgoing(msg) && msg.sender_name" class="px-3 pt-1.5 text-[11px] font-semibold text-emerald-600">
@@ -1695,7 +1695,7 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
                             <!-- ─── Audio / Documento / Texto ──────────────────────── -->
                             <div
                                 v-else
-                                class="max-w-[75%] rounded-2xl shadow-sm overflow-hidden"
+                                class="max-w-[88%] sm:max-w-[75%] rounded-2xl shadow-sm overflow-hidden"
                                 :class="isOutgoing(msg) ? 'bg-[#d9fdd3] rounded-tr-sm' : 'bg-white rounded-tl-sm'"
                             >
                                 <!-- Nombre del asesor que envió (solo mensajes salientes) -->
@@ -2095,7 +2095,7 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
                                     <span class="absolute -top-8 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-[10px] px-2 py-0.5 rounded-md whitespace-nowrap opacity-0 group-hover:opacity-100 transition pointer-events-none">Nota interna</span>
                                 </button>
 
-                                <div class="flex-1 rounded-xl flex items-center shadow-sm border focus-within:ring-2 transition"
+                                <div class="flex-1 min-w-0 rounded-xl flex items-center shadow-sm border focus-within:ring-2 transition"
                                      :class="noteMode ? 'bg-amber-50 border-amber-200 focus-within:ring-amber-300/40' : 'bg-white border-gray-100 focus-within:ring-accent/30'">
                                     <textarea v-model="form.message" rows="1"
                                               :placeholder="noteMode ? 'Nota interna (solo el equipo la verá)…' : 'Escribe un mensaje'"

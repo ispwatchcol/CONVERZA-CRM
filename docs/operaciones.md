@@ -294,7 +294,26 @@ máquinas**. Rotarla y tocar solo una es el error fácil:
 > una y olvidar la otra: pasó exactamente eso, y el síntoma fue que `/login`
 > funcionaba mientras el dashboard seguía en 500.
 
-### Procedimiento
+### Procedimiento (con el secreto en GitHub)
+
+**Esta es la vía normal desde el 21/08/2026.** La contraseña vive en un único
+sitio —el secret `DB_PASSWORD` del repo— y el despliegue la propaga a las dos
+variables del `.env` a la vez, así que es imposible olvidar la segunda.
+
+```bash
+# 1. Rotar en el proveedor (Supabase → Settings → Database)
+# 2. GitHub → Settings → Secrets and variables → Actions → DB_PASSWORD → Update
+# 3. Actions → "Deploy to production" → Run workflow
+```
+
+El despliegue corre `deploy/sync-secrets.php` antes de `migrate`, y termina con
+`deploy:verify`: si algo quedó mal, el workflow sale en rojo.
+
+> Si el workflow falla en `migrate` con *password authentication failed*, el
+> secreto no coincide con la contraseña real del proveedor. El `.env` anterior
+> queda respaldado en el servidor como `.env.bak.<fecha>`.
+
+### Procedimiento manual (sin GitHub, o si Actions está caído)
 
 ```bash
 # 1. Rotar en el proveedor (Supabase → Settings → Database)
@@ -319,6 +338,14 @@ php artisan deploy:verify
 responde e imprime el motivo con la conexión que falló.
 
 ### Red de seguridad
+
+Tres capas, en orden de rapidez:
+
+1. **`sync-secrets.php`** actualiza las dos variables juntas — no se puede
+   olvidar una.
+2. **`deploy:verify`** falla el despliegue si la config publicada no funciona.
+3. **El centinela** sobre `/health` avisa en menos de 5 minutos si algo se
+   escapó igual.
 
 Desde el 20/08/2026 el despliegue corre `deploy:verify` automáticamente y
 **falla el workflow** si alguna dependencia no responde con la config

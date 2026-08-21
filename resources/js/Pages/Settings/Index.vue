@@ -518,12 +518,12 @@ const waBadge = computed(() => {
                         </div>
 
                         <!-- Enlace de contacto (click-to-chat) -->
-                        <div v-if="tenant.has_whatsapp && waContactLink" class="rounded-xl bg-emerald-50/60 border border-emerald-100 p-3">
+                        <div v-if="tenant.has_whatsapp && waContactLink" class="rounded-xl bg-emerald-50 border border-emerald-100 p-3">
                             <p class="text-xs font-semibold text-emerald-700 uppercase tracking-wider mb-1">Tu enlace de contacto</p>
-                            <p class="text-xs text-gray-500 mb-2">Compártelo en tu web, redes o tarjetas: quien lo abra empieza un chat de WhatsApp contigo. También puedes descargar el QR para imprimir.</p>
+                            <p class="text-xs text-gray-600 mb-2">Compártelo en tu web, redes o tarjetas: quien lo abra empieza un chat de WhatsApp contigo. También puedes descargar el QR para imprimir.</p>
                             <div class="flex gap-2">
                                 <input :value="waContactLink" disabled type="text" class="flex-1 px-3 py-2 bg-white border border-gray-200 rounded-lg text-xs font-mono text-gray-700">
-                                <button type="button" @click="copy(waContactLink, 'wa-link')" class="px-3 py-2 border border-gray-200 rounded-lg text-xs text-gray-700 hover:bg-white transition whitespace-nowrap">
+                                <button type="button" @click="copy(waContactLink, 'wa-link')" class="px-3 py-2 bg-white border border-gray-200 rounded-lg text-xs text-gray-700 hover:bg-gray-50 transition whitespace-nowrap">
                                     {{ copiedKey === 'wa-link' ? '✓ Copiado' : 'Copiar' }}
                                 </button>
                                 <button type="button" @click="shareContactLink" class="px-3 py-2 border border-emerald-200 bg-emerald-100 text-emerald-800 rounded-lg text-xs font-medium hover:bg-emerald-200 transition whitespace-nowrap">
@@ -533,9 +533,9 @@ const waBadge = computed(() => {
                             <div class="flex items-center gap-3 mt-3">
                                 <img v-if="waQrDataUrl" :src="waQrDataUrl" alt="Código QR de tu WhatsApp" width="96" height="96" class="rounded-lg border border-gray-200 bg-white p-1 shrink-0">
                                 <div class="text-xs">
-                                    <button v-if="waQrDataUrl" type="button" @click="downloadQr" class="px-3 py-2 border border-gray-200 rounded-lg text-gray-700 hover:bg-white transition">Descargar QR (PNG)</button>
+                                    <button v-if="waQrDataUrl" type="button" @click="downloadQr" class="px-3 py-2 bg-white border border-gray-200 rounded-lg text-gray-700 hover:bg-gray-50 transition">Descargar QR (PNG)</button>
                                     <p v-else-if="qrError" class="text-amber-700">No se pudo generar el QR.</p>
-                                    <p class="text-gray-400 mt-1">Ideal para imprimir en tu local o en tarjetas.</p>
+                                    <p class="text-gray-500 mt-1">Ideal para imprimir en tu local o en tarjetas.</p>
                                 </div>
                             </div>
                         </div>

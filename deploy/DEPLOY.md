@@ -140,15 +140,19 @@ GitHub Actions se encarga del resto:
 1. Pull código nuevo
 2. `composer install --no-dev`
 3. `npm ci && npm run build`
-4. `php artisan migrate --force`
-5. Cache de config/routes/views
-6. **`deploy:verify`** — comprueba que la config recién cacheada funcione: ambas
+4. **`deploy/sync-secrets.php`** — propaga el secret `DB_PASSWORD` del repo a
+   `DB_PASSWORD` **e** `ISPWATCH_DB_PASSWORD` del `.env`, juntas. Va antes de
+   `migrate` (que fallaría con la contraseña vieja) y de `config:cache` (que la
+   congelaría). Si el secret no existe, no toca nada y sigue.
+5. `php artisan migrate --force`
+6. Cache de config/routes/views
+7. **`deploy:verify`** — comprueba que la config recién cacheada funcione: ambas
    conexiones de BD, Redis y disco escribible. No aborta a media asta (dejaría
    los workers con código viejo), pero **falla el workflow al final** si algo no
    responde. `migrate --force` solo ejerce `pgsql`; sin este paso una
    `ISPWATCH_DB_PASSWORD` vieja pasa desapercibida.
-7. Reload PHP-FPM
-8. **Restart de los queue workers** (toman el código nuevo)
+8. Reload PHP-FPM
+9. **Restart de los queue workers** (toman el código nuevo)
 
 ---
 

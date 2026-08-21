@@ -371,6 +371,9 @@ perdieron 18 mensajes entrantes.
 4. ✅ `deploy:verify` en el despliegue: falla el workflow si la config publicada
    no puede hablar con alguna dependencia. Cierra el hueco por el que
    `ISPWATCH_DB_PASSWORD` quedó vieja sin que nadie lo notara.
+5. ✅ La contraseña de Postgres vive en un único sitio (secret `DB_PASSWORD` del
+   repo) y `deploy/sync-secrets.php` la propaga a las dos variables del `.env` en
+   cada despliegue. Rotar pasa a ser «cambiar un secreto y desplegar».
 
 > ⚠️ La recomendación original de este punto —*«un healthcheck externo sobre
 > `/up`»*— **era incorrecta y conviene no repetirla.** `/up` solo confirma que
