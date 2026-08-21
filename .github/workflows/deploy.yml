@@ -63,7 +63,16 @@ jobs:
       #    haga otro push mientras este deploy corre.
       # ───────────────────────────────────────────────────────────────────
       - name: Run server-side deploy on droplet
+        env:
+          # El secreto entra por el entorno del runner, no interpolado en el
+          # script: así no queda en el YAML renderizado del log.
+          DB_PASSWORD_PLANO: ${{ secrets.DB_PASSWORD }}
         run: |
+          # Se manda en base64 porque el heredoc de abajo viaja por el shell del
+          # runner y del servidor. Una contraseña con comillas simples rompería
+          # el entrecomillado; base64 solo produce [A-Za-z0-9+/=], siempre seguro.
+          DB_PASSWORD_B64=$(printf '%s' "$DB_PASSWORD_PLANO" | base64 -w0)
+
           ssh -i ~/.ssh/deploy_key ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} bash -s << EOF
             set -e
             cd /var/www/converza-crm
@@ -88,6 +97,21 @@ jobs:
 
             echo "==> Installing PHP dependencies"
             composer install --no-dev --optimize-autoloader --no-interaction
+
+            # Propaga la contraseña de Postgres desde GitHub Secrets al .env.
+            # Actualiza DB_PASSWORD e ISPWATCH_DB_PASSWORD JUNTAS: olvidar la
+            # segunda es exactamente lo que causó la caída del 20/08/2026.
+            #
+            # Va ANTES de migrate (si la contraseña rotó, migrate fallaría con la
+            # vieja) y antes de config:cache (que congelaría el valor viejo).
+            #
+            # Si el secreto no existe todavía, el script no toca nada y sale con 0.
+            echo "==> Syncing secrets into .env"
+            # `export` es un builtin del shell: el valor no aparece en `ps`, a
+            # diferencia de un prefijo VAR=valor delante del comando.
+            export CONVERZA_DB_PASSWORD="\$(printf '%s' '$DB_PASSWORD_B64' | base64 -d)"
+            php deploy/sync-secrets.php
+            unset CONVERZA_DB_PASSWORD
 
             echo "==> Running migrations"
             php artisan migrate --force
