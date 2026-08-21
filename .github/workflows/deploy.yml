@@ -68,13 +68,37 @@ jobs:
           # script: así no queda en el YAML renderizado del log.
           DB_PASSWORD_PLANO: ${{ secrets.DB_PASSWORD }}
         run: |
-          # Se manda en base64 porque el heredoc de abajo viaja por el shell del
-          # runner y del servidor. Una contraseña con comillas simples rompería
-          # el entrecomillado; base64 solo produce [A-Za-z0-9+/=], siempre seguro.
+          # Se manda en base64 porque el valor viaja como argumento por SSH. Una
+          # contraseña con comillas rompería el entrecomillado; base64 solo
+          # produce [A-Za-z0-9+/=], siempre seguro sin comillas.
           DB_PASSWORD_B64=$(printf '%s' "$DB_PASSWORD_PLANO" | base64 -w0)
 
-          ssh -i ~/.ssh/deploy_key ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} bash -s << EOF
+          # ¡OJO CON EL << 'EOF' ENTRECOMILLADO!
+          #
+          # Las comillas alrededor de EOF hacen que el shell del RUNNER no
+          # expanda NADA del cuerpo: ni $variables, ni $(...), ni backticks.
+          # El script llega literal al servidor y se ejecuta allá.
+          #
+          # Sin las comillas, un simple backtick dentro de un COMENTARIO se
+          # convierte en sustitución de comandos en el runner. Pasó el
+          # 21/08/2026: dos comentarios con backticks se emparejaron entre sí,
+          # el runner intentó ejecutar quince líneas de comentario y el deploy
+          # murió a mitad, dejando el código nuevo en disco sin config:cache ni
+          # reinicio de workers.
+          #
+          # Consecuencias de que esté entrecomillado:
+          #   - Escribí $VARIABLE normal, sin \$. Todo se evalúa en el servidor.
+          #   - Los valores del runner NO llegan por interpolación: se pasan
+          #     como argumentos posicionales a `bash -s --`.
+          #   - ${{ }} de GitHub Actions SÍ funciona: se sustituye antes de que
+          #     el shell vea el script.
+          ssh -i ~/.ssh/deploy_key ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} \
+            bash -s -- "$DB_PASSWORD_B64" << 'EOF'
             set -e
+
+            # Argumento 1: la contraseña en base64 (o vacío si no hay secreto).
+            PASS_B64="$1"
+
             cd /var/www/converza-crm
 
             # NOTA: los permisos de storage (para que www-data, el usuario de PHP-FPM,
@@ -107,9 +131,9 @@ jobs:
             #
             # Si el secreto no existe todavía, el script no toca nada y sale con 0.
             echo "==> Syncing secrets into .env"
-            # `export` es un builtin del shell: el valor no aparece en `ps`, a
-            # diferencia de un prefijo VAR=valor delante del comando.
-            export CONVERZA_DB_PASSWORD="\$(printf '%s' '$DB_PASSWORD_B64' | base64 -d)"
+            # export es un builtin del shell: el valor no aparece en la lista de
+            # procesos, a diferencia de un prefijo VAR=valor delante del comando.
+            export CONVERZA_DB_PASSWORD="$(printf '%s' "$PASS_B64" | base64 -d)"
             php deploy/sync-secrets.php
             unset CONVERZA_DB_PASSWORD
 
@@ -122,7 +146,7 @@ jobs:
             php artisan route:cache
 
             # Comprueba que la config recién cacheada realmente funcione: ambas
-            # conexiones de BD, Redis y disco. `migrate --force` de arriba solo
+            # conexiones de BD, Redis y disco. migrate --force de arriba solo
             # ejerce 'pgsql'; la conexión 'ispwatch' no la toca nadie hasta que
             # alguien abre el dashboard —así se nos escapó una contraseña vieja
             # durante casi diez horas el 20/08/2026—.
@@ -139,12 +163,12 @@ jobs:
             sudo systemctl reload php8.2-fpm
 
             echo "==> Restarting queue workers (Supervisor)"
-            sudo supervisorctl restart converza-worker:* \\
+            sudo supervisorctl restart converza-worker:* \
               || echo "  WARNING: workers not configured yet — see deploy/DEPLOY.md"
 
-            echo "==> Deploy complete: \$(git log -1 --format='%h %s')"
+            echo "==> Deploy complete: $(git log -1 --format='%h %s')"
 
-            if [ "\$VERIFY_OK" -ne 1 ]; then
+            if [ "$VERIFY_OK" -ne 1 ]; then
               echo ""
               echo "!! El código quedó desplegado, pero alguna dependencia NO responde."
               echo "!! Revisá el .env del servidor y corré 'php artisan config:cache'."

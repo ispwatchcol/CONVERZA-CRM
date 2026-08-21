@@ -85,6 +85,39 @@ ssh deploy@159.223.140.27 'cd /var/www/converza-crm && \
 
 Actions → *Deploy to production* → **Run workflow**.
 
+### ⚠️ Al editar `deploy.yml`: el heredoc está entrecomillado
+
+El script server-side viaja dentro de un `<< 'EOF'` **con comillas**. Eso hace que
+el shell del runner no expanda nada del cuerpo, y es deliberado:
+
+| Escribí así | No así |
+|---|---|
+| `$VARIABLE` | `\$VARIABLE` |
+| `$(comando)` | `\$(comando)` |
+| Valores del runner → argumentos de `bash -s --` | Interpolarlos en el texto |
+
+`${{ }}` de GitHub Actions sí funciona: se sustituye antes de que el shell vea el
+script.
+
+> **Por qué importa.** Sin las comillas, un backtick dentro de un **comentario** se
+> vuelve sustitución de comandos en el runner. El 21/08/2026 dos comentarios con
+> backticks se emparejaron entre sí, el runner intentó ejecutar quince líneas de
+> comentario y el deploy murió a mitad: código nuevo en disco, sin `config:cache`
+> ni reinicio de workers. La app siguió funcionando de casualidad, porque ese
+> commit no tocaba nada de runtime.
+
+Si un deploy falla a mitad, completá a mano lo que quedó pendiente:
+
+```bash
+ssh deploy@159.223.140.27
+cd /var/www/converza-crm
+php artisan migrate --force
+php artisan view:clear && php artisan config:cache && php artisan route:cache
+php artisan deploy:verify
+sudo systemctl reload php8.2-fpm
+sudo supervisorctl restart converza-worker:*
+```
+
 ---
 
 ## 3. Setup inicial del servidor (una vez en la vida)
