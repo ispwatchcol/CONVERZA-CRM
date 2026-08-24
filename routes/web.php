@@ -207,6 +207,8 @@ Route::middleware('auth')->group(function () {
     Route::get('/settings', [SettingsController::class, 'index'])->name('settings.index');
     Route::get('/settings/bot', [BotSettingsController::class, 'index'])->name('settings.bot.index');
     Route::put('/settings/bot', [BotSettingsController::class, 'update'])->middleware('role:admin')->name('settings.bot.update');
+    // Interruptor rápido desde la tarjeta de /settings (update() exige todos los campos).
+    Route::put('/settings/bot/toggle', [BotSettingsController::class, 'toggle'])->middleware('role:admin')->name('settings.bot.toggle');
     Route::put('/settings/profile', [SettingsController::class, 'updateProfile'])->name('settings.profile.update');
     Route::put('/settings/whatsapp', [SettingsController::class, 'updateWhatsApp'])->name('settings.whatsapp.update');
     Route::put('/settings/notifications', [SettingsController::class, 'updateNotifications'])->name('settings.notifications.update');

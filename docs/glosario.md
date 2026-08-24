@@ -28,7 +28,9 @@ evento (factura generada, pago registrado, falla de router…). Ver
 [avisos-automaticos.md](avisos-automaticos.md).
 
 **Bot** · Máquina de estados por palabras clave que atiende el primer contacto y
-escala a un humano. Se apaga en cuanto un agente toma la conversación.
+escala a un humano. Se apaga en cuanto un agente toma la conversación. Tiene
+interruptor, horario de atención y un switch por paso del flujo. Ver
+[bot.md](bot.md).
 
 **Campaña** · Envío masivo de plantillas a una lista, con secuencia de pasos y
 pacing. Ver [campanas.md](campanas.md).

@@ -203,7 +203,8 @@ En producción el deploy corre `php artisan migrate --force` con el
 | Cambiar la bandeja de chat | [`ChatController`](../app/Http/Controllers/ChatController.php) | [`Pages/Chat/Index.vue`](../resources/js/Pages/Chat/Index.vue) |
 | Cambiar cómo se interpreta un mensaje entrante | [`ProcessIncomingWhatsAppMessage::buildAttributes`](../app/Jobs/ProcessIncomingWhatsAppMessage.php) | — |
 | Agregar un tipo de mensaje de WhatsApp | ídem, nuevo `case` en el `switch` | render en `Chat/Index.vue` |
-| Cambiar el bot | [`HandleBotResponse`](../app/Jobs/HandleBotResponse.php) + [`IntentDetector`](../app/Services/Bot/IntentDetector.php) | [`Pages/Settings/Bot.vue`](../resources/js/Pages/Settings/Bot.vue) |
+| Cambiar el bot | [`HandleBotResponse`](../app/Jobs/HandleBotResponse.php) + [`IntentDetector`](../app/Services/Bot/IntentDetector.php) · ver [bot.md](bot.md) | [`Pages/Settings/Bot.vue`](../resources/js/Pages/Settings/Bot.vue) |
+| Cambiar el horario o los pasos del bot | [`BotSetting`](../app/Models/BotSetting.php) (`respondsAt()`, `defaults()`) + [`BotSettingsController`](../app/Http/Controllers/BotSettingsController.php) | ídem |
 | Agregar un aviso automático | [`EventCatalog`](../app/Services/Notifications/EventCatalog.php) + el comando correspondiente | `Settings/Index.vue` (aparece solo) |
 | Agregar una variable a un aviso | `EventCatalog::events()` + `resolveValues()` | automático |
 | Cambiar plantillas de Meta | [`TemplateController`](../app/Http/Controllers/TemplateController.php) | [`Pages/Templates/Index.vue`](../resources/js/Pages/Templates/Index.vue) |
