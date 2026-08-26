@@ -226,9 +226,25 @@ Marca de agua del *polling* incremental sobre ispwatch: por cada
 y es read-only, esta es la única forma de detectar novedades sin reprocesar todo.
 
 ### `bot_settings` (1:1 con tenant) y `bot_logs`
-`bot_settings` guarda el interruptor y los 8 textos configurables.
+
+`bot_settings` es la configuración completa del bot. `tenant_id` es **único**.
+
+| Grupo | Columnas |
+|---|---|
+| Interruptor | `bot_enabled` |
+| Horario | `schedule_enabled`, `schedule_mode` (`inside`\|`outside`), `schedule_timezone`, `schedule_days` (JSON, ISO-8601: 1 = lunes), `schedule_start`, `schedule_end` (`HH:MM`) |
+| Pasos | `step_greeting_enabled`, `step_branches_enabled`, `step_qualify_subscribers_enabled`, `step_qualify_name_enabled`, `step_fallback_enabled` |
+| Textos | `msg_greeting`, `msg_info`, `msg_socio`, `msg_demo`, `msg_price`, `msg_ask_subscribers`, `msg_ask_name`, `msg_handoff`, `msg_fallback_1`, `msg_fallback_2` |
+
+> Los defaults reproducen el comportamiento previo al horario: `schedule_enabled = false`
+> y los cinco pasos en `true`. Los dos `msg_ask_*` son **nullable** porque se añadieron
+> después: el código cae a `BotSetting::defaults()` cuando vienen vacíos.
+
 `bot_logs` registra cada interacción: mensaje entrante, intención detectada,
-respuesta, si escaló y el contexto capturado.
+respuesta, si escaló y el contexto capturado. `intent_detected = 'cut_off'` marca el
+handoff que envía el bot al apagarse a mitad de flujo.
+
+Ver [bot.md](bot.md) para el flujo y el diagnóstico.
 
 ---
 

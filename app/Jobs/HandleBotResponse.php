@@ -63,12 +63,23 @@ class HandleBotResponse implements ShouldQueue
         try {
             $conversation = Conversation::with('contact')->find($this->conversationId);
             if (! $conversation) return;
+            if (! $conversation->contact) return;
 
             // Si un agente tomó la conversación entre el dispatch y ahora, no actuamos.
             if (! is_null($conversation->assigned_to)) return;
 
             $botSettings = BotSetting::where('tenant_id', $this->tenantId)->first();
-            if (! $botSettings?->bot_enabled) return;
+
+            // El tenant nunca configuró el bot: silencio absoluto.
+            if (! $botSettings) return;
+
+            // Interruptor maestro y horario de atención. Si el bot venía
+            // conduciendo la conversación, no la dejamos en el aire: cede el
+            // control con el mensaje de handoff.
+            if (! $botSettings->bot_enabled || ! $botSettings->respondsAt()) {
+                $this->cutOff($whatsapp, $conversation, $botSettings, $tenant);
+                return;
+            }
 
             $message = Message::find($this->messageId);
             if (! $message) return;
@@ -80,8 +91,19 @@ class HandleBotResponse implements ShouldQueue
             // ── Conversación nueva: primer mensaje del lead ───────────────────
             // El bot activa el flag, envía el saludo y espera intención.
             if ($this->isNewConversation && is_null($step)) {
+                // Sin menú de bienvenida el bot no conduce nada: acusa recibo con
+                // el mensaje de handoff y cede de inmediato a un asesor.
+                if (! $botSettings->step_greeting_enabled) {
+                    $this->sendText(
+                        $whatsapp, $phone, $this->text($botSettings, 'msg_handoff'),
+                        $conversation, 'handoff', $body, true, $tenant,
+                    );
+                    $this->deactivateBot($conversation, $tenant);
+                    return;
+                }
+
                 $this->sendText(
-                    $whatsapp, $phone, $botSettings->msg_greeting,
+                    $whatsapp, $phone, $this->text($botSettings, 'msg_greeting'),
                     $conversation, 'greeting', null, false, $tenant,
                 );
                 $conversation->updateQuietly(['bot_active' => true, 'bot_step' => 'greeting_sent']);
@@ -97,7 +119,7 @@ class HandleBotResponse implements ShouldQueue
 
                 if ($intent === 'agent') {
                     $this->sendText(
-                        $whatsapp, $phone, $botSettings->msg_handoff,
+                        $whatsapp, $phone, $this->text($botSettings, 'msg_handoff'),
                         $conversation, 'agent', $body, true, $tenant,
                     );
                     $this->deactivateBot($conversation, $tenant);
@@ -105,17 +127,27 @@ class HandleBotResponse implements ShouldQueue
                 }
 
                 if ($intent === 'unknown') {
+                    // Sin reintentos: el primer "no entendí" escala directo.
+                    if (! $botSettings->step_fallback_enabled) {
+                        $this->sendText(
+                            $whatsapp, $phone, $this->text($botSettings, 'msg_fallback_2'),
+                            $conversation, 'fallback_2', $body, true, $tenant,
+                        );
+                        $this->deactivateBot($conversation, $tenant);
+                        return;
+                    }
+
                     $failed = $conversation->bot_failed_intents + 1;
 
                     if ($failed >= 2) {
                         $this->sendText(
-                            $whatsapp, $phone, $botSettings->msg_fallback_2,
+                            $whatsapp, $phone, $this->text($botSettings, 'msg_fallback_2'),
                             $conversation, 'fallback_2', $body, true, $tenant,
                         );
                         $this->deactivateBot($conversation, $tenant);
                     } else {
                         $this->sendText(
-                            $whatsapp, $phone, $botSettings->msg_fallback_1,
+                            $whatsapp, $phone, $this->text($botSettings, 'msg_fallback_1'),
                             $conversation, 'fallback_1', $body, false, $tenant,
                         );
                         $conversation->updateQuietly(['bot_failed_intents' => $failed]);
@@ -123,17 +155,34 @@ class HandleBotResponse implements ShouldQueue
                     return;
                 }
 
-                // Intención reconocida: rama comercial + primera pregunta de calificación.
-                $branchMsg = $this->branchMessage($intent, $botSettings);
+                // Intención reconocida. La rama detectada viaja como contexto para
+                // el asesor aunque no se envíe el discurso comercial.
+                $context = ['intent' => $intent];
+                $conversation->updateQuietly(['bot_failed_intents' => 0]);
+
+                // Con las ramas apagadas el bot no vende: salta el discurso y va
+                // derecho a calificar (o al handoff si tampoco hay calificación).
+                // Como no se envió una rama, la pregunta por los suscriptores sí
+                // hay que hacerla explícitamente.
+                if (! $botSettings->step_branches_enabled) {
+                    $this->advanceQualification(
+                        $whatsapp, $phone, $conversation, $botSettings, $body, $context, $tenant,
+                        from: 'branch', subscribersAlreadyAsked: false,
+                    );
+                    return;
+                }
+
                 $this->sendText(
-                    $whatsapp, $phone, $branchMsg,
+                    $whatsapp, $phone, $this->branchMessage($intent, $botSettings),
                     $conversation, $intent, $body, false, $tenant,
                 );
-                $conversation->updateQuietly([
-                    'bot_step'           => 'qualifying_subscribers',
-                    'bot_failed_intents' => 0,
-                    'bot_context'        => ['intent' => $intent],
-                ]);
+
+                // Los textos de rama YA terminan preguntando por los suscriptores,
+                // así que al entrar al paso desde aquí no repetimos la pregunta.
+                $this->advanceQualification(
+                    $whatsapp, $phone, $conversation, $botSettings, $body, $context, $tenant,
+                    from: 'branch', subscribersAlreadyAsked: true,
+                );
                 return;
             }
 
@@ -142,18 +191,10 @@ class HandleBotResponse implements ShouldQueue
                 $context                 = $conversation->bot_context ?? [];
                 $context['suscriptores'] = trim($body);
 
-                // Si no conocemos el nombre del contacto, lo preguntamos.
-                // Si ya lo tenemos (viene de la campaña / previo contacto), handoff directo.
-                if (blank($conversation->contact->name)) {
-                    $this->sendText(
-                        $whatsapp, $phone, '¿Y cuál es tu nombre?',
-                        $conversation, 'qualifying_name', $body, false, $tenant, $context,
-                    );
-                    $conversation->updateQuietly(['bot_step' => 'qualifying_name', 'bot_context' => $context]);
-                } else {
-                    $context['nombre'] = $conversation->contact->name;
-                    $this->sendHandoffWithContext($whatsapp, $phone, $conversation, $botSettings, $body, $context, $tenant);
-                }
+                $this->advanceQualification(
+                    $whatsapp, $phone, $conversation, $botSettings, $body, $context, $tenant,
+                    from: 'subscribers',
+                );
                 return;
             }
 
@@ -174,17 +215,111 @@ class HandleBotResponse implements ShouldQueue
         }
     }
 
+    /**
+     * Avanza a la siguiente etapa de calificación habilitada.
+     *
+     * Cada paso desactivado se salta y se pasa al siguiente; si no queda
+     * ninguno, el bot hace handoff. Así los switches de Configuración componen
+     * entre sí sin dejar al cliente esperando una pregunta que nunca llega.
+     *
+     * @param string $from                    'branch' (venimos de una rama comercial)
+     *                                        | 'subscribers' (ya capturamos los suscriptores)
+     * @param bool   $subscribersAlreadyAsked El mensaje recién enviado ya contiene
+     *                                        la pregunta por los suscriptores.
+     */
+    private function advanceQualification(
+        WhatsAppService $whatsapp,
+        string          $phone,
+        Conversation    $conversation,
+        BotSetting      $settings,
+        ?string         $incomingBody,
+        array           $context,
+        Tenant          $tenant,
+        string          $from,
+        bool            $subscribersAlreadyAsked = false,
+    ): void {
+        if ($from === 'branch' && $settings->step_qualify_subscribers_enabled) {
+            if (! $subscribersAlreadyAsked) {
+                $this->sendText(
+                    $whatsapp, $phone, $this->text($settings, 'msg_ask_subscribers'),
+                    $conversation, 'qualifying_subscribers', $incomingBody, false, $tenant, $context,
+                );
+            }
+
+            $conversation->updateQuietly([
+                'bot_step'    => 'qualifying_subscribers',
+                'bot_context' => $context,
+            ]);
+            return;
+        }
+
+        // Si no conocemos el nombre del contacto, lo preguntamos.
+        // Si ya lo tenemos (viene de la campaña / previo contacto), handoff directo.
+        if ($settings->step_qualify_name_enabled) {
+            if (blank($conversation->contact->name)) {
+                $this->sendText(
+                    $whatsapp, $phone, $this->text($settings, 'msg_ask_name'),
+                    $conversation, 'qualifying_name', $incomingBody, false, $tenant, $context,
+                );
+
+                $conversation->updateQuietly([
+                    'bot_step'    => 'qualifying_name',
+                    'bot_context' => $context,
+                ]);
+                return;
+            }
+
+            $context['nombre'] = $conversation->contact->name;
+        }
+
+        $this->sendHandoffWithContext($whatsapp, $phone, $conversation, $settings, $incomingBody, $context, $tenant);
+    }
+
+    /**
+     * Corte del bot a mitad de conversación: el interruptor maestro se apagó o
+     * el horario se cerró mientras el bot conducía el flujo. Enviamos el handoff
+     * para que el cliente no quede en el aire y cedemos el control.
+     *
+     * Solo actúa si el bot tenía el control. Como deactivateBot() pone
+     * bot_active en false, el corte ocurre exactamente una vez por conversación:
+     * los mensajes siguientes ya no despiertan al bot.
+     */
+    private function cutOff(
+        WhatsAppService $whatsapp,
+        Conversation    $conversation,
+        BotSetting      $settings,
+        Tenant          $tenant,
+    ): void {
+        if (! $conversation->bot_active) {
+            return;
+        }
+
+        $this->sendText(
+            $whatsapp,
+            $conversation->contact->phone,
+            $this->text($settings, 'msg_handoff'),
+            $conversation,
+            'cut_off',
+            null,
+            true,
+            $tenant,
+            $conversation->bot_context ?? [],
+        );
+
+        $this->deactivateBot($conversation, $tenant);
+    }
+
     private function sendHandoffWithContext(
         WhatsAppService $whatsapp,
         string          $phone,
         Conversation    $conversation,
         BotSetting      $botSettings,
-        string          $incomingBody,
+        ?string         $incomingBody,
         array           $context,
         Tenant          $tenant,
     ): void {
         $this->sendText(
-            $whatsapp, $phone, $botSettings->msg_handoff,
+            $whatsapp, $phone, $this->text($botSettings, 'msg_handoff'),
             $conversation, 'handoff', $incomingBody, true, $tenant, $context,
         );
         $this->deactivateBot($conversation, $tenant);
@@ -254,10 +389,22 @@ class HandleBotResponse implements ShouldQueue
     private function branchMessage(string $intent, BotSetting $settings): string
     {
         return match ($intent) {
-            'demo'  => $settings->msg_demo,
-            'socio' => $settings->msg_socio,
-            'price' => $settings->msg_price,
-            default => $settings->msg_info,
+            'demo'  => $this->text($settings, 'msg_demo'),
+            'socio' => $this->text($settings, 'msg_socio'),
+            'price' => $this->text($settings, 'msg_price'),
+            default => $this->text($settings, 'msg_info'),
         };
+    }
+
+    /**
+     * Texto configurado del bot, cayendo al default cuando la columna está
+     * vacía. Los msg_ask_* se añadieron después y son nullable, así que las
+     * filas creadas antes de la migración no los tienen.
+     */
+    private function text(BotSetting $settings, string $field): string
+    {
+        $value = $settings->{$field};
+
+        return filled($value) ? $value : (BotSetting::defaults()[$field] ?? '');
     }
 }

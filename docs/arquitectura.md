@@ -239,7 +239,11 @@ Dentro de `ProcessIncomingWhatsAppMessage`:
 7. `handleCampaignSignals()`: detecta opt-out y cierra secuencias de campaña si
    el contacto respondió.
 8. Despacha `HandleBotResponse` **antes** de auto-asignar (si auto-asignara
-   primero, el observer apagaría el bot y el flujo nunca correría).
+   primero, el observer apagaría el bot y el flujo nunca correría). El bot
+   decide luego si habla: además del interruptor del tenant, honra un **horario
+   de atención** y puede tener pasos del flujo desactivados. Si se apaga a mitad
+   de una conversación, envía el handoff en vez de dejarla en el aire — ver
+   [bot.md](bot.md).
 9. Auto-asigna al agente menos ocupado si el tenant lo tiene activado.
 
 ---
@@ -333,7 +337,7 @@ dueño del SaaS con `php artisan tenant:link`.
 |---|---|---|
 | [`ProcessIncomingWhatsAppMessage`](../app/Jobs/ProcessIncomingWhatsAppMessage.php) | Webhook | Persiste el mensaje entrante, descarga medios, señales de campaña |
 | [`ProcessWhatsAppStatusUpdate`](../app/Jobs/ProcessWhatsAppStatusUpdate.php) | Webhook | Actualiza `sent/delivered/read/failed` en mensajes y campañas |
-| [`HandleBotResponse`](../app/Jobs/HandleBotResponse.php) | Job anterior | Ejecuta la máquina de estados del bot |
+| [`HandleBotResponse`](../app/Jobs/HandleBotResponse.php) | Job anterior | Ejecuta la máquina de estados del bot ([bot.md](bot.md)) |
 | [`SendCampaignMessageJob`](../app/Jobs/SendCampaignMessageJob.php) | `campaigns:tick` | Envía un mensaje de campaña |
 
 `tries = 3`, `backoff = 5s` en el job de entrada; `tries = 2`, `backoff = 3s` en

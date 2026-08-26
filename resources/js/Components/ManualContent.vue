@@ -782,10 +782,12 @@ vence el {{fecha_vencimiento}}.</pre>
    └─ No (2ª vez) → traspaso a un asesor</pre>
 
                         <h3 class="font-semibold text-gray-800 mt-5 mb-2">Qué configuras</h3>
-                        <p class="text-sm text-gray-600">
-                            Un interruptor general y el texto de cada mensaje: el saludo con el menú, una respuesta por
-                            rama, el mensaje de traspaso y los dos de "no entendí".
-                        </p>
+                        <ul class="space-y-2 text-sm text-gray-600 list-disc list-inside">
+                            <li><strong>El interruptor.</strong> Está también en la tarjeta <em>Bot de respuestas automáticas</em> de Configuración, para apagarlo rápido sin entrar al detalle.</li>
+                            <li><strong>El horario de atención.</strong> Días y franja en los que el bot responde. Puedes invertirlo: que el bot cubra <em>solo fuera</em> del horario, cuando no hay nadie en la bandeja.</li>
+                            <li><strong>Los pasos del flujo.</strong> Cada paso tiene su switch. Apagar uno hace que el bot lo salte y siga con el siguiente.</li>
+                            <li><strong>El texto de cada mensaje:</strong> el saludo con el menú, una respuesta por rama, las dos preguntas de calificación, el traspaso y los dos de "no entendí".</li>
+                        </ul>
 
                         <h3 class="font-semibold text-gray-800 mt-5 mb-2">Reglas que conviene conocer</h3>
                         <ul class="space-y-2 text-sm text-gray-600 list-disc list-inside">
@@ -793,6 +795,9 @@ vence el {{fecha_vencimiento}}.</pre>
                             <li>El cliente puede responder con un número, el emoji o palabras sueltas.</li>
                             <li>El bot <strong>captura el nombre</strong> del cliente y lo guarda en su ficha.</li>
                             <li>Si el cliente pide hablar con una persona, el traspaso es inmediato.</li>
+                            <li>Si apagas el bot (o se cierra el horario) mientras atiende a alguien, esa conversación <strong>recibe el mensaje de traspaso</strong> y queda libre para un asesor. Nadie se queda esperando.</li>
+                            <li>La etiqueta <em>"Activo — fuera de horario"</em> significa que el bot está encendido pero ahora mismo no responde por la franja configurada.</li>
+                            <li>Ojo: las respuestas de las ramas <strong>terminan preguntando por el nº de suscriptores</strong>. Si apagas ese paso, quita la pregunta de esos textos.</li>
                         </ul>
                     </section>
 

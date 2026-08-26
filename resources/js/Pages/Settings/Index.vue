@@ -15,6 +15,8 @@ const props = defineProps({
     notificationEvents: { type: Array, default: () => [] },
     // Asignación actual: { event_key: { template_id, enabled } }
     notificationRoutes: { type: Object, default: () => ({}) },
+    // Bot: { enabled, state: 'off'|'active'|'out_of_schedule', schedule_summary }
+    bot: { type: Object, default: () => ({ enabled: false, state: 'off', schedule_summary: null }) },
 });
 
 // ── Forms (uno por sección) ──────────────────────────────────────────────────
@@ -54,6 +56,32 @@ function saveAutoClose() {
         }))
         .put(route('settings.autoclose.update'), { preserveScroll: true });
 }
+
+// ── Bot de respuestas automáticas ────────────────────────────────────────────
+// Solo el interruptor vive aquí; mensajes, horario y pasos están en /settings/bot.
+const botForm = useForm({
+    bot_enabled: props.bot?.enabled ?? false,
+});
+function saveBot() {
+    botForm
+        .transform((data) => ({ bot_enabled: !!data.bot_enabled }))
+        .put(route('settings.bot.toggle'), { preserveScroll: true });
+}
+
+// El estado real no es el flag: con horario activo el bot puede estar encendido
+// y aun así mudo por estar fuera de la franja. Mientras el toggle no se guarde,
+// mostramos el estado que tendrá al guardar.
+const botState = computed(() => {
+    if (!botForm.bot_enabled) return 'off';
+    if (props.bot?.enabled && props.bot?.state === 'out_of_schedule') return 'out_of_schedule';
+    return 'active';
+});
+
+const botStateLabel = computed(() => ({
+    off:             'Bot DESACTIVADO',
+    active:          'Bot ACTIVADO',
+    out_of_schedule: 'Bot ACTIVADO — fuera de horario',
+}[botState.value]));
 
 // Solo el admin del tenant configura la asignación automática.
 const isAdmin = computed(() => usePage().props.auth?.user?.role === 'admin');
@@ -663,6 +691,75 @@ const waBadge = computed(() => {
                             <button type="submit" :disabled="autoCloseForm.processing"
                                     class="px-5 py-2.5 bg-accent text-white rounded-xl text-sm font-medium hover:bg-accent-hover transition disabled:opacity-50">
                                 {{ autoCloseForm.processing ? 'Guardando…' : 'Guardar' }}
+                            </button>
+                        </div>
+                    </form>
+                </section>
+
+                <!-- ═══════════════ BOT DE RESPUESTAS AUTOMÁTICAS ═══════════════ -->
+                <section v-if="isAdmin" class="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+                    <div class="flex items-center mb-4">
+                        <div class="w-9 h-9 rounded-xl bg-violet-50 flex items-center justify-center mr-3">
+                            <svg class="w-5 h-5 text-violet-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/></svg>
+                        </div>
+                        <div>
+                            <h3 class="text-base font-semibold text-gray-900">Bot de respuestas automáticas</h3>
+                            <p class="text-xs text-gray-500">Atiende el primer contacto con un menú de opciones y escala a un asesor. Se apaga solo en cuanto alguien toma el chat.</p>
+                        </div>
+                    </div>
+
+                    <form @submit.prevent="saveBot" class="space-y-3">
+                        <div class="rounded-xl border p-4 flex items-center justify-between gap-3 transition-colors"
+                             :class="botState === 'active'   ? 'bg-violet-50 border-violet-100'
+                                   : botState === 'out_of_schedule' ? 'bg-amber-50 border-amber-100'
+                                   : 'bg-gray-50 border-gray-200'">
+                            <div class="min-w-0">
+                                <p class="text-sm font-semibold flex items-center gap-2"
+                                   :class="botState === 'active'   ? 'text-violet-900'
+                                         : botState === 'out_of_schedule' ? 'text-amber-900'
+                                         : 'text-gray-700'">
+                                    <span class="w-2 h-2 rounded-full"
+                                          :class="botState === 'active'   ? 'bg-violet-500'
+                                                : botState === 'out_of_schedule' ? 'bg-amber-500'
+                                                : 'bg-gray-400'"></span>
+                                    {{ botStateLabel }}
+                                </p>
+                                <p class="text-xs mt-1"
+                                   :class="botState === 'active'   ? 'text-violet-700'
+                                         : botState === 'out_of_schedule' ? 'text-amber-700'
+                                         : 'text-gray-500'">
+                                    <template v-if="botState === 'out_of_schedule'">
+                                        El bot está encendido pero <strong>ahora mismo no responde</strong>: estás fuera de la franja configurada. {{ bot.schedule_summary }}
+                                    </template>
+                                    <template v-else-if="bot.schedule_summary">
+                                        Horario activo — {{ bot.schedule_summary }}
+                                    </template>
+                                    <template v-else>
+                                        Responde a conversaciones <strong>nuevas y sin asignar</strong>. Sin horario configurado: responde siempre que esté activado.
+                                    </template>
+                                </p>
+                            </div>
+                            <button type="button" @click="botForm.bot_enabled = !botForm.bot_enabled"
+                                    class="relative inline-flex h-6 w-11 shrink-0 rounded-full transition-colors"
+                                    :class="botForm.bot_enabled ? 'bg-violet-500' : 'bg-gray-300'"
+                                    :aria-pressed="botForm.bot_enabled">
+                                <span class="absolute top-0.5 h-5 w-5 bg-white rounded-full shadow transition-all"
+                                      :class="botForm.bot_enabled ? 'left-5' : 'left-0.5'"></span>
+                            </button>
+                        </div>
+
+                        <p class="text-xs text-gray-500">
+                            Al apagarlo, las conversaciones que el bot tenía a medias reciben el mensaje de handoff y quedan libres para un asesor: nadie se queda esperando.
+                        </p>
+
+                        <div class="flex items-center justify-between gap-3">
+                            <Link :href="route('settings.bot.index')"
+                                  class="text-sm font-medium text-accent hover:underline">
+                                Configurar mensajes, horario y pasos →
+                            </Link>
+                            <button type="submit" :disabled="botForm.processing"
+                                    class="px-5 py-2.5 bg-accent text-white rounded-xl text-sm font-medium hover:bg-accent-hover transition disabled:opacity-50">
+                                {{ botForm.processing ? 'Guardando…' : 'Guardar' }}
                             </button>
                         </div>
                     </form>

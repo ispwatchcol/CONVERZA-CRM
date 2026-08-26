@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\BotSetting;
 use App\Models\Template;
 use App\Models\TenantNotificationRoute;
 use App\Services\Ispwatch\IspwatchRepository;
@@ -29,7 +30,27 @@ class SettingsController extends Controller
             'notificationEvents'   => EventCatalog::forFrontend(onlyAuto: true),
             'approvedTemplates'    => $this->approvedTemplates($tenant->id),
             'notificationRoutes'   => $this->notificationRoutesFor($tenant->id),
+            'bot'                  => $this->botCard($tenant->id),
         ]);
+    }
+
+    /**
+     * Resumen del bot para la tarjeta de Configuración. El detalle (mensajes,
+     * horario y pasos) vive en /settings/bot; aquí solo el interruptor y el
+     * estado real, que no es el flag: con horario activo el bot puede estar
+     * encendido y aun así mudo.
+     *
+     * @return array{enabled: bool, state: string, schedule_summary: ?string}
+     */
+    private function botCard(int $tenantId): array
+    {
+        $settings = BotSetting::where('tenant_id', $tenantId)->first();
+
+        return [
+            'enabled'          => (bool) $settings?->bot_enabled,
+            'state'            => BotSettingsController::stateOf($settings),
+            'schedule_summary' => $settings?->scheduleSummary(),
+        ];
     }
 
     /**
