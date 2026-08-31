@@ -17,16 +17,15 @@ una línea de comportamiento real. Cuando uno se resuelva, bórralo de aquí.
 | [M-01](#m-01-el-webhook-no-verifica-la-firma-de-meta) | Verificar la firma del webhook | Alto | Bajo | 🔴 **1** |
 | [M-04](#m-04-el-chat-carga-todo-sin-paginar) | Paginar chat y conversaciones | Alto | Medio | 🔴 **2** |
 | [M-02](#m-02-la-suite-de-tests-está-muerta) | Resucitar los tests | Alto | Alto | 🔴 **3** |
-| [M-05](#m-05-no-hay-rate-limiting) | Rate limiting en login y escrituras | Medio | Bajo | 🟠 **4** |
-| [M-07](#m-07-no-hay-rollback-ni-staging) | Staging + rollback | Medio | Medio | 🟠 **5** |
-| [M-09](#m-09-no-hay-backup-propio-de-la-base) | Backup propio de la base | Alto | Bajo | 🟠 **6** |
-| [M-06](#m-06-el-polling-de-5-s-es-el-techo-de-escalado-del-chat) | Migrar el chat a WebSockets | Medio | Alto | 🟡 **7** |
-| [M-11](#m-11-la-normalización-de-teléfonos-está-duplicada-y-es-solo-colombiana) | Normalización de teléfonos | Medio | Medio | 🟡 **8** |
-| [M-08](#m-08-código-legado-sin-retirar) | Retirar código legado | Bajo | Bajo | 🟡 **9** |
-| [M-13](#m-13-el-almacenamiento-remoto-de-medios-no-funciona) | Arreglar disco remoto | Medio | Medio | 🟢 10 |
-| [M-14](#m-14-métricas-que-procesan-en-php) | Métricas en SQL | Bajo | Medio | 🟢 11 |
-| [M-15](#m-15-el-manual-in-app-está-incompleto) | Completar el manual in-app | Bajo | Bajo | 🟢 12 |
-| [M-16](#m-16-sin-observabilidad) | Observabilidad | Medio | Medio | 🟢 13 |
+| [M-07](#m-07-no-hay-rollback-ni-staging) | Staging + rollback | Medio | Medio | 🟠 **4** |
+| [M-09](#m-09-no-hay-backup-propio-de-la-base) | Backup propio de la base | Alto | Bajo | 🟠 **5** |
+| [M-06](#m-06-el-polling-de-5-s-es-el-techo-de-escalado-del-chat) | Migrar el chat a WebSockets | Medio | Alto | 🟡 **6** |
+| [M-11](#m-11-la-normalización-de-teléfonos-está-duplicada-y-es-solo-colombiana) | Normalización de teléfonos | Medio | Medio | 🟡 **7** |
+| [M-08](#m-08-código-legado-sin-retirar) | Retirar código legado | Bajo | Bajo | 🟡 **8** |
+| [M-13](#m-13-el-almacenamiento-remoto-de-medios-no-funciona) | Arreglar disco remoto | Medio | Medio | 🟢 9 |
+| [M-14](#m-14-métricas-que-procesan-en-php) | Métricas en SQL | Bajo | Medio | 🟢 10 |
+| [M-15](#m-15-el-manual-in-app-está-incompleto) | Completar el manual in-app | Bajo | Bajo | 🟢 11 |
+| [M-16](#m-16-sin-observabilidad) | Observabilidad | Medio | Medio | 🟢 12 |
 
 ---
 
@@ -138,26 +137,6 @@ tenants y contactos.
 ---
 
 ## 🟠 Importantes
-
-### M-05 · No hay rate limiting
-
-**Dónde:** [`routes/web.php`](../routes/web.php) — ningún `throttle`.
-
-`POST /login` acepta intentos ilimitados: fuerza bruta sin fricción. Las rutas de
-escritura tampoco tienen tope.
-
-**Corrección:**
-
-```php
-Route::post('/login', …)->middleware('throttle:5,1');
-// y para escrituras costosas
-Route::post('/chat/send-media', …)->middleware('throttle:30,1');
-```
-
-Laravel 12 trae `RateLimiter` listo. Es de las mejoras con mejor relación
-riesgo/esfuerzo del documento.
-
----
 
 ### M-07 · No hay rollback ni staging
 

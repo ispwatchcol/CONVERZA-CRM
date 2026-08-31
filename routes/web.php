@@ -22,9 +22,12 @@ use App\Http\Controllers\CampaignController;
 use App\Http\Controllers\Brain;
 
 // ── Auth (guest only) ────────────────────────────────────────────────────────
+// El throttle por IP se SUMA al de LoginRequest (5 intentos por email|IP): ese
+// cuenta por correo, así que probar una contraseña contra cientos de correos
+// distintos desde la misma IP no consumía ningún cubo. Ver AppServiceProvider.
 Route::middleware('guest')->group(function () {
     Route::get('/login', [LoginController::class, 'create'])->name('login');
-    Route::post('/login', [LoginController::class, 'store']);
+    Route::post('/login', [LoginController::class, 'store'])->middleware('throttle:login');
 });
 
 // ── Manual público (sin auth) ────────────────────────────────────────────────
@@ -34,7 +37,17 @@ Route::middleware('guest')->group(function () {
 Route::get('/ayuda', [ManualController::class, 'publicIndex'])->name('manual.public');
 
 // ── WhatsApp Webhook (public, no auth) ───────────────────────────────────────
-Route::get('/webhook', [WhatsAppController::class, 'verifyWebhook'])->name('webhook.verify');
+// El handshake SÍ lleva tope: Meta lo llama una vez al suscribir el número y
+// compara el token contra el de cada tenant activo, así que sin límite sirve
+// para adivinarlos por fuerza bruta.
+//
+// El POST NO lleva tope, y es deliberado: descartar una ráfaga de Meta es
+// perder mensajes de clientes, que es justo lo que la ingesta durable existe
+// para evitar (ver integracion-whatsapp.md §2.4). Un flood acá se ataja en el
+// borde, no tirando eventos.
+Route::get('/webhook', [WhatsAppController::class, 'verifyWebhook'])
+    ->middleware('throttle:webhook-verify')
+    ->name('webhook.verify');
 Route::post('/webhook', [WhatsAppController::class, 'handleWebhook'])->name('webhook.handle');
 
 // ── Authenticated ────────────────────────────────────────────────────────────
@@ -69,10 +82,10 @@ Route::middleware('auth')->group(function () {
     // Chat — ver es para todos; escribir (enviar/asignar/notas/reabrir) requiere
     // agent o admin; borrar la conversación es solo admin.
     Route::get('/chat', [ChatController::class, 'index'])->name('chat.index');
-    Route::post('/chat/send', [ChatController::class, 'sendMessage'])->middleware('role:agent')->name('chat.send');
-    Route::post('/chat/send-media', [ChatController::class, 'sendMedia'])->middleware('role:agent')->name('chat.send-media');
+    Route::post('/chat/send', [ChatController::class, 'sendMessage'])->middleware(['role:agent', 'throttle:chat-envio'])->name('chat.send');
+    Route::post('/chat/send-media', [ChatController::class, 'sendMedia'])->middleware(['role:agent', 'throttle:chat-media'])->name('chat.send-media');
     // Única vía para escribirle al cliente fuera de la ventana de 24h.
-    Route::post('/chat/send-template', [ChatController::class, 'sendTemplate'])->middleware('role:agent')->name('chat.send-template');
+    Route::post('/chat/send-template', [ChatController::class, 'sendTemplate'])->middleware(['role:agent', 'throttle:chat-envio'])->name('chat.send-template');
     Route::patch('/chat/conversations/{conversation}/assign', [ChatController::class, 'assign'])->middleware('role:agent')->name('chat.conversations.assign');
     Route::post('/chat/conversations/{conversation}/notes', [ChatController::class, 'storeNote'])->middleware('role:agent')->name('chat.notes.store');
     Route::post('/chat/conversations/{conversation}/reopen', [ChatController::class, 'reopen'])->middleware('role:agent')->name('chat.conversations.reopen');

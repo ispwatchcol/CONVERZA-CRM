@@ -173,7 +173,7 @@ Solo dos rutas sin autenticación:
 | Ruta | Riesgo |
 |---|---|
 | `GET/POST /webhook` | Ver abajo |
-| `GET/POST /login` | Sin rate limiting explícito |
+| `GET/POST /login` | Con tope: 5 intentos por email\|IP + 30/min por IP |
 | `GET /up` | Health check de Laravel |
 
 ### ⚠️ El webhook no verifica la firma
@@ -192,7 +192,23 @@ Corrección propuesta en
 ### Otras notas
 
 - **CSRF** está activo en todo salvo `/webhook`.
-- **Rate limiting:** no hay. Ni en login ni en las rutas de escritura.
+- **Rate limiting:** los limitadores con nombre se registran en
+  [`AppServiceProvider`](../app/Providers/AppServiceProvider.php) y se aplican en
+  las rutas:
+
+  | Limitador | Dónde | Tope | Por qué |
+  |---|---|---|---|
+  | `login` | `POST /login` | 30/min por IP | `LoginRequest` ya limita 5 intentos por **email\|IP**; esa clave deja pasar el *password spraying* (una contraseña contra cientos de correos desde la misma IP, sin consumir ningún cubo). Este cierra ese hueco |
+  | `webhook-verify` | `GET /webhook` | 10/min por IP | El handshake compara el token contra el de cada tenant activo: sin tope es un oráculo para adivinarlos |
+  | `chat-envio` | `chat.send`, `chat.send-template` | 60/min por usuario | Un agente no llega a 60 mensajes por minuto; un bucle sí |
+  | `chat-media` | `chat.send-media` | 30/min por usuario | Cada envío sube un archivo y puede disparar un transcode con ffmpeg — lo más caro que hace la app en un droplet de 1 GB |
+
+  **`POST /webhook` no lleva tope, y es deliberado.** Descartar una ráfaga de
+  Meta es perder mensajes de clientes, que es exactamente lo que la ingesta
+  durable existe para evitar (§2.4 de
+  [integracion-whatsapp.md](integracion-whatsapp.md)). Un flood ahí es un
+  problema de disponibilidad, no de pérdida de datos —el cuerpo crudo se guarda
+  igual— y se ataja en el borde, no tirando eventos.
 - **Los medios requieren autenticación y pertenencia:** `/media/{path}` pasa por
   el middleware `auth`, y además `MediaController` comprueba que la ruta pedida
   sea el `media_path` de un mensaje **del tenant en sesión**. Sin tenant
