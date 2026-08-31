@@ -250,6 +250,12 @@ cat /var/www/converza-crm/storage/app/webhooks-reconcile.marca
 sudo tail -f /var/www/converza-crm/storage/logs/laravel.log
 sudo tail -f /var/log/supervisor/converza-worker.log
 
+# Firmas de webhook inválidas. Mientras WHATSAPP_SIGNATURE_MODE=log esto NO
+# descarta nada: es la evidencia que hay que juntar ANTES de pasar a `enforce`.
+# Días sin una sola línea = se puede activar. Si aparecen, el secreto está mal
+# cargado en algún tenant y activar enforce tiraría mensajes reales.
+sudo grep "firma inválida" /var/www/converza-crm/storage/logs/laravel.log | tail -20
+
 # Disco (los medios y el log crudo lo llenan)
 df -h && du -sh /var/www/converza-crm/storage/app/public/whatsapp-media
 

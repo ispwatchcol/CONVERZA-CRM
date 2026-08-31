@@ -444,10 +444,7 @@ Saber esto ahorra búsquedas inútiles:
 
 - **No hay API REST pública.** Todo es Inertia (HTML + props JSON con sesión).
 - **No hay WebSockets.** Ver §7.
-- **No hay verificación de firma del webhook.** `X-Hub-Signature-256` se reenvía
-  al forwarder pero no se valida. Ver [mejoras.md](mejoras.md#m-01-el-webhook-no-verifica-la-firma-de-meta).
 - **No hay tests significativos.** `tests/Feature/WhatsAppTest.php` prueba rutas
   que ya no existen. Ver [mejoras.md](mejoras.md#m-02-la-suite-de-tests-está-muerta).
-- **No hay rate limiting** en las rutas de escritura.
 - **No hay soft-deletes** en `conversations` / `messages`: `ChatController::destroy`
   borra de verdad.

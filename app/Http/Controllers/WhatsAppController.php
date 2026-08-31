@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Jobs\ProcessIncomingWhatsAppMessage;
 use App\Jobs\ProcessWhatsAppStatusUpdate;
 use App\Models\Tenant;
+use App\Services\WhatsApp\SignatureVerifier;
 use App\Services\WhatsApp\WebhookDispatcher;
 use App\Services\WhatsAppService;
 use Illuminate\Http\Request;
@@ -16,6 +17,7 @@ class WhatsAppController extends Controller
     public function __construct(
         private WhatsAppService $whatsapp,
         private WebhookDispatcher $dispatcher,
+        private SignatureVerifier $signatures,
     ) {
     }
 
@@ -75,6 +77,17 @@ class WhatsAppController extends Controller
         ]);
 
         $this->forwardWebhook($request);
+
+        // La firma se comprueba ACÁ y no en un middleware, y decide si se procesa
+        // en vez de responder 403. Las dos cosas son a propósito: el cuerpo crudo
+        // ya quedó en disco arriba, así que un descarte equivocado —secreto mal
+        // cargado, rotado en Meta y no acá— se recupera con `webhooks:replay`.
+        // Un middleware que abortara antes se llevaría también esa copia, que es
+        // lo único que separa un error de configuración de una pérdida de datos.
+        // Ver SignatureVerifier para el razonamiento completo.
+        if (! $this->signatures->shouldProcess($request, $payload)) {
+            return response()->json(['status' => 'EVENT_RECEIVED']);
+        }
 
         // De aquí en adelante ya nada puede costarnos el mensaje: el payload está
         // en disco. Si el despacho falla (BD caída, Redis caído), lo registramos

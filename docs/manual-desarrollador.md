@@ -130,7 +130,8 @@ El usuario debería ser `converza_reader` (SELECT-only) — ver
 |---|---|
 | `WHATSAPP_API_URL` | `https://graph.facebook.com/v20.0/<PHONE_NUMBER_ID>` |
 | `WHATSAPP_API_TOKEN` | Token permanente de Meta |
-| `WHATSAPP_APP_SECRET` | Secreto de la app (hoy no se usa para validar firmas) |
+| `WHATSAPP_APP_SECRET` | Secreto de la app: con él se valida `X-Hub-Signature-256` |
+| `WHATSAPP_SIGNATURE_MODE` | `off` \| `log` \| `enforce`. Default `log`. **Si recibís webhooks reenviados, dejalo en `log`/`off`**: el reenvío re-serializa el JSON y el HMAC no coincide |
 | `WHATSAPP_VERIFY_TOKEN` | Token del handshake del webhook |
 | `WHATSAPP_GRAPH_VERSION` | Default `v20.0` |
 | `WEBHOOK_FORWARD_URL` | Solo en prod: reenvía webhooks a tu ngrok |

@@ -39,6 +39,18 @@ return [
         'url' => env('WHATSAPP_API_URL', ''),
         'token' => env('WHATSAPP_API_TOKEN', ''),
         'verify_token' => env('WHATSAPP_VERIFY_TOKEN', 'ispwatch-token'),
+        // App secret de Meta: con él se valida X-Hub-Signature-256 del webhook.
+        // Estaba en .env.example desde siempre pero nunca se había cableado acá,
+        // así que la firma no se comprobaba contra nada.
+        'app_secret' => env('WHATSAPP_APP_SECRET', ''),
+        // off | log | enforce. Ver App\Services\WhatsApp\SignatureVerifier.
+        // Default `log`: comprueba y registra, pero no descarta. Pasar a
+        // `enforce` SOLO después de unos días sin ver "Webhook: firma inválida"
+        // en el log; activarlo a ciegas es apostar a que el secreto está bien
+        // cargado para todos los tenants. Una instancia que recibe webhooks
+        // reenviados (WEBHOOK_FORWARD_URL) no puede usar enforce: el reenvío
+        // re-serializa el JSON y el HMAC deja de coincidir.
+        'signature_mode' => env('WHATSAPP_SIGNATURE_MODE', 'log'),
         'forward_url' => env('WEBHOOK_FORWARD_URL'),
         'graph_version' => env('WHATSAPP_GRAPH_VERSION', 'v20.0'),
         // Nombre de la plantilla aprobada en Meta usada para recordatorios de pago.

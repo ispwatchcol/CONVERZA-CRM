@@ -14,61 +14,21 @@ una línea de comportamiento real. Cuando uno se resuelva, bórralo de aquí.
 
 | # | Mejora | Riesgo | Esfuerzo | Prioridad |
 |---|---|:---:|:---:|:---:|
-| [M-01](#m-01-el-webhook-no-verifica-la-firma-de-meta) | Verificar la firma del webhook | Alto | Bajo | 🔴 **1** |
-| [M-04](#m-04-el-chat-carga-todo-sin-paginar) | Paginar chat y conversaciones | Alto | Medio | 🔴 **2** |
-| [M-02](#m-02-la-suite-de-tests-está-muerta) | Resucitar los tests | Alto | Alto | 🔴 **3** |
-| [M-07](#m-07-no-hay-rollback-ni-staging) | Staging + rollback | Medio | Medio | 🟠 **4** |
-| [M-09](#m-09-no-hay-backup-propio-de-la-base) | Backup propio de la base | Alto | Bajo | 🟠 **5** |
-| [M-06](#m-06-el-polling-de-5-s-es-el-techo-de-escalado-del-chat) | Migrar el chat a WebSockets | Medio | Alto | 🟡 **6** |
-| [M-11](#m-11-la-normalización-de-teléfonos-está-duplicada-y-es-solo-colombiana) | Normalización de teléfonos | Medio | Medio | 🟡 **7** |
-| [M-08](#m-08-código-legado-sin-retirar) | Retirar código legado | Bajo | Bajo | 🟡 **8** |
-| [M-13](#m-13-el-almacenamiento-remoto-de-medios-no-funciona) | Arreglar disco remoto | Medio | Medio | 🟢 9 |
-| [M-14](#m-14-métricas-que-procesan-en-php) | Métricas en SQL | Bajo | Medio | 🟢 10 |
-| [M-15](#m-15-el-manual-in-app-está-incompleto) | Completar el manual in-app | Bajo | Bajo | 🟢 11 |
-| [M-16](#m-16-sin-observabilidad) | Observabilidad | Medio | Medio | 🟢 12 |
+| [M-04](#m-04-el-chat-carga-todo-sin-paginar) | Paginar chat y conversaciones | Alto | Medio | 🔴 **1** |
+| [M-02](#m-02-la-suite-de-tests-está-muerta) | Resucitar los tests | Alto | Alto | 🔴 **2** |
+| [M-07](#m-07-no-hay-rollback-ni-staging) | Staging + rollback | Medio | Medio | 🟠 **3** |
+| [M-09](#m-09-no-hay-backup-propio-de-la-base) | Backup propio de la base | Alto | Bajo | 🟠 **4** |
+| [M-06](#m-06-el-polling-de-5-s-es-el-techo-de-escalado-del-chat) | Migrar el chat a WebSockets | Medio | Alto | 🟡 **5** |
+| [M-11](#m-11-la-normalización-de-teléfonos-está-duplicada-y-es-solo-colombiana) | Normalización de teléfonos | Medio | Medio | 🟡 **6** |
+| [M-08](#m-08-código-legado-sin-retirar) | Retirar código legado | Bajo | Bajo | 🟡 **7** |
+| [M-13](#m-13-el-almacenamiento-remoto-de-medios-no-funciona) | Arreglar disco remoto | Medio | Medio | 🟢 8 |
+| [M-14](#m-14-métricas-que-procesan-en-php) | Métricas en SQL | Bajo | Medio | 🟢 9 |
+| [M-15](#m-15-el-manual-in-app-está-incompleto) | Completar el manual in-app | Bajo | Bajo | 🟢 10 |
+| [M-16](#m-16-sin-observabilidad) | Observabilidad | Medio | Medio | 🟢 11 |
 
 ---
 
 ## 🔴 Críticas
-
-### M-01 · El webhook no verifica la firma de Meta
-
-**Dónde:** [`WhatsAppController::handleWebhook`](../app/Http/Controllers/WhatsAppController.php)
-
-**Qué pasa:** la cabecera `X-Hub-Signature-256` se **reenvía** al forwarder pero
-nunca se valida contra `WHATSAPP_APP_SECRET`. La ruta es pública y está exenta de
-CSRF.
-
-**Consecuencia:** cualquiera que conozca la URL puede publicar un payload con un
-`phone_number_id` válido (que además es descubrible) e inyectar mensajes falsos
-en el chat de un tenant, disparar respuestas del bot, activar opt-outs y
-contaminar métricas.
-
-**Mitigación parcial existente:** los payloads sin tenant coincidente se
-descartan y `wa_message_id` es único.
-
-**Corrección:**
-
-```php
-// Middleware nuevo, aplicado a POST /webhook
-$signature = $request->header('X-Hub-Signature-256', '');
-$secret    = $tenant?->wa_app_secret ?? config('services.whatsapp.app_secret');
-$expected  = 'sha256=' . hash_hmac('sha256', $request->getContent(), $secret);
-
-abort_unless(hash_equals($expected, $signature), 403);
-```
-
-**Complicación real:** el secreto es **por tenant**, pero el tenant se resuelve
-*dentro* del payload. Opciones:
-
-1. Validar contra el `WHATSAPP_APP_SECRET` global si todos los tenants comparten
-   la misma app de Meta (caso más probable hoy).
-2. Validar por tenant después de resolverlo, antes de encolar.
-
-**Despliegue seguro:** loguear los fallos de firma sin rechazar durante unos días
-para confirmar que no hay falsos negativos, y luego activar el `abort`.
-
----
 
 ### M-04 · El chat carga todo sin paginar
 

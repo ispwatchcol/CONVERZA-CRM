@@ -164,11 +164,42 @@ tumbar el webhook. Ver
 > reclama ese nombre, empieza a recibir conversaciones ajenas. Se retiró de
 > producción el 20/08/2026 tras encontrarla apuntando a un túnel muerto.
 
-### 2.6 ⚠️ La firma NO se verifica
+### 2.6 Verificación de la firma
 
-`X-Hub-Signature-256` se **reenvía** al forwarder pero **no se valida** contra
-`WHATSAPP_APP_SECRET`. Cualquiera que conozca la URL puede inyectar mensajes
-falsos. Ver [mejoras.md](mejoras.md#m-01-el-webhook-no-verifica-la-firma-de-meta).
+`X-Hub-Signature-256` es el HMAC-SHA256 del cuerpo **crudo** con el app secret de
+Meta. Lo comprueba
+[`SignatureVerifier`](../app/Services/WhatsApp/SignatureVerifier.php), llamado
+desde el controlador **después** de escribir el cuerpo en `webhook-raw.log` y
+**antes** de despachar.
+
+Tres modos, en `WHATSAPP_SIGNATURE_MODE`:
+
+| Modo | Qué hace |
+|---|---|
+| `off` | Ni comprueba |
+| `log` | Comprueba, registra `Webhook: firma inválida`, **procesa igual**. Default |
+| `enforce` | Comprueba y **descarta** lo que no cuadre |
+
+**Puesta en marcha:** se despliega en `log`, se miran unos días los registros de
+firma inválida, y solo si no aparece ninguno se pasa a `enforce`. Activarlo a
+ciegas es apostar a que el secreto está bien cargado para todos los tenants.
+
+**El secreto puede ser global o por tenant.** El app secret pertenece a la *App*
+de Meta, no al número: si todos los números cuelgan de la misma app —el caso
+normal— alcanza `WHATSAPP_APP_SECRET`, que además se prueba primero y evita
+tocar la base. `tenants.wa_app_secret` cubre al cliente que trae su propia app.
+
+**Por qué no responde 403.** Es una desviación deliberada de la corrección
+obvia. Un 403 a un payload falso no evita nada que no evite ya el descarte, y
+solo le confirma al atacante que la comprobación existe; un 403 a un payload
+legítimo mal verificado destruye mensajes reales, porque los reintentos de Meta
+no son una red de seguridad (§2.4). Así que la firma decide **si se procesa**, no
+qué se responde: el 200 se mantiene siempre y un descarte equivocado se recupera
+con `webhooks:replay`, que no pasa por esta comprobación.
+
+> ⚠️ Una instancia que **recibe** webhooks reenviados (§2.5) no puede usar
+> `enforce`: el reenvío re-serializa el JSON con `$request->all()`, así que los
+> bytes ya no son los que Meta firmó y el HMAC nunca coincide.
 
 ---
 

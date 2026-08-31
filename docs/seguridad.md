@@ -18,7 +18,7 @@
 | **Fuga entre tenants** | Crítico — mensajes de clientes de un ISP visibles para otro | Mitigado en 4 capas (§2) |
 | **Robo de tokens de WhatsApp** | Alto — suplantación del ISP ante sus clientes | Cifrados en base (§4) |
 | **Escritura accidental en ispwatch** | Alto — corrompe la fuente de verdad del ISP | Convención + rol SELECT-only (§5) |
-| **Webhook falsificado** | Medio — inyección de mensajes falsos | ⚠️ **Sin mitigar** (§6) |
+| **Webhook falsificado** | Medio — inyección de mensajes falsos | Firma verificada; en modo `log` hasta confirmar (§6) |
 | **Escalada de privilegios interna** | Medio | Roles jerárquicos en backend (§3) |
 | **Baneo del número por Meta** | Alto para el negocio | Pacing, opt-out, warm-up |
 
@@ -176,18 +176,28 @@ Solo dos rutas sin autenticación:
 | `GET/POST /login` | Con tope: 5 intentos por email\|IP + 30/min por IP |
 | `GET /up` | Health check de Laravel |
 
-### ⚠️ El webhook no verifica la firma
+### La firma del webhook
 
-`X-Hub-Signature-256` se **reenvía** al forwarder pero **no se valida** contra
-`WHATSAPP_APP_SECRET`. Cualquiera que conozca la URL puede publicar un payload
-con un `phone_number_id` válido e inyectar mensajes falsos en el chat de un
-tenant.
+`X-Hub-Signature-256` se valida contra el app secret de Meta —global
+(`WHATSAPP_APP_SECRET`) o por tenant (`tenants.wa_app_secret`)— en
+[`SignatureVerifier`](../app/Services/WhatsApp/SignatureVerifier.php). Sin esto,
+cualquiera que conociera la URL podía publicar un payload con un
+`phone_number_id` válido —que además es descubrible— e inyectar mensajes falsos.
 
-Mitigación parcial existente: los mensajes sin tenant coincidente se descartan, y
-`wa_message_id` es único.
+**Estado: modo `log`.** Comprueba y registra, pero todavía no descarta. El paso a
+`enforce` es una decisión operativa, no un despliegue: primero hay que confirmar
+en el log que no hay firmas inválidas legítimas. Ver
+[integracion-whatsapp.md §2.6](integracion-whatsapp.md).
 
-Corrección propuesta en
-[mejoras.md](mejoras.md#m-01-el-webhook-no-verifica-la-firma-de-meta).
+**La comprobación no responde 403 y eso es deliberado.** Decide si el payload se
+procesa, no qué código se devuelve. Un 403 a un forjador no evita nada extra; un
+403 por un secreto mal cargado destruiría mensajes reales, porque los reintentos
+de Meta no son una red de seguridad. El cuerpo crudo se escribe en
+`webhook-raw.log` **antes** de verificar, así que un descarte equivocado se
+recupera con `webhooks:replay`.
+
+Mitigaciones que siguen en pie: los payloads sin tenant coincidente se descartan
+y `wa_message_id` es único.
 
 ### Otras notas
 
@@ -257,15 +267,20 @@ Antes de aprobar cambios que toquen datos:
 
 Por orden de impacto:
 
-1. **Validar la firma del webhook** (§6).
-2. **Rate limiting** en login y rutas de escritura.
-3. Confirmar que `converza_reader` (SELECT-only) esté realmente aplicado en
+1. **Pasar la firma del webhook a `enforce`** (§6). El código ya está; falta la
+   decisión operativa: mirar unos días el log en modo `log` y confirmar que no
+   hay firmas inválidas legítimas.
+2. Confirmar que `converza_reader` (SELECT-only) esté realmente aplicado en
    producción.
-4. Registro de auditoría de accesos a conversaciones.
-5. Política de retención y borrado de mensajes.
-6. 2FA para superadmins.
+3. Registro de auditoría de accesos a conversaciones.
+4. Política de retención y borrado de mensajes.
+5. 2FA para superadmins.
 
-> Resuelto el 31/08/2026: la pertenencia al tenant en `MediaController`. Un
-> medio solo se sirve si un mensaje del tenant en sesión lo referencia; sin
-> tenant enlazado se responde 404. Siempre 404 y nunca 403, para no confirmar
-> que el archivo existe en otro workspace.
+> Resuelto el 31/08/2026:
+> - **Pertenencia al tenant en `MediaController`.** Un medio solo se sirve si un
+>   mensaje del tenant en sesión lo referencia; sin tenant enlazado, 404. Siempre
+>   404 y nunca 403, para no confirmar que el archivo existe en otro workspace.
+> - **Rate limiting** (§6). Incluido el hueco de *password spraying* que dejaba
+>   el limitador por `email|IP` del login.
+> - **Verificación de la firma del webhook** (§6), en modo `log` a la espera de
+>   pasar a `enforce`.
