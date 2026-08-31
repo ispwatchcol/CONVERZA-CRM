@@ -283,6 +283,12 @@ Los archivos se sirven por `GET /media/{path}`
 autenticación** y evita depender del symlink de storage. Con `?download=1&name=…`
 fuerza `Content-Disposition: attachment` con el nombre original.
 
+Además de la sesión, se comprueba la **pertenencia al tenant**: la ruta pedida
+tiene que ser el `media_path` de un mensaje del tenant en sesión, o la respuesta
+es 404. La autenticación sola no alcanzaba —cualquier usuario de cualquier
+workspace podía bajar un medio ajeno conociendo la ruta— y las rutas viajan en
+las props de Inertia.
+
 `media:clean` borra semanalmente los archivos de más de `MEDIA_CLEANUP_DAYS`
 (90) días. **La metadata en base se conserva.**
 

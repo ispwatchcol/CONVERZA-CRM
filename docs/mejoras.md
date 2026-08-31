@@ -18,18 +18,17 @@ una línea de comportamiento real. Cuando uno se resuelva, bórralo de aquí.
 | [M-04](#m-04-el-chat-carga-todo-sin-paginar) | Paginar chat y conversaciones | Alto | Medio | 🔴 **2** |
 | [M-02](#m-02-la-suite-de-tests-está-muerta) | Resucitar los tests | Alto | Alto | 🔴 **3** |
 | [M-05](#m-05-no-hay-rate-limiting) | Rate limiting en login y escrituras | Medio | Bajo | 🟠 **4** |
-| [M-03](#m-03-mediacontroller-no-valida-la-pertenencia-al-tenant) | Validar pertenencia de medios | Medio | Bajo | 🟠 **5** |
-| [M-07](#m-07-no-hay-rollback-ni-staging) | Staging + rollback | Medio | Medio | 🟠 **6** |
-| [M-09](#m-09-no-hay-backup-propio-de-la-base) | Backup propio de la base | Alto | Bajo | 🟠 **7** |
-| [M-10](#m-10-el-readme-raíz-está-desactualizado) | Corregir el README raíz | Bajo | Bajo | 🟡 **8** |
-| [M-06](#m-06-el-polling-de-5-s-es-el-techo-de-escalado-del-chat) | Migrar el chat a WebSockets | Medio | Alto | 🟡 **9** |
-| [M-11](#m-11-la-normalización-de-teléfonos-está-duplicada-y-es-solo-colombiana) | Normalización de teléfonos | Medio | Medio | 🟡 **10** |
-| [M-08](#m-08-código-legado-sin-retirar) | Retirar código legado | Bajo | Bajo | 🟡 **11** |
-| [M-12](#m-12-borrado-de-conversación-sin-transacción) | Transacción al borrar | Bajo | Bajo | 🟢 12 |
-| [M-13](#m-13-el-almacenamiento-remoto-de-medios-no-funciona) | Arreglar disco remoto | Medio | Medio | 🟢 13 |
-| [M-14](#m-14-métricas-que-procesan-en-php) | Métricas en SQL | Bajo | Medio | 🟢 14 |
-| [M-15](#m-15-el-manual-in-app-está-incompleto) | Completar el manual in-app | Bajo | Bajo | 🟢 15 |
-| [M-16](#m-16-sin-observabilidad) | Observabilidad | Medio | Medio | 🟢 16 |
+| [M-07](#m-07-no-hay-rollback-ni-staging) | Staging + rollback | Medio | Medio | 🟠 **5** |
+| [M-09](#m-09-no-hay-backup-propio-de-la-base) | Backup propio de la base | Alto | Bajo | 🟠 **6** |
+| [M-10](#m-10-el-readme-raíz-está-desactualizado) | Corregir el README raíz | Bajo | Bajo | 🟡 **7** |
+| [M-06](#m-06-el-polling-de-5-s-es-el-techo-de-escalado-del-chat) | Migrar el chat a WebSockets | Medio | Alto | 🟡 **8** |
+| [M-11](#m-11-la-normalización-de-teléfonos-está-duplicada-y-es-solo-colombiana) | Normalización de teléfonos | Medio | Medio | 🟡 **9** |
+| [M-08](#m-08-código-legado-sin-retirar) | Retirar código legado | Bajo | Bajo | 🟡 **10** |
+| [M-12](#m-12-borrado-de-conversación-sin-transacción) | Transacción al borrar | Bajo | Bajo | 🟢 11 |
+| [M-13](#m-13-el-almacenamiento-remoto-de-medios-no-funciona) | Arreglar disco remoto | Medio | Medio | 🟢 12 |
+| [M-14](#m-14-métricas-que-procesan-en-php) | Métricas en SQL | Bajo | Medio | 🟢 13 |
+| [M-15](#m-15-el-manual-in-app-está-incompleto) | Completar el manual in-app | Bajo | Bajo | 🟢 14 |
+| [M-16](#m-16-sin-observabilidad) | Observabilidad | Medio | Medio | 🟢 15 |
 
 ---
 
@@ -159,33 +158,6 @@ Route::post('/chat/send-media', …)->middleware('throttle:30,1');
 
 Laravel 12 trae `RateLimiter` listo. Es de las mejoras con mejor relación
 riesgo/esfuerzo del documento.
-
----
-
-### M-03 · `MediaController` no valida la pertenencia al tenant
-
-**Dónde:** [`MediaController::serve`](../app/Http/Controllers/MediaController.php)
-
-Requiere `auth` y protege bien contra *path traversal* (`realpath` +
-`str_starts_with`), pero **no comprueba que el archivo pertenezca al tenant del
-usuario**. Cualquier usuario autenticado que conozca una ruta puede descargar el
-medio de otro workspace.
-
-**Riesgo práctico:** bajo — las rutas son `whatsapp-media/{uuid}.ext` o el
-`media_id` numérico largo de Meta, no adivinables. Pero es un IDOR real y las
-rutas viajan en las props de Inertia.
-
-**Corrección:**
-
-```php
-abort_unless(
-    Message::where('tenant_id', app('tenant')->id)->where('media_path', $path)->exists(),
-    404
-);
-```
-
-Una consulta indexada por petición de medio. Añadir índice sobre
-`(tenant_id, media_path)`.
 
 ---
 

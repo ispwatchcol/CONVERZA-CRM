@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Message;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
@@ -10,6 +11,8 @@ class MediaController extends Controller
 {
     public function serve(Request $request, string $path)
     {
+        $this->assertBelongsToCurrentTenant($path);
+
         $mediaDisk = config('filesystems.media_disk', 'public');
 
         // ── 1. Intentar disco remoto (Supabase / S3) ────────────────────────
@@ -99,5 +102,39 @@ class MediaController extends Controller
         // BinaryFileResponse handles Range requests automatically, which
         // is required for audio seeking and playback in browsers.
         return response()->file($full, $headers);
+    }
+
+    /**
+     * Un medio se sirve SOLO si un mensaje del tenant en sesión lo referencia.
+     *
+     * La ruta pedida es exactamente el `media_path` guardado en la fila: la URL
+     * la construye el propio backend con route('media.serve', ['path' => …]),
+     * así que la comparación es de igualdad y no hace falta normalizar nada.
+     *
+     * Sin esta comprobación, `auth` alcanzaba para bajar el medio de CUALQUIER
+     * workspace conociendo la ruta, y las rutas viajan en las props de Inertia:
+     * un IDOR real aunque los nombres sean UUIDs no adivinables.
+     *
+     * No se delega en el global scope de BelongsToTenant. Ese scope se
+     * desactiva solo —`if (!app()->bound('tenant')) return;`— cuando no hay
+     * tenant enlazado (usuario sin tenant, o tenant desactivado), que es justo
+     * el caso en el que dejaría pasar todo. Acá se falla cerrado primero y el
+     * `where` del tenant va explícito.
+     *
+     * Siempre 404 y nunca 403: un 403 confirmaría que el archivo existe en otro
+     * tenant, que es la mitad de lo que un atacante quiere averiguar.
+     */
+    private function assertBelongsToCurrentTenant(string $path): void
+    {
+        abort_unless(app()->bound('tenant'), 404, 'Media file not found');
+
+        abort_unless(
+            Message::query()
+                ->where('tenant_id', app('tenant')->id)
+                ->where('media_path', $path)
+                ->exists(),
+            404,
+            'Media file not found',
+        );
     }
 }

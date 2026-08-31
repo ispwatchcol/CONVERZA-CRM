@@ -193,10 +193,11 @@ Corrección propuesta en
 
 - **CSRF** está activo en todo salvo `/webhook`.
 - **Rate limiting:** no hay. Ni en login ni en las rutas de escritura.
-- **Los medios requieren autenticación:** `/media/{path}` pasa por el middleware
-  `auth`, así que un archivo no es públicamente accesible por su URL.
-  ⚠️ Pero **no valida que el archivo pertenezca al tenant del usuario** — ver
-  [mejoras.md](mejoras.md#m-03-mediacontroller-no-valida-la-pertenencia-al-tenant).
+- **Los medios requieren autenticación y pertenencia:** `/media/{path}` pasa por
+  el middleware `auth`, y además `MediaController` comprueba que la ruta pedida
+  sea el `media_path` de un mensaje **del tenant en sesión**. Sin tenant
+  enlazado, 404. Es la capa 3 (§2) aplicada a los archivos: la sesión sola
+  dejaba bajar el medio de otro workspace conociendo la ruta.
 
 ---
 
@@ -242,9 +243,13 @@ Por orden de impacto:
 
 1. **Validar la firma del webhook** (§6).
 2. **Rate limiting** en login y rutas de escritura.
-3. **Validar pertenencia en `MediaController`**.
-4. Confirmar que `converza_reader` (SELECT-only) esté realmente aplicado en
+3. Confirmar que `converza_reader` (SELECT-only) esté realmente aplicado en
    producción.
-5. Registro de auditoría de accesos a conversaciones.
-6. Política de retención y borrado de mensajes.
-7. 2FA para superadmins.
+4. Registro de auditoría de accesos a conversaciones.
+5. Política de retención y borrado de mensajes.
+6. 2FA para superadmins.
+
+> Resuelto el 31/08/2026: la pertenencia al tenant en `MediaController`. Un
+> medio solo se sirve si un mensaje del tenant en sesión lo referencia; sin
+> tenant enlazado se responde 404. Siempre 404 y nunca 403, para no confirmar
+> que el archivo existe en otro workspace.
