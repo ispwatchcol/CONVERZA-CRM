@@ -20,14 +20,13 @@ una línea de comportamiento real. Cuando uno se resuelva, bórralo de aquí.
 | [M-05](#m-05-no-hay-rate-limiting) | Rate limiting en login y escrituras | Medio | Bajo | 🟠 **4** |
 | [M-07](#m-07-no-hay-rollback-ni-staging) | Staging + rollback | Medio | Medio | 🟠 **5** |
 | [M-09](#m-09-no-hay-backup-propio-de-la-base) | Backup propio de la base | Alto | Bajo | 🟠 **6** |
-| [M-10](#m-10-el-readme-raíz-está-desactualizado) | Corregir el README raíz | Bajo | Bajo | 🟡 **7** |
-| [M-06](#m-06-el-polling-de-5-s-es-el-techo-de-escalado-del-chat) | Migrar el chat a WebSockets | Medio | Alto | 🟡 **8** |
-| [M-11](#m-11-la-normalización-de-teléfonos-está-duplicada-y-es-solo-colombiana) | Normalización de teléfonos | Medio | Medio | 🟡 **9** |
-| [M-08](#m-08-código-legado-sin-retirar) | Retirar código legado | Bajo | Bajo | 🟡 **10** |
-| [M-13](#m-13-el-almacenamiento-remoto-de-medios-no-funciona) | Arreglar disco remoto | Medio | Medio | 🟢 11 |
-| [M-14](#m-14-métricas-que-procesan-en-php) | Métricas en SQL | Bajo | Medio | 🟢 12 |
-| [M-15](#m-15-el-manual-in-app-está-incompleto) | Completar el manual in-app | Bajo | Bajo | 🟢 13 |
-| [M-16](#m-16-sin-observabilidad) | Observabilidad | Medio | Medio | 🟢 14 |
+| [M-06](#m-06-el-polling-de-5-s-es-el-techo-de-escalado-del-chat) | Migrar el chat a WebSockets | Medio | Alto | 🟡 **7** |
+| [M-11](#m-11-la-normalización-de-teléfonos-está-duplicada-y-es-solo-colombiana) | Normalización de teléfonos | Medio | Medio | 🟡 **8** |
+| [M-08](#m-08-código-legado-sin-retirar) | Retirar código legado | Bajo | Bajo | 🟡 **9** |
+| [M-13](#m-13-el-almacenamiento-remoto-de-medios-no-funciona) | Arreglar disco remoto | Medio | Medio | 🟢 10 |
+| [M-14](#m-14-métricas-que-procesan-en-php) | Métricas en SQL | Bajo | Medio | 🟢 11 |
+| [M-15](#m-15-el-manual-in-app-está-incompleto) | Completar el manual in-app | Bajo | Bajo | 🟢 12 |
+| [M-16](#m-16-sin-observabilidad) | Observabilidad | Medio | Medio | 🟢 13 |
 
 ---
 
@@ -190,20 +189,6 @@ probado no es un backup.
 ---
 
 ## 🟡 Deseables
-
-### M-10 · El README raíz está desactualizado
-
-**Dónde:** [`README.md`](../README.md)
-
-Dice que la base local es **SQLite** y la de producción **MySQL**. La realidad es
-**PostgreSQL/Supabase en ambos entornos** (ver
-[`.env.example`](../.env.example)). También omite campañas, avisos automáticos,
-bot y Core Brain — módulos completos que hoy son el grueso del producto.
-
-**Corrección:** reescribir el README como puerta de entrada breve que apunte a
-`docs/`, con el stack correcto.
-
----
 
 ### M-06 · El polling de 5 s es el techo de escalado del chat
 
