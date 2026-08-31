@@ -988,14 +988,29 @@ class ChatController extends Controller
 
     /**
      * Elimina una conversación y todos sus mensajes.
+     *
+     * Los dos borrados van dentro de UNA transacción. Sueltos, un fallo entre
+     * ambos dejaba el peor estado posible: los mensajes ya borrados y el hilo
+     * todavía en la lista, es decir una conversación vacía cuyo historial no se
+     * puede recuperar. Con la transacción, o desaparece todo o no desaparece
+     * nada y el agente puede reintentar.
+     *
+     * `conversation_reads` y `closing_notes` los arrastra el cascadeOnDelete de
+     * su FK, que Postgres resuelve dentro de esta misma transacción.
+     *
+     * El borrado sigue siendo físico e irreversible: no hay papelera. Convertirlo
+     * en soft delete es un cambio de producto (scopes en todas las consultas +
+     * UI de restauración) y no cabe en este arreglo.
      */
     public function destroy(Conversation $conversation)
     {
         $tenantId = app('tenant')->id;
         abort_if($conversation->tenant_id !== $tenantId, 403);
 
-        Message::where('conversation_id', $conversation->id)->delete();
-        $conversation->delete();
+        DB::transaction(function () use ($conversation) {
+            Message::where('conversation_id', $conversation->id)->delete();
+            $conversation->delete();
+        });
 
         return redirect()->route('chat.index')->with('success', 'Conversación eliminada.');
     }

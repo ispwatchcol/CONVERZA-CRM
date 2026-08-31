@@ -24,11 +24,10 @@ una línea de comportamiento real. Cuando uno se resuelva, bórralo de aquí.
 | [M-06](#m-06-el-polling-de-5-s-es-el-techo-de-escalado-del-chat) | Migrar el chat a WebSockets | Medio | Alto | 🟡 **8** |
 | [M-11](#m-11-la-normalización-de-teléfonos-está-duplicada-y-es-solo-colombiana) | Normalización de teléfonos | Medio | Medio | 🟡 **9** |
 | [M-08](#m-08-código-legado-sin-retirar) | Retirar código legado | Bajo | Bajo | 🟡 **10** |
-| [M-12](#m-12-borrado-de-conversación-sin-transacción) | Transacción al borrar | Bajo | Bajo | 🟢 11 |
-| [M-13](#m-13-el-almacenamiento-remoto-de-medios-no-funciona) | Arreglar disco remoto | Medio | Medio | 🟢 12 |
-| [M-14](#m-14-métricas-que-procesan-en-php) | Métricas en SQL | Bajo | Medio | 🟢 13 |
-| [M-15](#m-15-el-manual-in-app-está-incompleto) | Completar el manual in-app | Bajo | Bajo | 🟢 14 |
-| [M-16](#m-16-sin-observabilidad) | Observabilidad | Medio | Medio | 🟢 15 |
+| [M-13](#m-13-el-almacenamiento-remoto-de-medios-no-funciona) | Arreglar disco remoto | Medio | Medio | 🟢 11 |
+| [M-14](#m-14-métricas-que-procesan-en-php) | Métricas en SQL | Bajo | Medio | 🟢 12 |
+| [M-15](#m-15-el-manual-in-app-está-incompleto) | Completar el manual in-app | Bajo | Bajo | 🟢 13 |
+| [M-16](#m-16-sin-observabilidad) | Observabilidad | Medio | Medio | 🟢 14 |
 
 ---
 
@@ -262,23 +261,6 @@ backfillear `type = 'text'` donde sea `NULL` y simplificar las consultas.
 ---
 
 ## 🟢 Menores
-
-### M-12 · Borrado de conversación sin transacción
-
-**Dónde:** [`ChatController::destroy`](../app/Http/Controllers/ChatController.php)
-
-```php
-Message::where('conversation_id', $conversation->id)->delete();
-$conversation->delete();
-```
-
-Si falla entre ambas, quedan mensajes huérfanos. Además `conversation_reads` y
-`closing_notes` dependen del `cascadeOnDelete` de la FK.
-
-**Corrección:** envolver en `DB::transaction()`. Y considerar `softDeletes` en
-lugar de borrado físico: hoy no hay papelera y la operación es irreversible.
-
----
 
 ### M-13 · El almacenamiento remoto de medios no funciona
 
