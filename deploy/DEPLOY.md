@@ -220,6 +220,51 @@ Regla de dedo: 1 worker por core de CPU. Un droplet de 2 vCPU maneja bien hasta 
 
 ## 🆘 Si algo falla en el deploy automático
 
+### El caso peor: el workflow ni siquiera arranca
+
+**Síntoma:** el run aparece en rojo pero **no tiene ningún job**, no hay logs que
+abrir, y encima aparecen runs en ramas que el filtro `branches: [main]` debería
+excluir. Es un *startup failure*: GitHub no pudo compilar el workflow, así que no
+llegó a evaluar el filtro de ramas ni a agendar nada.
+
+**Lo peligroso es que nadie se entera.** No hay job que falle, no llega correo de
+"tu build falló", y `main` sigue recibiendo merges que nunca se despliegan.
+Producción se queda congelada en silencio. Pasó entre el **21/08 y el 02/09/2026**:
+doce días y tres merges sin desplegar, y se descubrió de casualidad auditando otra
+cosa.
+
+**La causa de aquella vez, y la trampa a evitar:** una expresión de GitHub Actions
+**vacía** dentro de un comentario del bloque `run:`. GitHub sustituye las
+expresiones en todo el bloque *antes* de que exista un shell, así que un `#` no
+protege nada y una expresión vacía no compila. Nunca escribas la sintaxis de
+Actions "de ejemplo" en este archivo; descríbela con palabras.
+
+**Cómo confirmarlo** (la API lo dice sin necesidad de la web):
+
+```bash
+gh api repos/ispwatchcol/CONVERZA-CRM/actions/runs --jq \
+  '.workflow_runs[0] | {rama: .head_branch, conclusion, id}'
+
+# Si el run falló, mirá cuántos jobs tuvo. Cero jobs = startup failure.
+gh api repos/ispwatchcol/CONVERZA-CRM/actions/runs/<ID>/jobs --jq '.total_count'
+```
+
+**Antes de tocar este archivo**, validá que siga compilando:
+
+```bash
+grep -n '\${{[[:space:]]*}}' .github/workflows/deploy.yml   # debe salir vacío
+```
+
+**Chequeo periódico que vale la pena:** comparar lo desplegado contra `main`. Si
+difieren sin motivo, el pipeline está roto.
+
+```bash
+ssh deploy@<IP-DROPLET> 'cd /var/www/converza-crm && git rev-parse HEAD'
+git rev-parse origin/main
+```
+
+### Errores dentro del deploy
+
 GitHub → Actions → click en el run fallido → ver el log. Los errores comunes:
 
 | Error | Solución |
