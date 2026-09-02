@@ -410,6 +410,8 @@ Cadenas útiles para grepear:
 | `inbound` en `webhook-raw-*.log` | Llegó un webhook (cuerpo crudo completo). **No está en `laravel.log`**: va a su propio canal, con nivel fijo, para que `LOG_LEVEL=warning` no lo descarte |
 | `falló el despacho; el payload quedó en webhook-raw.log` | El webhook entró pero no se pudo procesar (BD o Redis caídos). Se repara solo con `webhooks:reconcile` |
 | `Reconciliación de webhooks: se encontraron mensajes sin guardar` | Hubo huecos y se reprocesaron |
+| `Reconciliación de webhooks: no corrió durante un rato largo` | El scheduler estuvo parado ≥15 min: el servidor o la base se cayeron. **Es la alerta de caída**, y salta aunque no se pierda ningún mensaje |
+| `Reconciliación de webhooks: la marca de agua excede el tope` | El corte duró más que `--max-horas`; puede quedar un hueco sin reparar antes de ese punto → `webhooks:replay` |
 | `ningún tenant coincide con phone_number_id/WABA` | El número no está en ningún tenant activo |
 | `WhatsApp API Error` / `sendTemplate Error` | Meta rechazó el envío (el body trae el motivo) |
 | `WhatsApp message type without explicit handler` | Tipo de mensaje nuevo sin `case` propio |

@@ -75,13 +75,16 @@ Schedule::command('chats:auto-close')
 // convierte `webhooks:replay` (manual, hay que acordarse) en automático: tras
 // una caída de base, los mensajes entran solos cuando el sistema se recupera.
 //
-// La ventana de 60 min con 5 de solapamiento da margen de sobra para que un
-// corte breve se repare sin intervención; uno más largo se cubre corriendo
-// `webhooks:replay` con el rango explícito.
+// Sin `--minutos`: la ventana arranca en la marca de agua que dejó la última
+// corrida con éxito, así que se estira sola tanto como haya durado el corte
+// (hasta el tope de --max-horas, 24 por defecto). Antes era una ventana fija de
+// 60 min y un corte más largo dejaba un hueco permanente y silencioso: al
+// recuperarse, la ventana ya no alcanzaba el principio del corte. Ver el
+// comentario de cabecera de ReconcileWebhooks para el caso que lo destapó.
 //
 // Barato cuando no hay nada que hacer: lee el log de la ventana y hace UNA
 // consulta con whereIn para todos los ids.
-Schedule::command('webhooks:reconcile --minutos=60')
+Schedule::command('webhooks:reconcile')
     ->everyFiveMinutes()
     ->withoutOverlapping(10)
     ->onOneServer();
