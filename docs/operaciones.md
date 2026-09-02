@@ -238,7 +238,13 @@ sudo -u www-data php /var/www/converza-crm/artisan tinker \
 sudo -u www-data php /var/www/converza-crm/artisan queue:failed
 
 # ¿Entró algo que no se guardó? (repara solo, esto es para verificar)
+# Ojo: --dry-run NO mueve la marca de agua, así que no le roba la ventana
+# a la corrida automática siguiente.
 sudo -u www-data php /var/www/converza-crm/artisan webhooks:reconcile --dry-run
+
+# ¿Hace cuánto que la reconciliación no corre? Si esto está atrasado más de
+# 5 min, el scheduler no está vivo y podrían estarse perdiendo mensajes.
+cat /var/www/converza-crm/storage/app/webhooks-reconcile.marca
 
 # Logs en vivo
 sudo tail -f /var/www/converza-crm/storage/logs/laravel.log
@@ -260,6 +266,7 @@ free -m
 | Workers | 4 RUNNING | Menos, o reiniciando en bucle |
 | `queue:failed` | Vacío | Crece |
 | `webhooks:reconcile --dry-run` | «Sin huecos» | Reporta huecos |
+| Marca de agua (`storage/app/webhooks-reconcile.marca`) | Menos de 5 min de antigüedad | Atrasada: el scheduler no está corriendo |
 | Disco | < 80 % | > 90 % |
 | Calidad del número | Verde en Meta | Amarillo o rojo |
 
@@ -426,8 +433,12 @@ sudo supervisorctl status converza-worker:*
 > por eso ya no aparece, y por eso existe el canal aparte.
 
 **Recuperar lo que no se guardó:** si hubo un corte y entraron mensajes durante
-él, `webhooks:reconcile` los repara solo cada 5 minutos (ventana de 60 min). Para
-un corte más largo, con rango explícito:
+él, `webhooks:reconcile` los repara solo cada 5 minutos. La ventana arranca en la
+marca de agua de la última corrida con éxito, así que **un corte largo también se
+repara solo** al volver, hasta 24 h hacia atrás (`--max-horas`).
+
+Más allá de ese tope el comando avisa en el log (`la marca de agua excede el
+tope`) y hay que reprocesar el tramo a mano, con rango explícito:
 
 ```bash
 sudo -u www-data php artisan webhooks:replay --fecha=2026-08-20 --dry-run

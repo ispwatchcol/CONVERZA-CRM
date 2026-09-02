@@ -145,6 +145,16 @@ GitHub Actions se encarga del resto:
    `migrate` (que fallaría con la contraseña vieja) y de `config:cache` (que la
    congelaría). Si el secret no existe, no toca nada y sigue.
 5. `php artisan migrate --force`
+
+   > ⚠️ **Esto migra solo `converza`.** El schema `converza_dev` usa la misma base
+   > y no lo toca nadie automáticamente; queda atrás en silencio hasta que algo
+   > falla ahí. Tras un despliegue con migraciones nuevas, corré también:
+   >
+   > ```bash
+   > cd /var/www/converza-crm
+   > DB_SEARCH_PATH=converza_dev php artisan migrate --force
+   > ```
+
 6. Cache de config/routes/views
 7. **`deploy:verify`** — comprueba que la config recién cacheada funcione: ambas
    conexiones de BD, Redis y disco escribible. No aborta a media asta (dejaría

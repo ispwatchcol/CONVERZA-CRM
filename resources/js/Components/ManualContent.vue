@@ -457,6 +457,24 @@ onUnmounted(() => {
                             Espera un minuto antes de preocuparte.
                         </div>
 
+                        <h3 class="font-semibold text-gray-800 mt-5 mb-2">Clientes que ocultan su número</h3>
+                        <p class="text-sm text-gray-600 mb-2">
+                            WhatsApp ya permite que una persona te escriba con un <strong>nombre de usuario</strong> en
+                            vez de su número. En esos chats verás la etiqueta
+                            <span class="px-1.5 py-0.5 rounded bg-sky-100 text-sky-700 text-xs font-medium">Ocultó su número en WhatsApp</span>
+                            y, en lugar del teléfono, su usuario (por ejemplo <code>@FGChitiva</code>).
+                        </p>
+                        <p class="text-sm text-gray-600 mb-2">
+                            Le puedes responder con normalidad: escribir, mandar fotos, audios y archivos funciona igual.
+                            Lo único que cambia es que <strong>no se puede cruzar con ispwatch</strong>, porque ese cruce
+                            se hace por teléfono.
+                        </p>
+                        <div class="p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-900">
+                            <strong>Ojo:</strong> que no aparezca el panel de ispwatch <em>no</em> significa que no sea
+                            cliente tuyo. Solo significa que no tenemos su número para buscarlo. Si necesitas
+                            identificarlo, pídele la cédula o el nombre del titular por el chat.
+                        </div>
+
                         <h3 class="font-semibold text-gray-800 mt-5 mb-2">Cerrar y reabrir</h3>
                         <p class="text-sm text-gray-600 mb-2">
                             Al cerrar se pide una <strong>nota de cierre</strong>. Con la conversación cerrada no se puede

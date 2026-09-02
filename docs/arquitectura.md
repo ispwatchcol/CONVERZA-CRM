@@ -212,8 +212,20 @@ Recuperación de lo que no se llegó a procesar:
 
 | Comando | Cuándo | Qué hace |
 |---|---|---|
-| `webhooks:reconcile` | Automático, cada 5 min | Compara el log crudo contra `messages` en los últimos 60 min y despacha los huecos |
-| `webhooks:replay` | Manual, tras un corte largo | Reprocesa un rango explícito del log crudo |
+| `webhooks:reconcile` | Automático, cada 5 min | Compara el log crudo contra `messages` desde la última corrida con éxito y despacha los huecos |
+| `webhooks:replay` | Manual, para un tramo concreto | Reprocesa un rango explícito del log crudo |
+
+La ventana de `webhooks:reconcile` **no es fija**: arranca en la marca de agua que
+dejó la última corrida con éxito (`storage/app/webhooks-reconcile.marca`), así que
+se estira sola tanto como haya durado el corte, hasta el tope de `--max-horas`
+(24 por defecto). La marca vive en disco por lo mismo que el log crudo: es lo
+único que sobrevive a que se caigan Postgres y Redis a la vez.
+
+> Hasta el 02/09/2026 la ventana era fija de 60 min, y eso dejaba un hueco
+> **permanente y silencioso** en cualquier corte más largo: al recuperarse, la
+> ventana ya no alcanzaba el principio del corte, y la alerta de huecos no salta
+> cuando el problema es justamente que no se llega a mirarlos. Se destapó
+> auditando un mensaje que nunca llegó al panel de Chaguani (CON-66/CON-67).
 
 Reprocesar es seguro porque toda la cadena es idempotente: `wa_message_id` tiene
 índice único y el job atrapa la violación, el bot solo responde si el mensaje se

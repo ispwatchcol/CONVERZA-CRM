@@ -11,7 +11,7 @@ class Contact extends Model
 {
     use BelongsToTenant;
 
-    protected $fillable = ['tenant_id', 'phone', 'name', 'email', 'avatar', 'notes', 'external_id'];
+    protected $fillable = ['tenant_id', 'phone', 'wa_user_id', 'wa_username', 'name', 'email', 'avatar', 'notes', 'external_id'];
 
     public function labels(): BelongsToMany
     {
@@ -30,7 +30,29 @@ class Contact extends Model
 
     public function getDisplayNameAttribute(): string
     {
-        return $this->name ?: $this->phone;
+        // El BSUID (`CO.1124418266822967`) no se muestra nunca: no le dice nada a
+        // nadie. Si el cliente ocultó su teléfono, lo más humano que tenemos es
+        // el username de WhatsApp.
+        return $this->name
+            ?: ($this->phone ?: ($this->wa_username ? '@'.$this->wa_username : 'Cliente sin teléfono'));
+    }
+
+    /**
+     * A dónde se le escribe a este contacto por WhatsApp.
+     *
+     * Puede ser un teléfono o un BSUID: `WhatsAppService` distingue uno de otro
+     * y arma el payload correspondiente (`to` vs `recipient`). Null si el
+     * contacto no tiene ninguna identidad utilizable, que no debería pasar.
+     */
+    public function waDestino(): ?string
+    {
+        return $this->phone ?: $this->wa_user_id;
+    }
+
+    /** ¿El cliente ocultó su número con un username de WhatsApp? */
+    public function sinTelefono(): bool
+    {
+        return empty($this->phone) && ! empty($this->wa_user_id);
     }
 
     /**

@@ -511,7 +511,7 @@ class WhatsAppService
             $response = Http::withToken($token)
                 ->post($baseUrl . '/messages', [
                     'messaging_product' => 'whatsapp',
-                    'to'                => $to,
+                    ...$this->destinatario($to),
                     'type'              => $type,
                     $type               => $mediaPayload,
                 ]);
@@ -592,7 +592,7 @@ class WhatsAppService
                 ->post($baseUrl . '/messages', [
                     'messaging_product' => 'whatsapp',
                     'recipient_type'    => 'individual',
-                    'to'                => $to,
+                    ...$this->destinatario($to),
                     'type'              => 'template',
                     'template'          => $template,
                 ]);
@@ -616,6 +616,24 @@ class WhatsAppService
      * @param string $message The message content.
      * @return array
      */
+    /**
+     * Cómo se nombra al destinatario en el payload de Meta.
+     *
+     * Un teléfono va en `to`, como siempre. Un BSUID —la identidad que manda
+     * Meta cuando el cliente ocultó su número con un username de WhatsApp— va en
+     * `recipient`, y `to` debe **omitirse**: si van los dos, Meta le da
+     * prioridad al teléfono y el envío falla porque ahí no hay ninguno.
+     *
+     * El discriminante es la forma: un teléfono normalizado es solo dígitos, y
+     * un BSUID no (`CO.1124418266822967`).
+     */
+    private function destinatario(string $destino): array
+    {
+        return ctype_digit($destino)
+            ? ['to' => $destino]
+            : ['recipient' => $destino];
+    }
+
     public function sendMessage(string $to, string $message): array
     {
         $baseUrl = $this->baseUrl();
@@ -631,7 +649,7 @@ class WhatsAppService
             $response = Http::withToken($token)
                 ->post($baseUrl . '/messages', [ // Assuming standard endpoint, adjustable
                     'messaging_product' => 'whatsapp',
-                    'to' => $to,
+                    ...$this->destinatario($to),
                     'type' => 'text',
                     'text' => ['body' => $message],
                 ]);

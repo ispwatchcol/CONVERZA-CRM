@@ -368,6 +368,17 @@ perdieron 18 mensajes entrantes.
 2. ✅ Centinela externo (UptimeRobot cada 5 min, push a dos teléfonos).
 3. ✅ Log crudo de webhooks + `webhooks:replay` y `webhooks:reconcile`, para que
    una caída no cueste mensajes.
+   ✅ *(02/09/2026)* Mensajes de clientes con **username de WhatsApp**. Meta manda
+   un BSUID en `from_user_id` y ningún `from`; el job los descartaba en silencio y
+   se perdieron 20 mensajes de 5 clientes en dos semanas. El log crudo fue lo
+   único que permitió reconstruirlo. Ver CON-68 y
+   [integracion-whatsapp.md §2.4b](integracion-whatsapp.md).
+   ✅ *(02/09/2026)* La reconciliación arranca en una **marca de agua** y no en
+   una ventana fija de 60 min. La primera versión solo tapaba cortes de menos de
+   una hora: en uno más largo, al recuperarse la ventana ya no alcanzaba el
+   principio del corte y esos mensajes quedaban en el log crudo para siempre, sin
+   que saltara ninguna alerta. Se destapó auditando un mensaje que nunca llegó al
+   panel de Chaguani (CON-66/CON-67).
 4. ✅ `deploy:verify` en el despliegue: falla el workflow si la config publicada
    no puede hablar con alguna dependencia. Cierra el hueco por el que
    `ISPWATCH_DB_PASSWORD` quedó vieja sin que nadie lo notara.
@@ -385,9 +396,10 @@ perdieron 18 mensajes entrantes.
 1. **Sentry** (plan gratuito) para excepciones — sin esto, un 500 aislado que no
    tumba `/health` sigue siendo invisible.
 2. **Que las alertas de la app lleguen a una persona.** `webhooks:reconcile`
-   escribe `Log::error` cuando encuentra huecos, pero nadie vigila ese archivo.
-   Los huecos se reparan solos, así que la urgencia es menor, pero hoy no hay
-   forma de enterarse de que ocurrieron.
+   escribe `Log::error` cuando encuentra huecos, cuando detecta que no corrió en
+   ≥15 min (señal de caída) y cuando la marca de agua excede el tope —pero nadie
+   vigila ese archivo. Los huecos se reparan solos, así que la urgencia es menor;
+   el que importa es el tercero, porque marca el tramo que **no** se reparó solo.
 3. **Alerta por profundidad de cola.** `/health` reporta `Queue::size()` pero es
    informativo a propósito: un backlog no debería despertar a nadie de
    madrugada. Merece su propio umbral, aparte del health check.
