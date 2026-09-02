@@ -120,6 +120,38 @@ el remitente y el texto por `"Over 9 levels deep, aborting normalization"`.
 Reprocesar lo guardado: `webhooks:replay` y `webhooks:reconcile`, ver
 [operaciones.md §4](operaciones.md#4-monitoreo-diario).
 
+### 2.4b Clientes sin teléfono (usernames de WhatsApp / BSUID)
+
+Meta desplegó los **usernames**: un cliente puede ocultar su número al escribirle
+a un negocio. Cuando lo hace, el webhook cambia de forma:
+
+| Caso normal | Cliente con username |
+|---|---|
+| `messages[].from` = `573133799933` | `messages[].from_user_id` = `CO.1124418266822967` |
+| `contacts[].wa_id` | `contacts[].user_id` |
+| — | `contacts[].profile.username` = `FGChitiva` |
+
+Ese identificador es el **BSUID** (*business-scoped user ID*): opaco, y estable
+para el par (cliente, negocio). No se puede convertir en un teléfono.
+
+`ProcessIncomingWhatsAppMessage` resuelve la identidad en este orden: teléfono si
+viene, BSUID si no. Cuando llegan los dos, guarda ambos — así reconoce a la misma
+persona el día que adopte un username y deje de mandar el número.
+
+**Para responderle** hay que usar `recipient` en vez de `to`, y **omitir `to`**:
+si van los dos, Meta le da prioridad al teléfono y el envío falla. Lo resuelve
+`WhatsAppService::destinatario()`, que distingue por la forma del valor (un
+teléfono normalizado es solo dígitos; un BSUID no).
+
+> **Esto costó 20 mensajes.** Hasta el 02/09/2026 el job hacía `return` ante un
+> mensaje sin `from`, sin guardar nada: ni contacto, ni conversación, ni fila en
+> `messages`. Para el asesor, el cliente nunca había escrito. Se perdieron 20
+> mensajes de 5 clientes en dos semanas —entre ellos un comprobante de pago—
+> antes de que alguien reclamara. Ver CON-68.
+>
+> La lección general: **nunca descartar un mensaje entrante en silencio.** Si no
+> se sabe qué hacer con él, hay que guardarlo igual y que se vea.
+
 ### 2.5 Reenvío a desarrollo
 
 Si `WEBHOOK_FORWARD_URL` está definida, se reenvía el payload íntegro a esa URL

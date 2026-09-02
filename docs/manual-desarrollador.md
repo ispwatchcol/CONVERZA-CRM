@@ -409,6 +409,8 @@ Cadenas útiles para grepear:
 |---|---|
 | `inbound` en `webhook-raw-*.log` | Llegó un webhook (cuerpo crudo completo). **No está en `laravel.log`**: va a su propio canal, con nivel fijo, para que `LOG_LEVEL=warning` no lo descarte |
 | `falló el despacho; el payload quedó en webhook-raw.log` | El webhook entró pero no se pudo procesar (BD o Redis caídos). Se repara solo con `webhooks:reconcile` |
+| `Webhook sin identidad de remitente: ni teléfono ni BSUID` | Payload raro: Meta no mandó ni `from` ni `from_user_id`. Es el único caso en que un mensaje se descarta |
+| `Contacto duplicado: la misma persona tiene ficha por teléfono y por BSUID` | El cliente escribió antes con el número oculto y ahora con teléfono. Dos fichas, una persona → `conversations:merge-duplicates` |
 | `Reconciliación de webhooks: se encontraron mensajes sin guardar` | Hubo huecos y se reprocesaron |
 | `Reconciliación de webhooks: no corrió durante un rato largo` | El scheduler estuvo parado ≥15 min: el servidor o la base se cayeron. **Es la alerta de caída**, y salta aunque no se pierda ningún mensaje |
 | `Reconciliación de webhooks: la marca de agua excede el tope` | El corte duró más que `--max-horas`; puede quedar un hueco sin reparar antes de ese punto → `webhooks:replay` |

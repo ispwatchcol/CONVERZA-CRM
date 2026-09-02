@@ -110,9 +110,20 @@ chat ([`ChatController::getOrCreateStaffForUser`](../app/Http/Controllers/ChatCo
 
 | Columna | Notas |
 |---|---|
-| `phone` | Único **por tenant** (`unique(tenant_id, phone)`). Normalizado a 12 dígitos con prefijo país |
+| `phone` | Único **por tenant** (`unique(tenant_id, phone)`). Normalizado a 12 dígitos con prefijo país. **Nulable** desde el 02/09/2026 |
+| `wa_user_id` | BSUID de Meta (`CO.<digitos>`), único por tenant. Identidad del contacto cuando el cliente ocultó su teléfono con un username de WhatsApp |
+| `wa_username` | Username de WhatsApp, solo para mostrar. Es lo único legible que queda cuando no hay teléfono |
 | `name`, `email`, `avatar`, `notes` | |
 | `external_id` | Indexado junto a `tenant_id`. Para cruces con sistemas externos |
+
+> **El teléfono ya no es la identidad.** Un contacto necesita `phone` **o**
+> `wa_user_id`; puede tener los dos. Los NULL no cuentan para un índice único en
+> Postgres, así que varios contactos sin teléfono conviven sin chocar.
+>
+> Para escribirle a un contacto usá `Contact::waDestino()` en vez de `->phone`:
+> devuelve el teléfono si lo hay y si no el BSUID, y `WhatsAppService` arma el
+> payload que corresponda. Un `->phone` pelado en un camino de envío es un bug
+> latente para estos contactos.
 
 ### `conversations`
 

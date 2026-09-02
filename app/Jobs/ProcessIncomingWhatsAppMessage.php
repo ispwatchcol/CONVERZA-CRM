@@ -73,20 +73,21 @@ class ProcessIncomingWhatsAppMessage implements ShouldQueue
         $tenantId = $tenant?->id;
 
         $phone       = $this->normalizePhone($this->message['from'] ?? '');
+        $waUserId    = $this->message['from_user_id'] ?? ($this->contacts[0]['user_id'] ?? null);
         $waMessageId = $this->message['id'] ?? null;
         $type        = $this->message['type'] ?? 'text';
 
-        if (! $phone) {
-            Log::warning('Skipped webhook message without sender phone', ['message' => $this->message]);
+        // Desde los *WhatsApp usernames*, un cliente puede ocultar su número: el
+        // webhook llega sin `from` y solo con un BSUID en `from_user_id`. Antes
+        // esto era un `return` silencioso y el mensaje se perdía entero —ni
+        // contacto, ni conversación, ni fila en `messages`—, así que para el
+        // asesor el cliente nunca había escrito. Ver CON-68.
+        if (! $phone && ! $waUserId) {
+            Log::warning('Webhook sin identidad de remitente: ni teléfono ni BSUID', ['message' => $this->message]);
             return;
         }
 
-        $contactName = $this->contacts[0]['profile']['name'] ?? null;
-
-        $contact = Contact::firstOrCreate(
-            ['phone' => $phone, 'tenant_id' => $tenantId],
-            ['name'  => $contactName, 'tenant_id' => $tenantId],
-        );
+        $contact = $this->resolverContacto($tenantId, $phone, $waUserId);
 
         // Reabrir la conversación más reciente si estaba cerrada, en lugar de crear
         // una nueva. Evita duplicar chats del mismo contacto en la lista.
@@ -105,7 +106,10 @@ class ProcessIncomingWhatsAppMessage implements ShouldQueue
             Log::info('Duplicate webhook job ignored', ['wa_message_id' => $waMessageId]);
         }
 
-        if ($tenantId) {
+        // Las campañas y las bajas se llevan por teléfono (la audiencia se carga
+        // desde Excel o el CRM, donde no hay BSUID). Un contacto que ocultó su
+        // número no puede estar en una campaña, así que no hay señal que mirar.
+        if ($tenantId && $phone) {
             $this->handleCampaignSignals($tenantId, $phone, $type === 'text' ? ($attributes['body'] ?? '') : '');
         }
 
@@ -138,6 +142,94 @@ class ProcessIncomingWhatsAppMessage implements ShouldQueue
         ) {
             app(ConversationAssigner::class)->assignLeastBusy($conversation, $tenant);
         }
+    }
+
+    /**
+     * Encuentra —o crea— la ficha de quien escribió, con lo que Meta haya mandado.
+     *
+     * El teléfono manda cuando viene: es la identidad histórica, la que el asesor
+     * reconoce y la que cruza con ispwatch. El BSUID es el respaldo para cuando
+     * el cliente oculta el número, y se guarda también junto al teléfono para
+     * reconocer a la misma persona el día que adopte un username.
+     */
+    private function resolverContacto(?int $tenantId, ?string $phone, ?string $waUserId): Contact
+    {
+        $nombre   = $this->contacts[0]['profile']['name'] ?? null;
+        $username = $this->contacts[0]['profile']['username'] ?? null;
+
+        $porBsuid = $waUserId
+            ? Contact::where('tenant_id', $tenantId)->where('wa_user_id', $waUserId)->first()
+            : null;
+
+        if (! $phone) {
+            $contacto = $porBsuid ?: Contact::create([
+                'tenant_id'   => $tenantId,
+                'wa_user_id'  => $waUserId,
+                'name'        => $nombre,
+                'wa_username' => $username,
+            ]);
+
+            return $this->completarIdentidad($contacto, null, $waUserId, $nombre, $username);
+        }
+
+        $contacto = Contact::firstOrCreate(
+            ['phone' => $phone, 'tenant_id' => $tenantId],
+            ['name'  => $nombre, 'tenant_id' => $tenantId],
+        );
+
+        // La misma persona ya tenía ficha creada solo por BSUID: escribió antes
+        // con el número oculto y ahora llega con teléfono. Son dos filas para un
+        // cliente. No se fusionan acá —hay conversaciones colgando de ambas y la
+        // fusión es una decisión aparte— pero queda registrado para poder
+        // resolverlo con `conversations:merge-duplicates`.
+        if ($porBsuid && $porBsuid->id !== $contacto->id) {
+            Log::warning('Contacto duplicado: la misma persona tiene ficha por teléfono y por BSUID', [
+                'tenant_id'    => $tenantId,
+                'por_telefono' => $contacto->id,
+                'por_bsuid'    => $porBsuid->id,
+            ]);
+
+            return $this->completarIdentidad($contacto, $phone, null, $nombre, $username);
+        }
+
+        return $this->completarIdentidad($contacto, $phone, $waUserId, $nombre, $username);
+    }
+
+    /**
+     * Rellena lo que falte sin pisar lo que ya había.
+     *
+     * Solo escribe si hay algo nuevo: así un cliente que manda veinte mensajes
+     * seguidos no dispara veinte UPDATE idénticos.
+     */
+    private function completarIdentidad(
+        Contact $contacto,
+        ?string $phone,
+        ?string $waUserId,
+        ?string $nombre,
+        ?string $username,
+    ): Contact {
+        $nuevos = [];
+
+        if ($phone && $contacto->phone !== $phone) {
+            $nuevos['phone'] = $phone;
+        }
+        if ($waUserId && $contacto->wa_user_id !== $waUserId) {
+            $nuevos['wa_user_id'] = $waUserId;
+        }
+        if ($username && $contacto->wa_username !== $username) {
+            $nuevos['wa_username'] = $username;
+        }
+        // El nombre del perfil solo se usa si la ficha no tenía ninguno: el que
+        // haya puesto el asesor a mano vale más que el de WhatsApp.
+        if ($nombre && ! $contacto->name) {
+            $nuevos['name'] = $nombre;
+        }
+
+        if ($nuevos !== []) {
+            $contacto->fill($nuevos)->save();
+        }
+
+        return $contacto;
     }
 
     private function buildAttributes(

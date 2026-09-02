@@ -368,6 +368,11 @@ perdieron 18 mensajes entrantes.
 2. ✅ Centinela externo (UptimeRobot cada 5 min, push a dos teléfonos).
 3. ✅ Log crudo de webhooks + `webhooks:replay` y `webhooks:reconcile`, para que
    una caída no cueste mensajes.
+   ✅ *(02/09/2026)* Mensajes de clientes con **username de WhatsApp**. Meta manda
+   un BSUID en `from_user_id` y ningún `from`; el job los descartaba en silencio y
+   se perdieron 20 mensajes de 5 clientes en dos semanas. El log crudo fue lo
+   único que permitió reconstruirlo. Ver CON-68 y
+   [integracion-whatsapp.md §2.4b](integracion-whatsapp.md).
    ✅ *(02/09/2026)* La reconciliación arranca en una **marca de agua** y no en
    una ventana fija de 60 min. La primera versión solo tapaba cortes de menos de
    una hora: en uno más largo, al recuperarse la ventana ya no alcanzaba el

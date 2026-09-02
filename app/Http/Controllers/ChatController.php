@@ -289,6 +289,11 @@ class ChatController extends Controller
             'activeChat'           => $activeChat,
             'activeConversationId' => $activeConversationId ? (int) $activeConversationId : null,
             'activePhone'          => $activeContact?->phone,
+            // Cuando el cliente ocultó su número con un username de WhatsApp no
+            // hay teléfono que mostrar ni con qué cruzarlo contra ispwatch. Se
+            // dice explícitamente, para que el asesor no concluya que no es cliente.
+            'activeUsername'       => $activeContact?->wa_username,
+            'activeSinTelefono'    => (bool) $activeContact?->sinTelefono(),
             'activeName'           => $this->displayName($activeContact, $ispwatchNames),
             // Nombre del perfil de WhatsApp cuando NO es el que se muestra: el
             // encabezado lo aclara para que el agente sepa quién está escribiendo
@@ -389,7 +394,10 @@ class ChatController extends Controller
         $tenantId = $tenant->id;
 
         $request->validate([
-            'phone'           => 'required|string',
+            // El teléfono deja de ser obligatorio: un cliente con username de
+            // WhatsApp no tiene número visible, y a su chat solo se llega por el
+            // hilo. Sigue haciendo falta uno de los dos para saber a quién escribir.
+            'phone'           => 'nullable|string|required_without:conversation_id',
             'message'         => 'required|string|max:4096',
             'conversation_id' => [
                 'nullable', 'integer',
@@ -400,15 +408,13 @@ class ChatController extends Controller
         $phone = Contact::normalizePhone($request->input('phone'));
         $messageContent = $request->input('message');
 
-        $contact = Contact::firstOrCreate(
-            ['phone' => $phone, 'tenant_id' => $tenantId],
-            ['phone' => $phone, 'tenant_id' => $tenantId],
-        );
-
         // Con conversation_id (chat abierto en pantalla) se respeta ese hilo y el
-        // cierre se valida abajo. Sin él (escribirle a un contacto desde otra
+        // cierre se valida acá. Sin él (escribirle a un contacto desde otra
         // pantalla) se reutiliza —y reabre— el hilo existente del contacto: el
         // agente ya decidió escribir, y abrir un chat paralelo partiría el historial.
+        //
+        // Se resuelve ANTES que el contacto porque, sin teléfono, el hilo es lo
+        // único que lleva hasta la ficha.
         $conversation = null;
         if ($request->conversation_id) {
             $conversation = Conversation::where('tenant_id', $tenantId)->find($request->conversation_id);
@@ -418,8 +424,28 @@ class ChatController extends Controller
                 return back()->withErrors(['message' => 'La conversación está cerrada. Reabrela primero para enviar mensajes.']);
             }
         }
+
+        $contact = $phone
+            ? Contact::firstOrCreate(
+                ['phone' => $phone, 'tenant_id' => $tenantId],
+                ['phone' => $phone, 'tenant_id' => $tenantId],
+            )
+            : $conversation?->contact;
+
+        if (! $contact) {
+            return back()->withErrors(['message' => 'No se pudo identificar al destinatario.']);
+        }
+
         if (! $conversation) {
             $conversation = Conversation::resolveForContact($tenantId, $contact->id);
+        }
+
+        // Teléfono si lo hay; si no, el BSUID. WhatsAppService distingue cuál es
+        // y arma el payload que corresponde.
+        $destino = $contact->waDestino();
+
+        if (! $destino) {
+            return back()->withErrors(['message' => 'Este contacto no tiene teléfono ni identidad de WhatsApp: no se le puede escribir.']);
         }
 
         // Prefijo del asesor en el texto enviado a WhatsApp: "Nombre: mensaje".
@@ -429,7 +455,7 @@ class ChatController extends Controller
         $prefix       = '*' . $agentName . ':* ';
         $messageToWA  = str_starts_with($messageContent, $prefix) ? $messageContent : $prefix . $messageContent;
 
-        $result = $this->whatsappService->sendMessage($phone, $messageToWA);
+        $result = $this->whatsappService->sendMessage($destino, $messageToWA);
 
         if ($result['success']) {
             Message::create([
@@ -625,7 +651,9 @@ class ChatController extends Controller
         $tenantId = $tenant->id;
 
         $request->validate([
-            'phone'           => 'required|string',
+            // Nulable por lo mismo que en sendMessage: un cliente con username de
+            // WhatsApp no tiene teléfono y solo se alcanza por el hilo.
+            'phone'           => 'nullable|string|required_without:conversation_id',
             // Imagen: jpeg/png/webp/gif. Audio: ogg/mp3/m4a/aac/amr y webm (grabado
             // desde el navegador, se transcodifica abajo). Video: mp4/3gp.
             // Documento: pdf, Word, Excel, PowerPoint, txt y csv.
@@ -679,11 +707,8 @@ class ChatController extends Controller
             }
         }
 
-        $contact = Contact::firstOrCreate(
-            ['phone' => $phone, 'tenant_id' => $tenantId],
-            ['phone' => $phone, 'tenant_id' => $tenantId],
-        );
-
+        // Igual que en sendMessage: el hilo se resuelve primero porque un cliente
+        // sin teléfono visible (username de WhatsApp) solo se alcanza por ahí.
         $conversation = null;
         if ($request->conversation_id) {
             $conversation = Conversation::where('tenant_id', $tenantId)->find($request->conversation_id);
@@ -692,8 +717,26 @@ class ChatController extends Controller
                 return back()->withErrors(['file' => 'La conversación está cerrada. Reabrela primero para enviar archivos.']);
             }
         }
+
+        $contact = $phone
+            ? Contact::firstOrCreate(
+                ['phone' => $phone, 'tenant_id' => $tenantId],
+                ['phone' => $phone, 'tenant_id' => $tenantId],
+            )
+            : $conversation?->contact;
+
+        if (! $contact) {
+            return back()->withErrors(['file' => 'No se pudo identificar al destinatario.']);
+        }
+
         if (! $conversation) {
             $conversation = Conversation::resolveForContact($tenantId, $contact->id);
+        }
+
+        $destino = $contact->waDestino();
+
+        if (! $destino) {
+            return back()->withErrors(['file' => 'Este contacto no tiene teléfono ni identidad de WhatsApp: no se le puede escribir.']);
         }
 
         // Subir el archivo a WhatsApp para obtener un media_id
@@ -710,7 +753,7 @@ class ChatController extends Controller
 
         // El filename solo aplica a documentos: es el nombre que ve el destinatario
         // en su WhatsApp. Sin él, Meta muestra el media_id como título del archivo.
-        $result = $this->whatsappService->sendMedia($phone, $type, $waMediaId, $caption, $origName);
+        $result = $this->whatsappService->sendMedia($destino, $type, $waMediaId, $caption, $origName);
 
         if (! $result['success']) {
             return back()->withErrors(['file' => 'Error al enviar: ' . ($result['error'] ?? 'Error desconocido')]);
@@ -912,12 +955,12 @@ class ChatController extends Controller
         // ya se guardó y el mensaje de sistema ya existe — no revertimos por eso.
         if ($newStaffId !== null && $conversation->status === 'open') {
             $conversation->loadMissing('contact');
-            $phone = $conversation->contact?->phone;
+            $destino = $conversation->contact?->waDestino();
 
-            if ($phone) {
+            if ($destino) {
                 try {
                     $clientMsg = "Has sido transferido con {$newName}. En breve te atenderé.";
-                    $waResult  = $this->whatsappService->sendMessage($phone, $clientMsg);
+                    $waResult  = $this->whatsappService->sendMessage($destino, $clientMsg);
 
                     Message::create([
                         'tenant_id'       => $tenantId,
@@ -1049,8 +1092,10 @@ class ChatController extends Controller
             return null;
         }
 
+        // display_name cubre el caso sin teléfono: cae al username de WhatsApp
+        // antes que dejar el chat rotulado con un BSUID ilegible.
         return ($ispwatchNames[$contact->id] ?? null)
-            ?: ($contact->name ?: $contact->phone);
+            ?: $contact->display_name;
     }
 
     /**

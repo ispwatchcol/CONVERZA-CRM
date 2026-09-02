@@ -11,6 +11,8 @@ const props = defineProps({
     activeChat: { type: Array, default: () => [] },
     activeConversationId: { type: Number, default: null },
     activePhone: { type: String, default: null },
+    activeUsername: { type: String, default: null },
+    activeSinTelefono: { type: Boolean, default: false },
     activeName: { type: String, default: null },
     activeWhatsappName: { type: String, default: null },
     activeStatus: { type: String, default: null },
@@ -2180,8 +2182,19 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
                             <h3 class="text-sm font-semibold text-gray-900 truncate">
                                 {{ ispwatchCustomer?.name || activeName }}
                             </h3>
-                            <p class="text-xs text-gray-500 truncate">{{ formatPhone(activePhone) }}</p>
-                            <div class="mt-2 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium"
+                            <p v-if="!activeSinTelefono" class="text-xs text-gray-500 truncate">{{ formatPhone(activePhone) }}</p>
+                            <p v-else class="text-xs text-gray-500 truncate">
+                                {{ activeUsername ? '@' + activeUsername : 'Sin número visible' }}
+                            </p>
+                            <!-- Sin teléfono no se puede cruzar con ispwatch, así que
+                                 "No registrado" sería una conclusión falsa: el cliente
+                                 puede estar perfectamente registrado. -->
+                            <div v-if="activeSinTelefono"
+                                 class="mt-2 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium bg-sky-100 text-sky-700">
+                                <span class="w-1.5 h-1.5 rounded-full bg-sky-500"></span>
+                                Ocultó su número en WhatsApp
+                            </div>
+                            <div v-else class="mt-2 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium"
                                  :class="ispwatchCustomer ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'">
                                 <span class="w-1.5 h-1.5 rounded-full" :class="ispwatchCustomer ? 'bg-emerald-500' : 'bg-amber-500'"></span>
                                 {{ ispwatchCustomer ? 'Cliente ISPWatch' : 'No registrado en ISPWatch' }}
