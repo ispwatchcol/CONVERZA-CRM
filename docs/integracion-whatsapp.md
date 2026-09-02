@@ -143,6 +143,18 @@ si van los dos, Meta le da prioridad al teléfono y el envío falla. Lo resuelve
 `WhatsAppService::destinatario()`, que distingue por la forma del valor (un
 teléfono normalizado es solo dígitos; un BSUID no).
 
+> ✅ **Verificado en producción el 02/09/2026.** Meta acepta el envío dirigido
+> por `recipient`: un mensaje a un BSUID devolvió `131047 Re-engagement message`
+> —la regla normal de las 24 h— y no un error de destinatario. La direccón
+> funciona; lo que aplica es la misma ventana que a cualquier chat.
+
+**Los tres caminos de envío deben usar `Contact::waDestino()`**: `sendMessage`,
+`sendMedia` y `sendTemplate`. El de plantillas se olvidó en la primera versión y
+dejó a estos chats **sin salida ninguna**: pasadas las 24 h el texto libre lo
+bloquea Meta, y la plantilla —la única alternativa— la bloqueaba nuestra propia
+validación por exigir teléfono. Si agregás un camino de envío nuevo, que no use
+`->phone`.
+
 > **Esto costó 20 mensajes.** Hasta el 02/09/2026 el job hacía `return` ante un
 > mensaje sin `from`, sin guardar nada: ni contacto, ni conversación, ni fila en
 > `messages`. Para el asesor, el cliente nunca había escrito. Se perdieron 20

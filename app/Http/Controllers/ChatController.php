@@ -495,7 +495,11 @@ class ChatController extends Controller
         $tenantId = $tenant->id;
 
         $validated = $request->validate([
-            'phone'           => 'required|string',
+            // Nulable por lo mismo que en sendMessage: un cliente que ocultó su
+            // número no tiene teléfono. Y acá pesa el doble — la plantilla es la
+            // ÚNICA forma de escribirle fuera de la ventana de 24 h, así que
+            // exigir teléfono dejaba a esos chats sin salida ninguna.
+            'phone'           => 'nullable|string|required_without:conversation_id',
             'template_id'     => [
                 'required', 'integer',
                 Rule::exists('templates', 'id')
@@ -520,13 +524,9 @@ class ChatController extends Controller
             return back()->withErrors(['template' => 'Esta plantilla no se puede enviar desde el chat. ' . $reason]);
         }
 
-        $phone = Contact::normalizePhone($validated['phone']);
+        $phone = Contact::normalizePhone($validated['phone'] ?? null);
 
-        $contact = Contact::firstOrCreate(
-            ['phone' => $phone, 'tenant_id' => $tenantId],
-            ['phone' => $phone, 'tenant_id' => $tenantId],
-        );
-
+        // El hilo primero: sin teléfono es lo único que lleva hasta la ficha.
         $conversation = null;
         if ($request->conversation_id) {
             $conversation = Conversation::where('tenant_id', $tenantId)->find($request->conversation_id);
@@ -535,14 +535,32 @@ class ChatController extends Controller
                 return back()->withErrors(['template' => 'La conversación está cerrada. Reabrela primero para enviar la plantilla.']);
             }
         }
+
+        $contact = $phone
+            ? Contact::firstOrCreate(
+                ['phone' => $phone, 'tenant_id' => $tenantId],
+                ['phone' => $phone, 'tenant_id' => $tenantId],
+            )
+            : $conversation?->contact;
+
+        if (! $contact) {
+            return back()->withErrors(['template' => 'No se pudo identificar al destinatario.']);
+        }
+
         if (! $conversation) {
             $conversation = Conversation::resolveForContact($tenantId, $contact->id);
+        }
+
+        $destino = $contact->waDestino();
+
+        if (! $destino) {
+            return back()->withErrors(['template' => 'Este contacto no tiene teléfono ni identidad de WhatsApp: no se le puede escribir.']);
         }
 
         $params = $this->templateParams($template, $contact, $tenant, $request->user()->name);
 
         $result = $this->whatsappService->sendTemplate(
-            $phone,
+            $destino,
             $template->name,
             $template->language ?: 'es_CO',
             $params,

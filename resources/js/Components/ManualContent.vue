@@ -474,6 +474,15 @@ onUnmounted(() => {
                             cliente tuyo. Solo significa que no tenemos su número para buscarlo. Si necesitas
                             identificarlo, pídele la cédula o el nombre del titular por el chat.
                         </div>
+                        <p class="text-sm text-gray-600 mt-2">
+                            <strong>¿Te dio su número?</strong> Guárdalo en su ficha (Contactos → editar). Desde ese
+                            momento el chat se cruza con ispwatch y ves su servicio y sus facturas como en cualquier otro.
+                        </p>
+                        <p class="text-sm text-gray-600 mt-2">
+                            <strong>Si no te deja escribirle</strong> y ves «Pasaron más de 24 h», no es por el número
+                            oculto: es la regla de WhatsApp que aplica a <em>todos</em> los chats. Manda una plantilla
+                            aprobada para reabrir la conversación, igual que con cualquier cliente.
+                        </p>
 
                         <h3 class="font-semibold text-gray-800 mt-5 mb-2">Cerrar y reabrir</h3>
                         <p class="text-sm text-gray-600 mb-2">

@@ -124,6 +124,13 @@ chat ([`ChatController::getOrCreateStaffForUser`](../app/Http/Controllers/ChatCo
 > devuelve el teléfono si lo hay y si no el BSUID, y `WhatsAppService` arma el
 > payload que corresponda. Un `->phone` pelado en un camino de envío es un bug
 > latente para estos contactos.
+>
+> Lo mismo vale para **validar**: `phone` no puede ser `required` en la ficha de
+> un contacto que ya tiene `wa_user_id`, o su ficha queda imposible de guardar
+> —ni nombre, ni etiquetas, ni notas—. Sí se le puede **añadir** un teléfono a
+> mano: el asesor se lo pregunta por el chat, y eso reactiva el cruce con
+> ispwatch. Crear un contacto desde cero sigue exigiendo teléfono, porque un
+> BSUID no se puede teclear: solo llega en un webhook.
 
 ### `conversations`
 

@@ -71,6 +71,10 @@ class ContactController extends Controller
             return [
                 'id'                  => $c->id,
                 'phone'               => $c->phone,
+                // Sin teléfono no hay nada que mostrar ni con qué cruzar contra
+                // ispwatch. El username es lo único legible que queda.
+                'wa_username'         => $c->wa_username,
+                'sin_telefono'        => $c->sinTelefono(),
                 'name'                => $c->name,
                 'email'               => $c->email,
                 'notes'               => $c->notes,
@@ -131,7 +135,7 @@ class ContactController extends Controller
 
         $request->merge(['phone' => Contact::normalizePhone($request->input('phone'))]);
 
-        $validated = $this->validateData($request, $contact->tenant_id, ignoreId: $contact->id);
+        $validated = $this->validateData($request, $contact->tenant_id, contact: $contact);
 
         $contact->update(collect($validated)->except('labels')->all());
 
@@ -185,14 +189,30 @@ class ContactController extends Controller
         abort_if($contact->tenant_id !== app('tenant')->id, 403, 'No autorizado para este tenant.');
     }
 
-    private function validateData(Request $request, int $tenantId, ?int $ignoreId = null): array
+    /**
+     * @param  Contact|null  $contact  El contacto que se edita; null al crear uno nuevo.
+     */
+    private function validateData(Request $request, int $tenantId, ?Contact $contact = null): array
     {
+        // Un contacto que ocultó su número (username de WhatsApp) no tiene
+        // teléfono que exigir: su identidad es el BSUID, y pedirlo dejaba su
+        // ficha imposible de guardar —no se le podía ni poner nombre—.
+        //
+        // Sí se le puede AÑADIR uno a mano: el asesor se lo pregunta por el
+        // chat y lo escribe acá. Eso además reactiva el cruce con ispwatch,
+        // que se hace por teléfono.
+        //
+        // Al crear un contacto desde cero el teléfono sigue siendo obligatorio:
+        // un BSUID no se puede teclear, solo llega en un webhook.
+        $exigirTelefono = ! ($contact && $contact->wa_user_id);
+
         return $request->validate([
             'phone' => [
-                'required', 'string', 'max:20',
+                $exigirTelefono ? 'required' : 'nullable',
+                'string', 'max:20',
                 Rule::unique('contacts', 'phone')
                     ->where('tenant_id', $tenantId)
-                    ->ignore($ignoreId),
+                    ->ignore($contact?->id),
             ],
             'name'      => ['nullable', 'string', 'max:120'],
             'email'     => ['nullable', 'email', 'max:120'],
