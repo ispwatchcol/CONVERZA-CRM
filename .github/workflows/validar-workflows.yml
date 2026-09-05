@@ -1,0 +1,38 @@
+# Revisa los propios workflows antes de que se mergeen.
+#
+# Existe por CON-70: una expresión de Actions vacía dentro de un comentario dejó
+# a Converza doce días sin despliegue automático y en silencio. Un workflow que
+# no compila no agenda ningún job, así que no puede avisar de nada desde adentro
+# — el aviso tiene que venir de otro workflow, desde afuera. Este.
+#
+# Límite honesto: si lo que se rompe es ESTE archivo, tampoco arranca y no avisa.
+# Por eso se mantiene lo más corto posible, y el diagnóstico manual sigue en
+# deploy/DEPLOY.md. Y para que un fallo acá impida el merge de verdad, hace falta
+# marcarlo como check obligatorio en las reglas de la rama main (CON-74).
+name: Validar workflows
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/**'
+      - '.github/scripts/validate-workflows.py'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/**'
+      - '.github/scripts/validate-workflows.py'
+
+jobs:
+  validar:
+    name: Un workflow roto no llega a main
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # PyYAML suele venir en la imagen del runner; el install es la red de
+      # seguridad, no el camino normal.
+      - name: Asegurar PyYAML
+        run: python3 -c "import yaml" || python3 -m pip install --disable-pip-version-check --quiet pyyaml
+
+      - name: Revisar los workflows
+        run: python3 .github/scripts/validate-workflows.py
