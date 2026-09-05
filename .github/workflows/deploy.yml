@@ -90,8 +90,18 @@ jobs:
           #   - Escribí $VARIABLE normal, sin \$. Todo se evalúa en el servidor.
           #   - Los valores del runner NO llegan por interpolación: se pasan
           #     como argumentos posicionales a `bash -s --`.
-          #   - ${{ }} de GitHub Actions SÍ funciona: se sustituye antes de que
-          #     el shell vea el script.
+          #   - Las expresiones de GitHub Actions (dólar + dos llaves) SÍ
+          #     funcionan: se sustituyen antes de que el shell vea el script.
+          #
+          # ⚠️ NUNCA escribas una expresión de Actions vacía en este archivo, ni
+          # siquiera dentro de un comentario. GitHub sustituye TODO el bloque
+          # `run:` antes de que exista un shell, así que un `#` no protege nada:
+          # una expresión vacía no compila, el workflow ni siquiera arranca y
+          # falla sin agendar un solo job. Eso deja el repo SIN despliegue y sin
+          # logs que mirar. Pasó exactamente así entre el 21/08 y el 02/09/2026
+          # —doce días, tres merges sin desplegar— por un comentario que
+          # explicaba esta misma sintaxis. Si necesitás nombrarla, describila con
+          # palabras como acá arriba.
           ssh -i ~/.ssh/deploy_key ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} \
             bash -s -- "$DB_PASSWORD_B64" << 'EOF'
             set -e
