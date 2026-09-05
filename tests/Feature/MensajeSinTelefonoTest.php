@@ -216,6 +216,30 @@ class MensajeSinTelefonoTest extends TestCase
         });
     }
 
+    /**
+     * La plantilla es la ÚNICA forma de escribirle fuera de la ventana de 24 h,
+     * y es justo lo que se necesita con un cliente que ocultó su número: llega
+     * por primera vez, nadie alcanza a responderle en 24 h y el hilo se muere.
+     * `ChatController::sendTemplate` quedó fuera del arreglo de CON-68 y seguía
+     * exigiendo `phone`, así que el botón "Enviar" no hacía nada.
+     */
+    public function test_una_plantilla_a_un_bsuid_tambien_viaja_en_recipient(): void
+    {
+        config()->set('services.whatsapp.url', 'https://graph.facebook.com/v20.0/123');
+        config()->set('services.whatsapp.token', 'test-token');
+        \Illuminate\Support\Facades\Http::fake(['*' => \Illuminate\Support\Facades\Http::response(['messages' => [['id' => 'wamid.TPL']]], 200)]);
+
+        app(WhatsAppService::class)->sendTemplate('CO.1124418266822967', 'saludo', 'es_CO', ['name' => 'FGC']);
+
+        \Illuminate\Support\Facades\Http::assertSent(function ($request) {
+            $cuerpo = $request->data();
+
+            return ($cuerpo['recipient'] ?? null) === 'CO.1124418266822967'
+                && ! array_key_exists('to', $cuerpo)
+                && ($cuerpo['type'] ?? null) === 'template';
+        });
+    }
+
     private function procesar(array $mensaje, array $contacts): void
     {
         $whatsapp = Mockery::mock(WhatsAppService::class);

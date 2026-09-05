@@ -465,9 +465,10 @@ onUnmounted(() => {
                             y, en lugar del teléfono, su usuario (por ejemplo <code>@FGChitiva</code>).
                         </p>
                         <p class="text-sm text-gray-600 mb-2">
-                            Le puedes responder con normalidad: escribir, mandar fotos, audios y archivos funciona igual.
-                            Lo único que cambia es que <strong>no se puede cruzar con ispwatch</strong>, porque ese cruce
-                            se hace por teléfono.
+                            Le puedes responder con normalidad: escribir, mandar fotos, audios y archivos funciona igual,
+                            y <strong>también enviarle una plantilla</strong> para reabrir la conversación cuando se pasan
+                            las 24 horas. Lo único que cambia es que <strong>no se puede cruzar con ispwatch</strong>,
+                            porque ese cruce se hace por teléfono.
                         </p>
                         <div class="p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-900">
                             <strong>Ojo:</strong> que no aparezca el panel de ispwatch <em>no</em> significa que no sea

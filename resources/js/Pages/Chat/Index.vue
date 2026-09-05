@@ -91,8 +91,16 @@ function openTemplatePicker() {
     showTemplatePicker.value = true;
 }
 
+// Cualquier error del envío de plantilla, no solo el de la clave `template`:
+// una falla de validación de `phone` o `conversation_id` quedaba invisible y el
+// botón simplemente "no hacía nada".
+const templateError = computed(() => Object.values(templateForm.errors)[0] || null);
+
 function sendTemplate() {
     if (!selectedTemplateId.value) return;
+    // Puede ser null: si el cliente ocultó su número, el hilo (conversation_id)
+    // es lo que identifica al destinatario. El backend resuelve el contacto desde
+    // la conversación y le escribe por su BSUID.
     templateForm.phone = props.activePhone;
     templateForm.template_id = selectedTemplateId.value;
     templateForm.conversation_id = props.activeConversationId;
@@ -2407,8 +2415,8 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
                     </div>
 
                     <div class="p-4 border-t border-gray-100 flex items-center justify-end gap-2">
-                        <p v-if="templateForm.errors.template" class="text-xs text-red-500 mr-auto">
-                            {{ templateForm.errors.template }}
+                        <p v-if="templateError" class="text-xs text-red-500 mr-auto">
+                            {{ templateError }}
                         </p>
                         <button type="button" @click="showTemplatePicker = false"
                                 class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition">

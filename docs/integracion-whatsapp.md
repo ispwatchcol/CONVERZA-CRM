@@ -152,6 +152,21 @@ teléfono normalizado es solo dígitos; un BSUID no).
 > La lección general: **nunca descartar un mensaje entrante en silencio.** Si no
 > se sabe qué hacer con él, hay que guardarlo igual y que se vea.
 
+**Todos los caminos de salida usan `Contact::waDestino()`** (teléfono si lo hay,
+BSUID si no): texto libre, medios, aviso de transferencia y **plantillas**. Ese
+último se quedó atrás en el arreglo original —`sendTemplate` seguía exigiendo
+`phone`— y el síntoma era peor que un error: el botón *Enviar* del selector de
+plantillas no hacía nada, porque la validación fallaba bajo la clave `phone` y el
+modal solo mostraba errores de la clave `template`. Es justo el caso que más
+duele: la plantilla es la **única** forma de escribirle a un cliente fuera de la
+ventana de 24 h, así que un cliente nuevo que oculta el número escribía una vez y
+su hilo quedaba muerto sin forma de reabrirlo. Corregido el 05/09/2026, CON-72.
+
+> Al agregar un camino de envío nuevo, la regla es: **el destinatario sale de
+> `waDestino()`, nunca de `$contact->phone`.** Y si el envío se dispara desde un
+> modal, que ese modal muestre *cualquier* error de validación, no solo el que se
+> esperaba — un botón mudo es más caro de diagnosticar que un mensaje en rojo.
+
 ### 2.5 Reenvío a desarrollo
 
 Si `WEBHOOK_FORWARD_URL` está definida, se reenvía el payload íntegro a esa URL
