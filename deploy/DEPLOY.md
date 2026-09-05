@@ -249,11 +249,28 @@ gh api repos/ispwatchcol/CONVERZA-CRM/actions/runs --jq \
 gh api repos/ispwatchcol/CONVERZA-CRM/actions/runs/<ID>/jobs --jq '.total_count'
 ```
 
-**Antes de tocar este archivo**, validá que siga compilando:
+**Ahora hay una red automática.** El workflow *Validar workflows*
+(`.github/workflows/validar-workflows.yml`) corre en cada PR que toque
+`.github/workflows/` y ejecuta `.github/scripts/validate-workflows.py`, que revisa
+que cada workflow sea YAML válido, que no haya expresiones de Actions **vacías**
+—la trampa exacta de esta sección— y que ninguna quede sin cerrar. Se probó contra
+el `deploy.yml` roto de verdad: lo señala en la línea 93 y devuelve código 1.
+
+Corrélo en local antes de tocar cualquier workflow:
 
 ```bash
-grep -n '\${{[[:space:]]*}}' .github/workflows/deploy.yml   # debe salir vacío
+python .github/scripts/validate-workflows.py
 ```
+
+> ⚠️ **Dos límites que conviene tener claros.**
+>
+> 1. Hoy el check es *advisory*: si falla, sale una X roja pero el merge se puede
+>    hacer igual. Falta marcarlo como check obligatorio en las reglas de `main`,
+>    que es un ajuste manual en GitHub — **CON-74**.
+> 2. Si lo que se rompe es **el propio `validar-workflows.yml`**, tampoco arranca y
+>    tampoco avisa: ningún workflow puede denunciar su propia falta de compilación.
+>    Por eso ese archivo se mantiene deliberadamente corto, y por eso el chequeo
+>    manual de abajo no se retira.
 
 **Chequeo periódico que vale la pena:** comparar lo desplegado contra `main`. Si
 difieren sin motivo, el pipeline está roto.
