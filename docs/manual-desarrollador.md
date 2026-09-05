@@ -241,9 +241,32 @@ no se necesita en cada poll, entrégala como `fn () => …`.
 ```php
 return Inertia::render('Chat/Index', [
     'conversations' => $conversations,              // siempre
-    'ispwatchCustomer' => fn () => $resolve()[0],   // solo en carga completa
+    'ispwatchCustomer' => fn () => $resolve()[0],   // solo si la respuesta la incluye
 ]);
 ```
+
+> El comentario decía «solo en carga completa» y ya no es cierto: desde CON-73,
+> **abrir un chat también es una carga parcial** que sí pide `ispwatchCustomer`.
+> Lo que decide es el `only` de cada petición, no si la visita es completa.
+
+**El `only` de cada petición del chat** (`resources/js/Pages/Chat/Index.vue`):
+
+| Acción | Qué pide |
+|---|---|
+| Abrir una conversación | `CHAT_SWITCH_PROPS` — el hilo, la ficha y la lista |
+| Cambiar de chip de filtro | lista + `filter` + `filterCounts` |
+| Buscar / «Cargar más» | solo la lista y su estado (`search`, `listLimit`, `hasMoreConversations`) |
+| Poll de 5 s | lista, `activeChat`, `staffMembers`, `presence`, `serviceWindowExpiresAt` |
+
+Cadenas para grepear cuando algo de la bandeja se comporte raro:
+`CONVERSATIONS_PER_PAGE`, `list_limit`, `phonesMatchingName`, `X-Converza-Poll`,
+`pendingConversationId`, `CHAT_SWITCH_PROPS`.
+
+**`X-Converza-Poll`** distingue el refresco de fondo de una navegación del asesor.
+Hizo falta cuando abrir un chat pasó a ser parcial: hasta entonces `$isPartialReload`
+alcanzaba para decir «esto es el poll», y de eso colgaba la excepción que le deja
+al agente reasignado seguir viendo el hilo que ya tiene abierto. Sin la cabecera,
+esa excepción se habría extendido a abrir cualquier hilo del tenant.
 
 **Validación tenant-aware:**
 

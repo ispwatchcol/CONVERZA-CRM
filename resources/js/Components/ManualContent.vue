@@ -390,6 +390,18 @@ onUnmounted(() => {
                             <li><strong>No leídas:</strong> con mensajes entrantes que tú no has leído.</li>
                         </ul>
 
+                        <h3 class="font-semibold text-gray-800 mt-5 mb-2">Buscar y cargar más</h3>
+                        <p class="text-sm text-gray-600 mb-2">
+                            La lista muestra las <strong>50 conversaciones más recientes</strong> del filtro que tengas
+                            puesto. Abajo del todo hay un botón <strong>Cargar más conversaciones</strong> para seguir
+                            bajando en el histórico.
+                        </p>
+                        <p class="text-sm text-gray-600 mb-2">
+                            El buscador <strong>no se limita a lo que está a la vista</strong>: busca en todas tus
+                            conversaciones, por nombre guardado, teléfono, nombre de usuario de WhatsApp y también por el
+                            nombre del titular en ispwatch. No hace falta cargar más antes de buscar.
+                        </p>
+
                         <h3 class="font-semibold text-gray-800 mt-5 mb-2">Cómo funcionan los no leídos</h3>
                         <p class="text-sm text-gray-600 mb-2">
                             El badge verde es <strong>por asesor</strong>: cada uno tiene su propio contador, y que tu
@@ -465,9 +477,10 @@ onUnmounted(() => {
                             y, en lugar del teléfono, su usuario (por ejemplo <code>@FGChitiva</code>).
                         </p>
                         <p class="text-sm text-gray-600 mb-2">
-                            Le puedes responder con normalidad: escribir, mandar fotos, audios y archivos funciona igual.
-                            Lo único que cambia es que <strong>no se puede cruzar con ispwatch</strong>, porque ese cruce
-                            se hace por teléfono.
+                            Le puedes responder con normalidad: escribir, mandar fotos, audios y archivos funciona igual,
+                            y <strong>también enviarle una plantilla</strong> para reabrir la conversación cuando se pasan
+                            las 24 horas. Lo único que cambia es que <strong>no se puede cruzar con ispwatch</strong>,
+                            porque ese cruce se hace por teléfono.
                         </p>
                         <div class="p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-900">
                             <strong>Ojo:</strong> que no aparezca el panel de ispwatch <em>no</em> significa que no sea

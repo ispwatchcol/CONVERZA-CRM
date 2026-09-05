@@ -15,7 +15,7 @@ una línea de comportamiento real. Cuando uno se resuelva, bórralo de aquí.
 | # | Mejora | Riesgo | Esfuerzo | Prioridad |
 |---|---|:---:|:---:|:---:|
 | [M-01](#m-01-el-webhook-no-verifica-la-firma-de-meta) | Verificar la firma del webhook | Alto | Bajo | 🔴 **1** |
-| [M-04](#m-04-el-chat-carga-todo-sin-paginar) | Paginar chat y conversaciones | Alto | Medio | 🔴 **2** |
+| [M-04](#m-04-el-chat-carga-todo-sin-paginar) | Paginar chat y conversaciones | Alto | Medio | 🟠 **2** — lista ✅, mensajes pendientes |
 | [M-02](#m-02-la-suite-de-tests-está-muerta) | Resucitar los tests | Alto | Alto | 🔴 **3** |
 | [M-05](#m-05-no-hay-rate-limiting) | Rate limiting en login y escrituras | Medio | Bajo | 🟠 **4** |
 | [M-03](#m-03-mediacontroller-no-valida-la-pertenencia-al-tenant) | Validar pertenencia de medios | Medio | Bajo | 🟠 **5** |
@@ -76,13 +76,24 @@ para confirmar que no hay falsos negativos, y luego activar el `abort`.
 
 ### M-04 · El chat carga todo sin paginar
 
+> **La mitad está hecha (05/09/2026, CON-73).** La **lista de conversaciones** ya
+> va paginada: `ChatController::CONVERSATIONS_PER_PAGE = 50`, `list_limit` crece
+> con «Cargar más» y viaja en la URL para que el poll no encoja la lista. Como la
+> lista dejó de viajar entera, la **búsqueda pasó al servidor** (`?q=`) e incluye
+> el nombre del titular en ispwatch vía `IspwatchRepository::phonesMatchingName()`
+> — sin eso, buscar solo habría alcanzado a los 50 chats cargados.
+>
+> **Los mensajes siguen sin paginar** (punto 2 de abajo). No era lo urgente: el
+> hilo más largo en producción tiene 152 mensajes (~45 KB), mientras que la lista
+> del tenant grande eran 822 filas cada 5 s. Se midió antes de decidir.
+
 **Dónde:** [`ChatController::index`](../app/Http/Controllers/ChatController.php)
 
-Dos consultas sin límite:
+Dos consultas sin límite (la primera ya corregida):
 
 ```php
-$conversationModels = $conversationsQuery->orderByDesc('updated_at')->get();   // TODAS
-$activeChat = Message::where('conversation_id', …)->orderBy('created_at')->get(); // TODOS
+$conversationModels = $conversationsQuery->orderByDesc('updated_at')->get();   // TODAS → ahora limit(50 + 1)
+$activeChat = Message::where('conversation_id', …)->orderBy('created_at')->get(); // TODOS (sigue igual)
 ```
 
 **Consecuencia:** un tenant con 5.000 conversaciones serializa las 5.000 en cada
@@ -98,8 +109,28 @@ del sistema y se manifiesta como lentitud creciente, no como un error.
 2. **Mensajes:** cargar los últimos ~50 y paginar hacia arriba. El polling solo
    debería traer `id > lastMessageId`.
 
-Lo segundo es además la mejora de rendimiento percibido más grande disponible:
-hoy cada poll re-serializa el hilo completo.
+Lo segundo sigue pendiente: hoy cada poll re-serializa el hilo completo.
+
+**Lo que el síntoma enseñó.** Esto no se manifestó como lentitud, sino como *«hay
+que darle 20 veces para cambiar de chat»*. Inertia deja **una sola navegación en
+vuelo**: cada clic cancela el anterior. Con una lista pesada y sin ninguna señal
+de que el clic entró, el asesor insiste — y al insistir es él mismo quien impide
+que cargue. De ahí que el arreglo no fuera solo paginar:
+
+- Abrir un chat es una **carga parcial** (`CHAT_SWITCH_PROPS`), no una visita
+  completa: no reevalúa plantillas, respuestas rápidas, etiquetas ni staff, que
+  no cambian al pasar de un chat a otro. Los contadores de los chips sí se piden
+  —abrir un chat lo marca leído, y el poll no los trae—.
+- La fila se marca **al instante** (`pendingConversationId`) y el clic repetido
+  sobre el mismo chat se ignora en vez de reiniciar la petición. Igual en los
+  chips de filtro.
+- El poll **se pausa con la pestaña oculta** y refresca al volver (`visibilitychange`):
+  varios asesores con la pestaña de fondo eran carga pura sobre el droplet de 1 GB.
+
+> Regla para lo que venga: **si una acción tarda, la UI tiene que decirlo antes de
+> que el usuario dude.** Una petición lenta y silenciosa se convierte en una
+> tormenta de clics que se cancela a sí misma, y el reporte que llega no habla de
+> lentitud sino de que «no funciona».
 
 ---
 
