@@ -27,6 +27,18 @@ use Inertia\Inertia;
 
 class ChatController extends Controller
 {
+    /**
+     * Cuántas conversaciones se mandan al navegador de entrada.
+     *
+     * La lista se cargaba COMPLETA: en el tenant más grande son ~820 filas, y
+     * como `conversations` está en el `only` del poll, el servidor las volvía a
+     * armar —con el cruce de nombres de ispwatch— y el navegador a re-renderizar
+     * las 820 cada 5 s. Con la lista así de pesada, un clic que caía sobre un
+     * re-render se perdía, y el asesor tenía que insistir para cambiar de chat.
+     * Ver CON-73.
+     */
+    private const CONVERSATIONS_PER_PAGE = 50;
+
     public function __construct(
         protected WhatsAppService $whatsappService,
         protected IspwatchRepository $ispwatch,
@@ -83,7 +95,50 @@ class ChatController extends Controller
             }
         }
 
-        $conversationModels = $conversationsQuery->orderByDesc('updated_at')->get();
+        // ── Búsqueda ─────────────────────────────────────────────────────────
+        // Se hace en el servidor porque la lista ya no viaja entera: filtrar solo
+        // lo cargado dejaría fuera los chats viejos. Cubre lo mismo que cubría el
+        // filtro del navegador —nombre guardado, teléfono, username de WhatsApp y
+        // el nombre del TITULAR en ispwatch—, que no está en esta base de datos.
+        $search = trim((string) $request->query('q', ''));
+        $ispwatchTenantId = $tenant->ispwatch_tenant_id ? (int) $tenant->ispwatch_tenant_id : null;
+
+        if ($search !== '') {
+            $digits = preg_replace('/\D/', '', $search) ?? '';
+            $titularPhones = $ispwatchTenantId
+                ? $this->ispwatch->phonesMatchingName($ispwatchTenantId, $search)
+                : [];
+
+            $conversationsQuery->whereHas('contact', function ($q) use ($search, $digits, $titularPhones) {
+                $q->where(function ($q) use ($search, $digits, $titularPhones) {
+                    $q->where('name', 'ilike', '%' . $search . '%')
+                      ->orWhere('wa_username', 'ilike', '%' . $search . '%');
+
+                    if ($digits !== '') {
+                        $q->orWhere('phone', 'like', '%' . $digits . '%');
+                    }
+
+                    // Los teléfonos de ispwatch son locales (10 dígitos) y acá se
+                    // guardan con indicativo, así que se comparan por el final.
+                    if ($titularPhones !== []) {
+                        $q->orWhereIn(DB::raw('right(phone, 10)'), $titularPhones);
+                    }
+                });
+            });
+        }
+
+        // ── Paginado ─────────────────────────────────────────────────────────
+        // `list_limit` crece con "Cargar más" y viaja en la URL, así que el poll
+        // lo conserva y la lista no se encoge sola al refrescarse.
+        $listLimit = (int) $request->query('list_limit', self::CONVERSATIONS_PER_PAGE);
+        $listLimit = max(self::CONVERSATIONS_PER_PAGE, min($listLimit, 2000));
+
+        // Una fila de más: es cómo se sabe que quedan chats sin traer, sin pagar
+        // un COUNT(*) extra en cada poll.
+        $conversationModels = $conversationsQuery->orderByDesc('updated_at')->limit($listLimit + 1)->get();
+
+        $hasMoreConversations = $conversationModels->count() > $listLimit;
+        $conversationModels   = $conversationModels->take($listLimit);
 
         // ── Nombre a mostrar: manda el TITULAR de ispwatch ───────────────────
         // El webhook de WhatsApp solo trae el nombre del PERFIL de quien escribe
@@ -92,7 +147,6 @@ class ChatController extends Controller
         // que un chat del titular podía aparecer con un nombre que el ISP no
         // reconocía. Orden: titular en ispwatch → perfil de WhatsApp → teléfono.
         // Una sola query batch cacheada 60 s, apta para el poll de 5 s.
-        $ispwatchTenantId = $tenant->ispwatch_tenant_id ? (int) $tenant->ispwatch_tenant_id : null;
         $ispwatchNames    = $ispwatchTenantId
             ? $this->ispwatch->customerNamesForContacts(
                 $ispwatchTenantId,
@@ -155,6 +209,11 @@ class ChatController extends Controller
         // por lo que en condiciones normales el bloque if siempre se ejecuta y el elseif
         // nunca se alcanza en polls — pero el guard queda como defensa en profundidad.
         $isPartialReload = $request->hasHeader('X-Inertia-Partial-Data');
+        // El poll se marca con su propia cabecera. Antes bastaba con "es partial"
+        // para aflojar el alcance del agente más abajo, pero desde que abrir un
+        // chat también es un partial (CON-73) eso habría ampliado el acceso a
+        // cualquier hilo del tenant en una navegación normal.
+        $isPoll = $request->hasHeader('X-Converza-Poll');
 
         if ($activeConversationId) {
             $convQuery = Conversation::with(['contact', 'assignee.user'])
@@ -166,10 +225,11 @@ class ChatController extends Controller
             $activeConversation = $convQuery->find($activeConversationId);
 
             // Agente reasignado en mitad de la sesión: el scope assigned_to ya no
-            // resuelve la conversación. En partial reloads no blanqueamos el hilo —
-            // caemos a scope de tenant para mantener los mensajes visibles (solo lectura;
-            // las acciones de escritura siguen bloqueadas en sus propios endpoints).
-            if (!$activeConversation && $isPartialReload && $isAgent) {
+            // resuelve la conversación. En el poll no blanqueamos el hilo que ya
+            // tiene abierto — caemos a scope de tenant para mantener los mensajes
+            // visibles (solo lectura; las acciones de escritura siguen bloqueadas
+            // en sus propios endpoints). Abrir OTRO chat sigue sujeto al scope.
+            if (!$activeConversation && $isPoll && $isAgent) {
                 $activeConversation = Conversation::with(['contact', 'assignee.user'])
                     ->where('tenant_id', $tenantId)
                     ->find($activeConversationId);
@@ -303,6 +363,11 @@ class ChatController extends Controller
             'activeAssignedTo'     => $activeAssignedTo,
             'myStaffMemberId'      => $myStaffMember->id,
             'filter'               => $filter,
+            // Estado del paginado y la búsqueda: el front los reenvía en cada
+            // poll para que la lista no cambie de tamaño ni pierda el término.
+            'search'               => $search,
+            'listLimit'            => $listLimit,
+            'hasMoreConversations' => $hasMoreConversations,
             'activeContactId'      => $activeConversation?->contact?->id,
             // Cuándo se cierra la ventana de 24 h. null = cerrada (o el contacto
             // nunca escribió). El front calcula el tiempo restante en vivo.

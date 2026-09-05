@@ -8,6 +8,9 @@ import { ref, onMounted, onUnmounted, nextTick, watch, computed } from 'vue';
 
 const props = defineProps({
     conversations: { type: Array, default: () => [] },
+    search: { type: String, default: '' },
+    listLimit: { type: Number, default: 50 },
+    hasMoreConversations: { type: Boolean, default: false },
     activeChat: { type: Array, default: () => [] },
     activeConversationId: { type: Number, default: null },
     activePhone: { type: String, default: null },
@@ -166,7 +169,7 @@ function removeLabel(label) {
 const showNewChatModal = ref(false);
 const showQuickReplies = ref(false);
 const messagesContainer = ref(null);
-const search = ref('');
+const search = ref(props.search || '');
 const mobileShowChat = ref(false);
 
 const form = useForm({ phone: '', message: '', conversation_id: null });
@@ -256,7 +259,10 @@ watch(() => props.activeChat, (newChat) => {
     if (convChanged || (appended && wasNearBottom)) {
         scrollToBottom();
     }
-}, { deep: true });
+// Sin `deep`: Inertia reemplaza el array entero en cada respuesta, así que el
+// watch superficial ya dispara. Recorrer mensaje por mensaje cada 5 s solo
+// gastaba tiempo del hilo principal —el mismo que necesita atender los clics—.
+});
 
 function scrollToBottom() {
     nextTick(() => {
@@ -750,15 +756,99 @@ function formatPhone(phone) {
     return phone;
 }
 
-function selectConversation(conv) {
+// ── Abrir una conversación ───────────────────────────────────────────────────
+// Antes esto era un <Link> pelado, y cambiar de chat pedía al servidor la página
+// ENTERA: plantillas con su análisis de variables, respuestas rápidas, etiquetas
+// y staff. Nada de eso cambia al pasar de un chat a otro. Con la lista grande eso
+// tardaba, y como el <Link> no daba ninguna señal —la fila ni se marcaba— el
+// asesor volvía a hacer clic; cada clic nuevo ABORTA el anterior (Inertia deja
+// una sola navegación en vuelo), así que insistir era justo lo que impedía que
+// cargara. De ahí los "20 clics". CON-73.
+//
+// Ahora: solo se piden las props del hilo, la fila se marca al instante y un
+// segundo clic sobre el mismo chat se ignora en vez de reiniciar la petición.
+//
+// `filterCounts` SÍ va en la lista aunque no sea del hilo: abrir un chat lo marca
+// leído, y hasta ahora esos contadores se refrescaban justamente porque cambiar
+// de chat era una visita completa. Dejarlos fuera los habría congelado hasta el
+// próximo F5 —el poll tampoco los pide—. Son dos consultas agregadas, baratas.
+const CHAT_SWITCH_PROPS = [
+    'conversations', 'activeChat', 'activeConversationId', 'activePhone', 'activeUsername',
+    'activeSinTelefono', 'activeName', 'activeWhatsappName', 'activeStatus', 'activeAssignedTo',
+    'activeContactId', 'serviceWindowExpiresAt', 'contactLabels', 'ispwatchCustomer',
+    'ispwatchInvoices', 'presence', 'filterCounts', 'search', 'listLimit', 'hasMoreConversations',
+];
+
+// Espeja ChatController::CONVERSATIONS_PER_PAGE: es el tamaño que el backend
+// asume cuando la URL no trae `list_limit`, así que solo se manda si creció.
+const DEFAULT_LIST_LIMIT = 50;
+
+const pendingConversationId = ref(null);
+
+// Lo que la UI resalta: el chat pedido si hay uno en camino, el cargado si no.
+// Sin esto el resaltado llegaba con la respuesta y el clic parecía perdido.
+const selectedConversationId = computed(
+    () => pendingConversationId.value ?? props.activeConversationId
+);
+
+// Los parámetros que definen la vista actual de la lista. Viajan en la URL para
+// que el poll (que recarga window.location.href) no revierta el filtro, el
+// término buscado ni el "Cargar más".
+function listQuery(overrides = {}) {
+    const q = {
+        conversation: props.activeConversationId || undefined,
+        filter: props.filter && props.filter !== 'all' ? props.filter : undefined,
+        q: search.value || undefined,
+        list_limit: props.listLimit !== DEFAULT_LIST_LIMIT ? props.listLimit : undefined,
+        ...overrides,
+    };
+    Object.keys(q).forEach(k => q[k] === undefined && delete q[k]);
+    return q;
+}
+
+function openConversation(conv) {
+    // Clic repetido sobre el chat que ya se está trayendo: ignorarlo. Repetir la
+    // navegación cancelaría la que está en vuelo y volvería a empezar de cero.
+    if (pendingConversationId.value === conv.id) return;
+
+    // Ya está abierto y no hay nada en camino: en móvil solo hay que mostrar el
+    // panel del chat, no volver a pedirlo.
+    if (pendingConversationId.value === null && props.activeConversationId === conv.id) {
+        mobileShowChat.value = true;
+        return;
+    }
+
+    pendingConversationId.value = conv.id;
     mobileShowChat.value = true;
     // El backend marca la conversación como leída (conversation_reads) en la
     // próxima carga; mientras tanto, la damos por leída al instante en la UI.
     optimisticRead.value[conv.id] = true;
+
+    router.get(route('chat.index', listQuery({ conversation: conv.id })), {}, {
+        only: CHAT_SWITCH_PROPS,
+        preserveState: true,
+        preserveScroll: true,
+        onFinish: () => { pendingConversationId.value = null; },
+    });
 }
 
-const filteredConversations = () => {
-    if (!search.value) return props.conversations;
+// Se mantiene el <a href> real (clic con rueda o con Ctrl abre pestaña nueva);
+// solo el clic normal se intercepta.
+function onConversationClick(event, conv) {
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
+    event.preventDefault();
+    openConversation(conv);
+}
+
+// ── Búsqueda ─────────────────────────────────────────────────────────────────
+// El filtro local ya no alcanza: la lista viene paginada desde el servidor, así
+// que buscar tiene que preguntarle a él. Se sigue filtrando lo que ya está
+// cargado mientras llega la respuesta, para que escribir se sienta inmediato.
+const visibleConversations = computed(() => {
+    // Sin término, o con el término que el servidor ya aplicó: su lista manda —el
+    // filtro local no puede ver los chats que no están cargados—.
+    if (!search.value || props.search === search.value) return props.conversations;
+
     const s = search.value.toLowerCase();
     // whatsapp_name: cuando se muestra el titular de ISPWatch, el chat se sigue
     // encontrando buscando por el nombre del perfil de WhatsApp.
@@ -766,7 +856,44 @@ const filteredConversations = () => {
         c.name?.toLowerCase().includes(s)
         || c.whatsapp_name?.toLowerCase().includes(s)
         || c.phone?.includes(s));
-};
+});
+
+const searching = ref(false);
+let searchTimer = null;
+
+watch(search, (term) => {
+    if (searchTimer) clearTimeout(searchTimer);
+    if (term === props.search) { searching.value = false; return; }
+    searching.value = true;
+    // 350 ms: sin esto cada tecla dispara una consulta a la lista completa.
+    searchTimer = setTimeout(() => {
+        // Puede haberse resuelto ya: abrir un chat mientras se escribía manda el
+        // término en la misma petición. Repetirla sería una consulta de más.
+        if (search.value === props.search) { searching.value = false; return; }
+
+        router.get(route('chat.index', listQuery({ q: term || undefined, list_limit: undefined })), {}, {
+            only: ['conversations', 'search', 'listLimit', 'hasMoreConversations'],
+            preserveState: true,
+            preserveScroll: true,
+            replace: true,
+            onFinish: () => { searching.value = false; },
+        });
+    }, 350);
+});
+
+const loadingMore = ref(false);
+
+function loadMoreConversations() {
+    if (loadingMore.value) return;
+    loadingMore.value = true;
+    router.get(route('chat.index', listQuery({ list_limit: props.listLimit + DEFAULT_LIST_LIMIT })), {}, {
+        only: ['conversations', 'search', 'listLimit', 'hasMoreConversations'],
+        preserveState: true,
+        preserveScroll: true,
+        replace: true,
+        onFinish: () => { loadingMore.value = false; },
+    });
+}
 
 const deleteConfirm = ref({ show: false, id: null, name: '' });
 
@@ -1034,11 +1161,30 @@ const filterChips = computed(() =>
         : ALL_FILTER_CHIPS
 );
 
+// El chip se pinta al instante y el que ya se está trayendo se ignora: cambiar a
+// "Cerradas" en el tenant grande trae cientos de filas, y volver a hacer clic
+// cancelaba la petición en curso y reiniciaba la espera. Mismo problema que el
+// cambio de chat (CON-73). Solo se piden las props de la lista: el hilo abierto
+// no cambia por cambiar de filtro.
+const pendingFilter = ref(null);
+const activeFilterChip = computed(() => pendingFilter.value ?? props.filter);
+
 function setFilter(value) {
-    router.get(route('chat.index'), {
+    if (pendingFilter.value === value) return;
+    if (pendingFilter.value === null && props.filter === value) return;
+
+    pendingFilter.value = value;
+
+    router.get(route('chat.index', listQuery({
         filter: value !== 'all' ? value : undefined,
-        conversation: props.activeConversationId || undefined,
-    }, { preserveState: true, preserveScroll: true, replace: true });
+        list_limit: undefined,
+    })), {}, {
+        only: ['conversations', 'filter', 'filterCounts', 'search', 'listLimit', 'hasMoreConversations'],
+        preserveState: true,
+        preserveScroll: true,
+        replace: true,
+        onFinish: () => { pendingFilter.value = null; },
+    });
 }
 
 // ── Asignación de agente ─────────────────────────────────────────────────────
@@ -1202,43 +1348,65 @@ let stopNavStart = null;
 let stopNavFinish = null;
 
 let pollingInterval = null;
+
+function pollNow() {
+    // No recargar mientras hay un envío o una navegación en curso: un
+    // router.reload cancelaría el request en vuelo (por eso una imagen podía
+    // "quedarse" sin enviarse, y el chat se cambiaba solo al hacer clic).
+    if (sending.value || navInFlight.value > 0 || pendingConversationId.value !== null) return;
+    // Con la pestaña en segundo plano nadie está mirando: seguir pidiendo la
+    // lista cada 5 s solo cargaba el droplet —y con varios asesores con la
+    // pestaña abierta, esa carga es la que hace lento al que SÍ está usando el
+    // chat—. Al volver a la pestaña se refresca de una (ver visibilitychange).
+    if (typeof document !== 'undefined' && document.hidden) return;
+
+    // Anclamos SIEMPRE la conversación activa (y el filtro, la búsqueda y el
+    // tamaño de la lista) en la recarga. Si la URL no llevara ?conversation=,
+    // el backend elegiría "la más reciente" y el panel de mensajes saltaría solo
+    // a otra conversación al entrar un mensaje. replace:true evita ensuciar el
+    // historial cada 5 s.
+    const reloadData = {};
+    if (props.activeConversationId) reloadData.conversation = props.activeConversationId;
+    if (props.filter && props.filter !== 'all') reloadData.filter = props.filter;
+    if (props.search) reloadData.q = props.search;
+    if (props.listLimit !== DEFAULT_LIST_LIMIT) reloadData.list_limit = props.listLimit;
+    // 'presence' + 'staffMembers' también registran el heartbeat de presencia
+    // en el backend (el partial reload ejecuta ChatController::index completo).
+    router.reload({
+        // serviceWindowExpiresAt va en la lista porque cuando el cliente
+        // responde la ventana de 24h se REABRE: sin refrescarlo, el aviso de
+        // "fuera de la ventana" quedaría pegado hasta recargar la página.
+        // No cuesta nada: el controlador ya calcula ese valor en cada poll,
+        // el `only` solo decide si se serializa.
+        only: ['conversations', 'activeChat', 'staffMembers', 'presence', 'serviceWindowExpiresAt', 'hasMoreConversations'],
+        data: reloadData,
+        replace: true,
+        preserveScroll: true,
+        preserveState: true,
+        // Marca la petición como poll: es lo único que distingue un refresco de
+        // fondo de una navegación del asesor, y el backend afloja el alcance del
+        // agente reasignado SOLO para el poll (ver ChatController::index).
+        headers: { 'Cache-Control': 'no-cache', 'X-Converza-Poll': '1' },
+    });
+}
+
+function onVisibilityChange() {
+    if (!document.hidden) pollNow();
+}
+
 onMounted(() => {
     stopNavStart = router.on('start', () => { navInFlight.value++; });
     stopNavFinish = router.on('finish', () => { navInFlight.value = Math.max(0, navInFlight.value - 1); });
 
-    pollingInterval = setInterval(() => {
-        // No recargar mientras hay un envío o una navegación en curso: un
-        // router.reload cancelaría el request en vuelo (por eso una imagen podía
-        // "quedarse" sin enviarse, y el chat se cambiaba solo al hacer clic).
-        if (sending.value || navInFlight.value > 0) return;
-        // Anclamos SIEMPRE la conversación activa (y el filtro) en la recarga. Si
-        // la URL no llevara ?conversation=, el backend elegiría "la más reciente"
-        // y el panel de mensajes saltaría solo a otra conversación al entrar un
-        // mensaje. replace:true evita ensuciar el historial cada 5s.
-        const reloadData = {};
-        if (props.activeConversationId) reloadData.conversation = props.activeConversationId;
-        if (props.filter && props.filter !== 'all') reloadData.filter = props.filter;
-        // 'presence' + 'staffMembers' también registran el heartbeat de presencia
-        // en el backend (el partial reload ejecuta ChatController::index completo).
-        router.reload({
-            // serviceWindowExpiresAt va en la lista porque cuando el cliente
-            // responde la ventana de 24h se REABRE: sin refrescarlo, el aviso de
-            // "fuera de la ventana" quedaría pegado hasta recargar la página.
-            // No cuesta nada: el controlador ya calcula ese valor en cada poll,
-            // el `only` solo decide si se serializa.
-            only: ['conversations', 'activeChat', 'staffMembers', 'presence', 'serviceWindowExpiresAt'],
-            data: reloadData,
-            replace: true,
-            preserveScroll: true,
-            preserveState: true,
-            headers: { 'Cache-Control': 'no-cache' },
-        });
-    }, 5000);
+    pollingInterval = setInterval(pollNow, 5000);
+    document.addEventListener('visibilitychange', onVisibilityChange);
 });
 onUnmounted(() => {
     if (pollingInterval) clearInterval(pollingInterval);
     if (stopNavStart) stopNavStart();
     if (stopNavFinish) stopNavFinish();
+    if (searchTimer) clearTimeout(searchTimer);
+    document.removeEventListener('visibilitychange', onVisibilityChange);
 });
 
 // Cerrar el drawer del cliente al pasar de mobile a desktop para evitar
@@ -1285,11 +1453,14 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
                     <div class="flex gap-1 overflow-x-auto pb-1 -mx-0.5 px-0.5">
                         <button v-for="opt in filterChips" :key="opt.value" @click="setFilter(opt.value)"
                                 class="shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-medium transition whitespace-nowrap"
-                                :class="filter === opt.value ? 'bg-accent text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'">
+                                :class="[
+                                    activeFilterChip === opt.value ? 'bg-accent text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200',
+                                    pendingFilter === opt.value ? 'opacity-70' : '',
+                                ]">
                             {{ opt.label }}
                             <span v-if="filterCounts[opt.value] !== undefined"
                                   class="px-1.5 py-0 rounded-full text-[9px] font-semibold tabular-nums"
-                                  :class="filter === opt.value ? 'bg-white/25' : 'bg-white text-gray-500'">
+                                  :class="activeFilterChip === opt.value ? 'bg-white/25' : 'bg-white text-gray-500'">
                                 {{ filterCounts[opt.value] }}
                             </span>
                         </button>
@@ -1298,23 +1469,21 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
 
                 <!-- Conversation List -->
                 <div class="flex-1 overflow-y-auto">
-                    <template v-if="conversations.length">
+                    <template v-if="visibleConversations.length">
                         <div
-                            v-for="conv in filteredConversations()"
+                            v-for="conv in visibleConversations"
                             :key="conv.id"
                             class="relative group border-b border-gray-50"
                         >
-                            <!-- preserve-state: sin esto, Inertia recrea el componente al
-                                 volver la respuesta (~1s) y mobileShowChat se reinicia a
-                                 false → en celular el chat se abría y "rebotaba" de vuelta
-                                 a la lista. preserve-scroll evita que la lista salte arriba. -->
-                            <Link
+                            <!-- <a> real (rueda o Ctrl+clic abren pestaña nueva) con el clic
+                                 normal interceptado por openConversation: marca la fila al
+                                 instante, pide solo las props del hilo e ignora el clic
+                                 repetido en vez de cancelar la petición en vuelo. -->
+                            <a
                                 :href="route('chat.index', { conversation: conv.id })"
-                                @click="selectConversation(conv)"
-                                preserve-state
-                                preserve-scroll
+                                @click="onConversationClick($event, conv)"
                                 class="flex items-center p-3 hover:bg-gray-50 cursor-pointer transition pr-9"
-                                :class="{ 'bg-accent/5 border-l-3 border-l-accent': activeConversationId === conv.id }"
+                                :class="{ 'bg-accent/5 border-l-3 border-l-accent': selectedConversationId === conv.id }"
                             >
                                 <div class="relative shrink-0">
                                     <div class="w-11 h-11 rounded-full bg-gradient-to-br from-accent to-accent-light flex items-center justify-center text-white font-bold text-sm">
@@ -1358,7 +1527,14 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
                                         {{ conv.last_message || 'Sin mensajes' }}
                                     </p>
                                 </div>
-                            </Link>
+                                <!-- El chat pedido y todavía en camino: sin esta señal el
+                                     asesor creía que el clic no había entrado. -->
+                                <svg v-if="pendingConversationId === conv.id"
+                                     class="w-4 h-4 ml-2 shrink-0 animate-spin text-accent" viewBox="0 0 24 24" fill="none">
+                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"/>
+                                    <path class="opacity-90" fill="currentColor" d="M4 12a8 8 0 018-8v3a5 5 0 00-5 5H4z"/>
+                                </svg>
+                            </a>
                             <button
                                 v-if="isAdmin"
                                 @click.prevent.stop="confirmDelete(conv)"
@@ -1370,7 +1546,18 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
                                 </svg>
                             </button>
                         </div>
+                        <!-- La lista llega paginada: sin esto los chats más viejos
+                             quedarían fuera de alcance. -->
+                        <div v-if="hasMoreConversations" class="p-3">
+                            <button type="button" @click="loadMoreConversations" :disabled="loadingMore"
+                                    class="w-full py-2 rounded-xl text-xs font-medium text-gray-600 bg-gray-50 hover:bg-gray-100 transition disabled:opacity-50">
+                                {{ loadingMore ? 'Cargando…' : 'Cargar más conversaciones' }}
+                            </button>
+                        </div>
                     </template>
+                    <div v-else-if="search" class="p-8 text-center text-gray-400">
+                        <p class="text-sm">{{ searching ? 'Buscando…' : `Ninguna conversación coincide con "${search}"` }}</p>
+                    </div>
                     <div v-else class="p-8 text-center text-gray-400">
                         <svg class="w-12 h-12 mx-auto mb-2 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M20.25 8.511c.884.284 1.5 1.128 1.5 2.097v4.286c0 1.136-.847 2.1-1.98 2.193-.34.027-.68.052-1.02.072v3.091l-3-3c-1.354 0-2.694-.055-4.02-.163a2.115 2.115 0 01-.825-.242m9.345-8.334a2.126 2.126 0 00-.476-.095 48.64 48.64 0 00-8.048 0c-1.131.094-1.976 1.057-1.976 2.192v4.286c0 .837.46 1.58 1.155 1.951m9.345-8.334V6.637c0-1.621-1.152-3.026-2.76-3.235A48.455 48.455 0 0011.25 3c-2.115 0-4.198.137-6.24.402-1.608.209-2.76 1.614-2.76 3.235v6.226c0 1.621 1.152 3.026 2.76 3.235.577.075 1.157.14 1.74.194V21l4.155-4.155" /></svg>
                         <p class="text-sm">No hay conversaciones</p>
@@ -1541,6 +1728,21 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
 
                     <!-- Messages -->
                     <div ref="messagesContainer" class="flex-1 overflow-y-auto p-3 sm:p-4 space-y-2 z-0 relative" @scroll="onMessagesScroll">
+
+                        <!-- Mientras llega el hilo pedido siguen a la vista los mensajes
+                             del anterior: sin este velo el asesor no distingue "todavía
+                             cargando" de "el clic no entró", que es lo que lo llevaba a
+                             insistir hasta cancelar su propia petición. -->
+                        <div v-if="pendingConversationId !== null"
+                             class="sticky top-0 z-30 flex justify-center pointer-events-none">
+                            <span class="inline-flex items-center gap-2 bg-white/95 text-gray-600 text-[11px] font-medium px-3 py-1.5 rounded-full shadow-sm backdrop-blur-sm">
+                                <svg class="w-3.5 h-3.5 animate-spin text-accent" viewBox="0 0 24 24" fill="none">
+                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"/>
+                                    <path class="opacity-90" fill="currentColor" d="M4 12a8 8 0 018-8v3a5 5 0 00-5 5H4z"/>
+                                </svg>
+                                Abriendo conversación…
+                            </span>
+                        </div>
 
                         <!-- Indicador flotante de fecha: aparece al scrollear, muestra la
                              fecha del bloque visible y se desvanece solo tras un momento quieto.

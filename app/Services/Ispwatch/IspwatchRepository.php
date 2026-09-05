@@ -161,6 +161,43 @@ class IspwatchRepository
     }
 
     /**
+     * Teléfonos (locales, 10 dígitos) de los clientes de ispwatch cuyo nombre
+     * de TITULAR contiene el término buscado.
+     *
+     * La bandeja de chats se busca por el nombre que muestra, y ese nombre suele
+     * venir de ispwatch, no de `contacts`. Mientras la lista se cargaba entera en
+     * el navegador eso se resolvía filtrando en el cliente; ahora que el servidor
+     * la pagina, la búsqueda tiene que alcanzar también a los chats que no están
+     * en la página cargada — si no, buscar un cliente viejo no lo encontraría.
+     *
+     * Reutiliza el mismo mapa cacheado 60 s que ya usa el listado, así que no
+     * agrega ni una consulta a la BD externa.
+     *
+     * @return array<int, string>
+     */
+    public function phonesMatchingName(int $ispwatchTenantId, string $term): array
+    {
+        $term = trim($term);
+        if ($term === '') {
+            return [];
+        }
+
+        $needle = mb_strtolower($term);
+        $phones = [];
+
+        foreach ($this->customerNamesByNormalizedPhone($ispwatchTenantId) as $phone => $names) {
+            foreach ($names as $name) {
+                if (str_contains(mb_strtolower($name), $needle)) {
+                    $phones[] = (string) $phone;
+                    break;
+                }
+            }
+        }
+
+        return $phones;
+    }
+
+    /**
      * Mapa [teléfono local de 10 dígitos => nombres de los clientes con ese
      * teléfono, el más reciente primero]. Una sola query por tenant, cacheada
      * 60 s como el resto del repositorio (un cambio de nombre en ispwatch tarda

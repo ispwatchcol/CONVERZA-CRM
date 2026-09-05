@@ -311,9 +311,29 @@ Consecuencias de diseño que hay que respetar:
   conversación: sin `?conversation=` la respuesta devolvería mensajes de otro
   hilo. El frontend siempre manda el parámetro; el backend además tiene el guard
   `$isPartialReload`.
+- El poll **se detiene con la pestaña oculta** (`document.hidden`) y dispara un
+  refresco al volver a ella (`visibilitychange`). Una pestaña de fondo no la mira
+  nadie, y varias abiertas eran carga pura sobre el droplet de 1 GB — carga que
+  se la comía justamente el asesor que sí estaba usando el chat.
+- El poll se identifica con la cabecera **`X-Converza-Poll`**. Desde que abrir un
+  chat también es una recarga parcial, «es partial» dejó de significar «es el
+  poll»: la excepción que le deja al agente reasignado seguir viendo el hilo que
+  tiene abierto se ata a esa cabecera, no a `$isPartialReload`. Si no, esa
+  excepción habría alcanzado a cualquier hilo del tenant en una navegación normal.
 
-**Trade-off aceptado:** ~12 peticiones/minuto por agente con el chat abierto. Con
-decenas de agentes es barato; con miles habría que migrar a WebSockets. Ver
+**Navegar dentro del chat también es parcial.** Abrir una conversación y cambiar
+de filtro son `router.get(..., { only: [...] })`, no visitas completas: piden solo
+las props que cambian. Cuidado al armar ese `only`: hay props que no son del hilo
+y aun así tienen que ir. `filterCounts` es el ejemplo —abrir un chat lo marca
+leído, y como el poll tampoco los pide, dejarlos fuera los congelaba hasta el
+próximo F5—. Y como Inertia mantiene **una sola navegación en vuelo**
+—cada visita cancela la anterior—, la UI marca la fila apenas se hace clic e
+ignora el clic repetido sobre lo que ya está pidiendo. Sin eso, insistir cancela
+la propia petición y la pantalla no cambia nunca (CON-73).
+
+**Trade-off aceptado:** ~12 peticiones/minuto por agente con el chat **a la
+vista**. Con decenas de agentes es barato; con miles habría que migrar a
+WebSockets. Ver
 [mejoras.md](mejoras.md#m-06-el-polling-de-5-s-es-el-techo-de-escalado-del-chat).
 
 ---
