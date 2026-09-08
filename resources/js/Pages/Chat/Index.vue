@@ -47,7 +47,14 @@ const props = defineProps({
 // No bloqueamos el envío: la ventana se infiere de los mensajes que tenemos
 // guardados, y Meta es la autoridad. Si por un fallo de webhook nos faltara un
 // entrante, bloquear dejaría al agente sin poder responder algo que sí era
-// válido. Avisar + hacer visible el fallo cubre el caso sin ese riesgo.
+// válido.
+//
+// Lo que sí cambió (CON-75): "avisar + hacer visible el fallo" NO alcanzó. En 30
+// días se perdieron 783 mensajes de asesores hacia 564 clientes distintos, 518 de
+// una sola persona. Con ese volumen no es descuido: el aviso es un cartel al lado
+// del campo de texto, y quien está escribiendo no lo mira. Así que ahora se
+// interpone una confirmación —que hay que leer para pasar— en vez de bloquear.
+// Se pregunta UNA vez por conversación: la fricción tiene que enseñar, no estorbar.
 const clockNow = ref(Date.now());
 let windowClockInterval = null;
 
@@ -328,6 +335,59 @@ const noteSending = ref(false);
 // quedaban" sin enviarse).
 const sending = computed(() => form.processing || mediaForm.processing || noteSending.value);
 
+// ── Confirmación de envío fuera de la ventana de 24 h (CON-75) ───────────────
+// Reconocimiento por conversación: una vez que el asesor confirmó que sabe que
+// este chat está fuera de ventana, no se le vuelve a preguntar en ESE hilo. Si
+// el cliente responde, la ventana se reabre y el reconocimiento se descarta
+// solo, porque deja de haber nada que confirmar.
+const outOfWindowAck = ref({});
+const showOutOfWindowModal = ref(false);
+// Qué envío quedó esperando la confirmación: 'text' | 'media', o el cuerpo de la
+// respuesta rápida que se iba a mandar.
+const pendingSend = ref(null);
+
+// Las notas internas nunca se preguntan: no salen hacia WhatsApp.
+function needsWindowConfirm() {
+    return !windowOpen.value
+        && !noteMode.value
+        && !outOfWindowAck.value[props.activeConversationId];
+}
+
+function askOutOfWindow(accion) {
+    pendingSend.value = accion;
+    showOutOfWindowModal.value = true;
+}
+
+// "Enviar de todas formas": se deja porque la ventana es inferida de NUESTROS
+// registros y Meta es la autoridad — si nos faltara un entrante, esta es la
+// única salida para responder algo que sí era válido.
+function confirmOutOfWindowSend() {
+    outOfWindowAck.value = { ...outOfWindowAck.value, [props.activeConversationId]: true };
+    showOutOfWindowModal.value = false;
+    const accion = pendingSend.value;
+    pendingSend.value = null;
+    if (accion === 'text') enviarTexto();
+    else if (accion === 'media') enviarMedia();
+    else if (accion && accion.body) enviarTexto(accion.body);
+}
+
+// El camino correcto, y por eso es la acción primaria del modal.
+function templateFromOutOfWindow() {
+    showOutOfWindowModal.value = false;
+    pendingSend.value = null;
+    openTemplatePicker();
+}
+
+// Envío real de texto, ya sin más preguntas. `cuerpo` viene de una respuesta
+// rápida; si no, se manda lo que hay escrito en el composer.
+function enviarTexto(cuerpo = null) {
+    if (cuerpo !== null) form.message = cuerpo;
+    form.post(route('chat.send'), {
+        onSuccess: () => { form.reset('message'); scrollToBottom(); },
+        preserveScroll: true,
+    });
+}
+
 const submit = () => {
     if (!form.message.trim()) return;
 
@@ -341,10 +401,12 @@ const submit = () => {
         return;
     }
 
-    form.post(route('chat.send'), {
-        onSuccess: () => { form.reset('message'); scrollToBottom(); },
-        preserveScroll: true,
-    });
+    if (needsWindowConfirm()) {
+        askOutOfWindow('text');
+        return;
+    }
+
+    enviarTexto();
 };
 
 const startNewChat = () => {
@@ -360,11 +422,15 @@ function useQuickReply(qr) {
     showQuickReplies.value = false;
     closeComposerMenu();
     if (!qr.body?.trim() || form.processing) return;
-    form.message = qr.body;
-    form.post(route('chat.send'), {
-        onSuccess: () => { form.reset('message'); scrollToBottom(); },
-        preserveScroll: true,
-    });
+
+    // Las respuestas rápidas son de un solo clic: sin esto eran la vía más fácil
+    // de mandar algo fuera de ventana sin enterarse.
+    if (needsWindowConfirm()) {
+        askOutOfWindow({ body: qr.body });
+        return;
+    }
+
+    enviarTexto(qr.body);
 }
 
 // ── Composer compacto ────────────────────────────────────────────────────────
@@ -678,6 +744,16 @@ function clearSelectedFile() {
 
 function submitMedia() {
     if (!selectedFile.value || fileTooBig.value) return;
+
+    if (needsWindowConfirm()) {
+        askOutOfWindow('media');
+        return;
+    }
+
+    enviarMedia();
+}
+
+function enviarMedia() {
     mediaForm.file = selectedFile.value;
     mediaForm.phone = props.activePhone || '';
     mediaForm.conversation_id = props.activeConversationId;
@@ -2628,6 +2704,119 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
                                 :disabled="!selectedTemplate || templateForm.processing"
                                 class="px-4 py-2 text-sm font-semibold text-white bg-accent hover:bg-accent-hover rounded-lg disabled:opacity-50 transition">
                             {{ templateForm.processing ? 'Enviando…' : 'Enviar' }}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </Teleport>
+
+        <!-- ── Fuera de la ventana de 24 h: confirmar antes de enviar ────────── -->
+        <!-- El aviso al lado del campo de texto no alcanzaba: 783 mensajes
+             perdidos en 30 días hacia 564 clientes. Esto se cruza en el camino y
+             hay que leerlo para pasar. No bloquea —la ventana es inferida de
+             nuestros registros y Meta es la autoridad— pero deja de ser algo que
+             se pueda hacer sin enterarse. CON-75. -->
+        <Teleport to="body">
+            <div v-if="showOutOfWindowModal" class="fixed inset-0 z-[70] flex items-center justify-center p-4">
+                <div class="fixed inset-0 bg-black/50" @click="showOutOfWindowModal = false"></div>
+                <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-md animate-scale-in">
+                    <div class="p-6">
+                        <div class="flex items-start gap-3 mb-4">
+                            <div class="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center shrink-0">
+                                <svg class="w-5 h-5 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.008v.008H12v-.008z"/>
+                                </svg>
+                            </div>
+                            <div class="min-w-0">
+                                <h3 class="text-lg font-bold text-gray-900">Este mensaje no le va a llegar</h3>
+                                <p class="text-xs text-gray-500 truncate">{{ activeName }}</p>
+                            </div>
+                        </div>
+
+                        <p class="text-sm text-gray-600 mb-3">
+                            Pasaron más de <strong>24 horas</strong> desde el último mensaje de este cliente.
+                            WhatsApp no entrega texto escrito a mano fuera de esa ventana: el mensaje va a
+                            quedar marcado como <strong>fallido</strong> y el cliente <strong>no lo va a recibir</strong>.
+                        </p>
+                        <p class="text-sm text-gray-600 mb-4">
+                            La forma de retomar la conversación es <strong>enviar una plantilla</strong>.
+                            Cuando el cliente responda, la ventana se reabre y ya puedes escribirle normal.
+                        </p>
+
+                        <div class="p-3 bg-gray-50 border border-gray-200 rounded-lg text-xs text-gray-500">
+                            Si crees que el cliente sí te escribió hace poco, puedes enviarlo igual: la ventana
+                            la calculamos con los mensajes que tenemos guardados y podría faltarnos alguno.
+                        </div>
+                    </div>
+
+                    <div class="px-6 pb-6 flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-2">
+                        <button type="button" @click="showOutOfWindowModal = false"
+                                class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition">
+                            Cancelar
+                        </button>
+                        <button type="button" @click="confirmOutOfWindowSend"
+                                class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition">
+                            Enviar de todas formas
+                        </button>
+                        <button type="button" @click="templateFromOutOfWindow"
+                                class="px-4 py-2.5 text-sm font-semibold text-white bg-accent hover:bg-accent-hover rounded-lg transition">
+                            Enviar plantilla
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </Teleport>
+
+        <!-- ── Fuera de la ventana de 24 h: confirmar antes de enviar ────────── -->
+        <!-- El aviso al lado del composer no alcanzó: 783 mensajes perdidos en 30
+             días (CON-75). Esto obliga a leer antes de gastar el envío. No es un
+             bloqueo: "Enviar de todas formas" sigue ahí porque la ventana la
+             inferimos de nuestros registros y Meta es la autoridad. -->
+        <Teleport to="body">
+            <div v-if="showOutOfWindowModal" class="fixed inset-0 z-[70] flex items-center justify-center p-4">
+                <div class="fixed inset-0 bg-black/50" @click="showOutOfWindowModal = false"></div>
+                <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-md animate-scale-in">
+                    <div class="p-6">
+                        <div class="flex items-start gap-3 mb-4">
+                            <div class="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center shrink-0">
+                                <svg class="w-5 h-5 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/>
+                                </svg>
+                            </div>
+                            <div class="min-w-0">
+                                <h3 class="text-lg font-bold text-gray-900">Este mensaje no le va a llegar</h3>
+                                <p class="text-xs text-gray-500 truncate">{{ activeName }}</p>
+                            </div>
+                        </div>
+
+                        <p class="text-sm text-gray-600 mb-3">
+                            Pasaron más de <strong>24 horas</strong> desde el último mensaje del cliente.
+                            WhatsApp no entrega texto libre fuera de esa ventana: el mensaje va a aparecer
+                            en el chat como <strong>fallido</strong> y el cliente <strong>no lo va a recibir</strong>.
+                        </p>
+                        <p class="text-sm text-gray-600 mb-4">
+                            Para que le llegue de verdad hay que enviarle una <strong>plantilla</strong>.
+                            Cuando el cliente responda, la ventana se reabre y ya podés escribirle normal.
+                        </p>
+
+                        <div class="p-3 bg-gray-50 border border-gray-200 rounded-lg text-xs text-gray-500">
+                            ¿Estás seguro de que el cliente te escribió hace poco? Puede que no hayamos
+                            registrado su mensaje. En ese caso usá "Enviar de todas formas".
+                        </div>
+                    </div>
+
+                    <div class="px-6 pb-6 flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-2">
+                        <button type="button" @click="showOutOfWindowModal = false"
+                                class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition">
+                            Cancelar
+                        </button>
+                        <button type="button" @click="confirmOutOfWindowSend"
+                                class="px-4 py-2 text-sm font-medium text-gray-700 border border-gray-300 hover:bg-gray-50 rounded-lg transition">
+                            Enviar de todas formas
+                        </button>
+                        <button type="button" @click="templateFromOutOfWindow"
+                                class="px-4 py-2 text-sm font-semibold text-white bg-accent hover:bg-accent-hover rounded-lg transition">
+                            Enviar plantilla
                         </button>
                     </div>
                 </div>
