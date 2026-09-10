@@ -24,6 +24,32 @@ enviar mensajes libres. Fuera de ella, **solo plantillas aprobadas**.
 Consecuencia en el código: `sendMessage()` y `sendMedia()` sirven al chat en
 vivo; **todo** lo iniciado por el negocio (avisos, campañas) usa `sendTemplate()`.
 
+**Fuera de la ventana, Meta acepta y rechaza después.** La llamada devuelve 200 y
+un `wamid`; el rechazo (`131047`) llega más tarde por webhook. Es decir que el
+servidor **no puede saber en el momento del envío** si el mensaje va a llegar: el
+mensaje se guarda con cara de enviado y solo después se marca fallido.
+
+Por eso el chat calcula la ventana por su cuenta (`serviceWindowExpiresAt`, desde
+el último mensaje con `status = 'received'`) y avisa antes de escribir.
+
+> **El aviso solo no alcanzó, y hay número.** Entre el 09/08 y el 08/09/2026 se
+> perdieron **783 mensajes de asesores hacia 564 clientes distintos** — 518 de una
+> sola persona. El cartel estaba al lado del campo de texto y quien escribe no lo
+> mira. Desde CON-75 el chat **interpone una confirmación** que hay que leer para
+> pasar, en los tres caminos que envían a WhatsApp: texto, respuestas rápidas
+> (un solo clic, eran las más fáciles de disparar sin enterarse) y medios.
+>
+> **No se bloquea, y es deliberado:** la ventana se infiere de los mensajes que
+> *nosotros* guardamos, y la autoridad es Meta. Si un webhook se perdiera, un
+> bloqueo dejaría al asesor sin poder responder algo que sí era válido. Por eso
+> el modal deja «Enviar de todas formas», y la acción primaria es la correcta:
+> mandar una plantilla. Se pregunta **una vez por conversación** — la fricción
+> tiene que enseñar, no estorbar.
+>
+> Camino que queda fuera: el primer mensaje del modal «Nuevo chat», porque ahí
+> todavía no hay conversación de la cual inferir ventana. Medido: **3 casos de
+> 783** en 30 días, así que no justifica una consulta extra por envío.
+
 ### 1.2 Niveles de mensajería (*messaging tier*)
 
 Cuántos **destinatarios únicos** puedes contactar por iniciativa propia cada

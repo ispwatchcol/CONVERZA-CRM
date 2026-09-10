@@ -233,6 +233,20 @@ onUnmounted(() => {
                             </p>
                         </div>
 
+                        <p class="text-sm text-gray-600 mt-3">
+                            Si intentas escribir con la ventana cerrada, Converza te lo advierte con una ventana que dice
+                            <strong>«Este mensaje no le va a llegar»</strong>. No es un capricho del sistema: WhatsApp
+                            rechaza esos mensajes y el cliente no recibe nada, aunque en tu pantalla parezca enviado.
+                            Desde ahí puedes <strong>enviar una plantilla</strong>, que es la forma de retomar la
+                            conversación.
+                        </p>
+                        <p class="text-sm text-gray-600 mt-2">
+                            El aviso aparece <strong>una vez por chat</strong>: si ya lo confirmaste en esa conversación,
+                            no te vuelve a molestar. Y si estás seguro de que el cliente te escribió hace poco, puedes
+                            enviarlo igual — la ventana la calculamos con los mensajes que tenemos guardados y podría
+                            faltarnos alguno.
+                        </p>
+
                         <h3 class="font-semibold text-gray-800 mt-5 mb-2">Contacto, conversación y mensaje</h3>
                         <ul class="space-y-2 text-sm text-gray-600 list-disc list-inside">
                             <li><strong>Contacto:</strong> una persona con un número de WhatsApp. Se crea sola cuando alguien te escribe.</li>
