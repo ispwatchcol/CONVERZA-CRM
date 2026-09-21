@@ -12,6 +12,12 @@
 - [resources/js/Pages/Settings/Bot.vue](../resources/js/Pages/Settings/Bot.vue) — la UI
 - [app/Observers/ConversationObserver.php](../app/Observers/ConversationObserver.php) — apaga el bot al asignar
 
+> **Hacia dónde va esto.** Las ramas, las palabras clave y el orden de los pasos
+> están en código, y eso es el techo de este diseño. La arquitectura propuesta
+> para que cada ISP arme sus propios flujos está en
+> [workflows-bot.md](workflows-bot.md) — incluida la evidencia de que hoy ningún
+> ISP usa el bot, que es lo que decide cuándo conviene construirla.
+
 ---
 
 ## 1. Qué es y qué no es

@@ -45,6 +45,7 @@ Sobre esa base hay cuatro capas de valor:
 | [Avisos automáticos](avisos-automaticos.md) | `whatsapp:billing-notify`, `whatsapp:events-notify`, catálogo de eventos |
 | [Bot de atención](bot.md) | Máquina de estados del primer contacto, horario, switches por paso, diagnóstico |
 | [Campañas masivas](campanas.md) | Audiencias, secuencias, warm-up, opt-out, métricas de campaña |
+| [Workflows del bot](workflows-bot.md) | **Propuesta.** Arquitectura del Workspace de flujos que se le va a dar al ISP: decisión de motor, bloques, cotas y orden de construcción |
 | [Core Brain](core-brain.md) | Cuentas de ISPs, catálogo de planes, cobros del SaaS |
 | [Seguridad](seguridad.md) | Aislamiento multi-tenant, roles, secretos, superficie de ataque |
 
