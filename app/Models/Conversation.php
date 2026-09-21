@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Support\Carbon;
 
 class Conversation extends Model
 {
@@ -87,6 +88,44 @@ class Conversation extends Model
     public function reads(): HasMany
     {
         return $this->hasMany(ConversationRead::class);
+    }
+
+    /**
+     * Fin de la ventana de servicio de 24 h, o null si nunca hubo entrante.
+     *
+     * ÚNICO sitio donde se calcula. Antes vivía suelto en ChatController::index()
+     * y alimentaba solo al navegador; el servidor enviaba sin mirarlo, así que
+     * las dos mitades podían discrepar y de hecho lo hacían: el navegador
+     * preguntaba y el servidor no preguntaba nada (CON-77).
+     *
+     * Se mide desde el último mensaje con status 'received' —lo que el CLIENTE
+     * nos escribió—, porque es lo que reabre la ventana para WhatsApp.
+     */
+    public function serviceWindowExpiresAt(): ?Carbon
+    {
+        // tenant_id explícito y no solo el global scope: este método se llama
+        // desde el chat, pero puede terminar llamándose desde un worker, donde
+        // el tenant del container puede ser el del job anterior.
+        $lastInboundAt = Message::query()
+            ->where('tenant_id', $this->tenant_id)
+            ->where('conversation_id', $this->id)
+            ->where('status', 'received')
+            ->max('created_at');
+
+        return $lastInboundAt ? Carbon::parse($lastInboundAt)->addDay() : null;
+    }
+
+    /**
+     * ¿WhatsApp va a entregar texto libre en este hilo ahora mismo?
+     *
+     * Ojo con la respuesta negativa: significa "según los mensajes que NOSOTROS
+     * guardamos". Meta es la autoridad y un webhook entrante que se perdiera nos
+     * haría creer cerrada una ventana abierta (pasó de verdad: CON-68). Por eso
+     * quien la consulta avisa o pide confirmación, pero nunca bloquea a secas.
+     */
+    public function serviceWindowIsOpen(): bool
+    {
+        return $this->serviceWindowExpiresAt()?->isFuture() ?? false;
     }
 
     /**

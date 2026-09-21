@@ -262,6 +262,14 @@ Cadenas para grepear cuando algo de la bandeja se comporte raro:
 `CONVERSATIONS_PER_PAGE`, `list_limit`, `phonesMatchingName`, `X-Converza-Poll`,
 `pendingConversationId`, `CHAT_SWITCH_PROPS`.
 
+**«No me deja enviar el mensaje»** → `cortarSiEstaFueraDeVentana`. El servidor
+corta el texto libre fuera de la ventana de 24 h cuando la petición no trae
+`out_of_window_ack` (CON-77). La ventana se calcula en **un solo sitio**,
+`Conversation::serviceWindowExpiresAt()`; si el navegador y el servidor no
+coinciden, el sospechoso es un entrante que no se registró —no dos cálculos
+distintos, porque ya no los hay. Cadenas: `out_of_window_ack`, `out_of_window`,
+`serviceWindowIsOpen`.
+
 **`X-Converza-Poll`** distingue el refresco de fondo de una navegación del asesor.
 Hizo falta cuando abrir un chat pasó a ser parcial: hasta entonces `$isPartialReload`
 alcanzaba para decir «esto es el poll», y de eso colgaba la excepción que le deja
