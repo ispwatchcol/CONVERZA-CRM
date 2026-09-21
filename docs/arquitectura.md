@@ -271,6 +271,12 @@ Hay **cuatro** caminos de salida, todos vía `WhatsAppService`:
 | Bot | `sendMessage()` | Conversación nueva o bot activo |
 | Avisos y campañas | `sendTemplate()` | Siempre (fuera de la ventana) |
 
+«Dentro de la ventana de 24 h» dejó de ser una convención y pasó a ser una
+comprobación: `ChatController` consulta `Conversation::serviceWindowIsOpen()` —el
+único sitio donde la ventana se calcula— antes de llamar a Meta, y sin la marca
+`out_of_window_ack` no la llama. Ver
+[integracion-whatsapp.md §1.1](integracion-whatsapp.md#11-ventana-de-servicio-de-24-horas).
+
 El texto que el agente envía lleva el prefijo `*Nombre:* ` en el payload de
 WhatsApp, pero se guarda **limpio** en la base: `sent_by_user_id` ya identifica
 al autor y duplicar el nombre en la UI sería ruido.

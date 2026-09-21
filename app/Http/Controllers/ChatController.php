@@ -17,8 +17,8 @@ use App\Services\Presence\PresenceService;
 use App\Services\Templates\TemplateRenderer;
 use App\Services\WhatsAppService;
 use Illuminate\Database\Query\Builder as QueryBuilder;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
@@ -301,14 +301,11 @@ class ChatController extends Controller
             // de ella Meta acepta el envío y lo rechaza después, así que el
             // agente creía haber respondido. Se expone al front para avisarlo
             // ANTES de escribir. null = nunca escribió (ventana cerrada).
-            $lastInboundAt = Message::where('tenant_id', $tenantId)
-                ->where('conversation_id', $activeConversation->id)
-                ->where('status', 'received')
-                ->max('created_at');
-
-            $serviceWindowExpiresAt = $lastInboundAt
-                ? Carbon::parse($lastInboundAt)->addDay()->toIso8601String()
-                : null;
+            //
+            // El cálculo vive en el modelo para que sea EL MISMO que aplican
+            // sendMessage() y sendMedia() al decidir si el envío sale. Cuando
+            // estaba acá suelto, el servidor no lo miraba (CON-77).
+            $serviceWindowExpiresAt = $activeConversation->serviceWindowExpiresAt()?->toIso8601String();
         }
 
         // Heartbeat de presencia: registra que este usuario está en línea y, si
@@ -468,6 +465,9 @@ class ChatController extends Controller
                 'nullable', 'integer',
                 Rule::exists('conversations', 'id')->where('tenant_id', $tenantId),
             ],
+            // La marca de "el asesor ya sabe que este hilo está fuera de
+            // ventana". La pone el modal del chat; ningún otro camino la manda.
+            'out_of_window_ack' => 'nullable|boolean',
         ]);
 
         $phone = Contact::normalizePhone($request->input('phone'));
@@ -511,6 +511,10 @@ class ChatController extends Controller
 
         if (! $destino) {
             return back()->withErrors(['message' => 'Este contacto no tiene teléfono ni identidad de WhatsApp: no se le puede escribir.']);
+        }
+
+        if ($corte = $this->cortarSiEstaFueraDeVentana($request, $conversation, 'message')) {
+            return $corte;
         }
 
         // Prefijo del asesor en el texto enviado a WhatsApp: "Nombre: mensaje".
@@ -748,6 +752,7 @@ class ChatController extends Controller
                 'nullable', 'integer',
                 Rule::exists('conversations', 'id')->where('tenant_id', $tenantId),
             ],
+            'out_of_window_ack' => 'nullable|boolean',
         ], [
             'file.required' => 'No llegó ningún archivo. Si el archivo es grande puede estar excediendo el límite de subida del servidor (upload_max_filesize / post_max_size en PHP).',
             'file.max'      => 'El archivo supera el límite de 16 MB.',
@@ -822,6 +827,12 @@ class ChatController extends Controller
 
         if (! $destino) {
             return back()->withErrors(['file' => 'Este contacto no tiene teléfono ni identidad de WhatsApp: no se le puede escribir.']);
+        }
+
+        // Antes de subir nada: el upload ya es una llamada a Meta, y un archivo
+        // que no se va a poder entregar no tiene por qué llegar a sus servidores.
+        if ($corte = $this->cortarSiEstaFueraDeVentana($request, $conversation, 'file')) {
+            return $corte;
         }
 
         // Subir el archivo a WhatsApp para obtener un media_id
@@ -908,6 +919,42 @@ class ChatController extends Controller
         ConversationRead::markAnsweredForTeam($tenantId, $conversation->id);
 
         return back()->with('success', $typeLabel . ' enviado.');
+    }
+
+    /**
+     * Corta el envío de texto libre que WhatsApp no va a entregar.
+     *
+     * Devuelve null cuando el envío puede seguir; un redirect con error cuando
+     * no. Existe porque la comprobación de la ventana vivía SOLO en el navegador
+     * (CON-75) y esa mitad cubre únicamente al asesor que pasa por el chat con
+     * el bundle nuevo. Por la API directa, por el bot, o desde una pestaña vieja
+     * cacheada, el envío seguía yendo a Meta para que Meta lo rechazara — y cada
+     * rechazo gasta quality rating del número (CON-77).
+     *
+     * NO es un bloqueo duro, y la diferencia importa. La ventana la inferimos de
+     * los mensajes que nosotros guardamos; si se perdiera un webhook entrante
+     * —CON-68 lo volvió real— creeríamos cerrada una ventana abierta. Por eso lo
+     * que corta es la AUSENCIA de confirmación, no la ventana cerrada: el asesor
+     * que confirma en el modal manda la marca y su envío sale igual que siempre.
+     * Lo que deja de pasar es gastar el envío sin que nadie lo haya decidido.
+     */
+    private function cortarSiEstaFueraDeVentana(
+        Request $request,
+        Conversation $conversation,
+        string $errorKey,
+    ): ?RedirectResponse {
+        if ($request->boolean('out_of_window_ack') || $conversation->serviceWindowIsOpen()) {
+            return null;
+        }
+
+        return back()->withErrors([
+            $errorKey => 'Pasaron más de 24 horas desde el último mensaje de este cliente, '
+                . 'así que WhatsApp no va a entregarle texto escrito a mano. Envíale una '
+                . 'plantilla para retomar la conversación; cuando responda podrás escribirle normal.',
+            // Clave aparte para que el front distinga ESTE error de cualquier
+            // otro fallo de envío y pueda ofrecer la plantilla en el sitio.
+            'out_of_window' => '1',
+        ]);
     }
 
     /**

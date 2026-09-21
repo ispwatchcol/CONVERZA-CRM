@@ -29,8 +29,11 @@ un `wamid`; el rechazo (`131047`) llega más tarde por webhook. Es decir que el
 servidor **no puede saber en el momento del envío** si el mensaje va a llegar: el
 mensaje se guarda con cara de enviado y solo después se marca fallido.
 
-Por eso el chat calcula la ventana por su cuenta (`serviceWindowExpiresAt`, desde
-el último mensaje con `status = 'received'`) y avisa antes de escribir.
+Por eso Converza calcula la ventana por su cuenta y no manda a ciegas. El cálculo
+vive en **un solo sitio**, `Conversation::serviceWindowExpiresAt()`: el último
+mensaje con `status = 'received'` más 24 h, o `null` si el cliente nunca escribió.
+De ahí salen tanto la prop `serviceWindowExpiresAt` que avisa en el chat como la
+decisión del servidor de dejar salir el envío o no.
 
 > **El aviso solo no alcanzó, y hay número.** Entre el 09/08 y el 08/09/2026 se
 > perdieron **783 mensajes de asesores hacia 564 clientes distintos** — 518 de una
@@ -38,17 +41,41 @@ el último mensaje con `status = 'received'`) y avisa antes de escribir.
 > mira. Desde CON-75 el chat **interpone una confirmación** que hay que leer para
 > pasar, en los tres caminos que envían a WhatsApp: texto, respuestas rápidas
 > (un solo clic, eran las más fáciles de disparar sin enterarse) y medios.
->
-> **No se bloquea, y es deliberado:** la ventana se infiere de los mensajes que
-> *nosotros* guardamos, y la autoridad es Meta. Si un webhook se perdiera, un
-> bloqueo dejaría al asesor sin poder responder algo que sí era válido. Por eso
-> el modal deja «Enviar de todas formas», y la acción primaria es la correcta:
-> mandar una plantilla. Se pregunta **una vez por conversación** — la fricción
-> tiene que enseñar, no estorbar.
->
-> Camino que queda fuera: el primer mensaje del modal «Nuevo chat», porque ahí
-> todavía no hay conversación de la cual inferir ventana. Medido: **3 casos de
-> 783** en 30 días, así que no justifica una consulta extra por envío.
+
+**Las dos capas, y por qué hacen falta las dos (CON-77).** La confirmación del
+navegador solo protege a quien pasa por el chat con el bundle nuevo. Por la API
+directa, por el bot, desde una pestaña abierta antes del despliegue o desde
+cualquier integración futura que llame a `sendMessage`, el envío seguía llegando a
+Meta para que Meta lo rechazara — y **cada rechazo gasta quality rating del
+número**, que es el costo que no depende de que un asesor esté mirando.
+
+Hoy `sendMessage()` y `sendMedia()` consultan la ventana antes de llamar a Meta:
+
+| | Qué hace |
+|---|---|
+| Dentro de la ventana | Sale como siempre. |
+| Fuera, **con** `out_of_window_ack` | Sale igual. Es la marca que pone el modal del chat cuando el asesor confirma. |
+| Fuera, **sin** la marca | No se llama a Meta. Vuelve un error que nombra la plantilla, más la clave `out_of_window` para que el front pueda ofrecerla ahí mismo. |
+
+> **Lo que se corta es la ausencia de decisión, no la ventana cerrada** — y la
+> diferencia es deliberada. La ventana se infiere de los mensajes que *nosotros*
+> guardamos, y la autoridad es Meta: si un webhook entrante se perdiera (CON-68 lo
+> volvió real) creeríamos cerrada una ventana abierta, y un bloqueo duro dejaría al
+> asesor sin poder responder algo que sí era válido. Por eso el modal conserva
+> «Enviar de todas formas» y su confirmación manda la marca. Se pregunta **una vez
+> por conversación** — la fricción tiene que enseñar, no estorbar.
+
+El corte de los medios va **antes de subir el archivo**: el upload ya es una
+llamada a Meta y un archivo que no se va a poder entregar no tiene por qué llegar
+a sus servidores.
+
+**Escribirle primero a alguien que nunca escribió** —el modal «Nuevo chat»— está
+por definición fuera de ventana, así que también se corta. No es una regresión:
+por ese camino Meta rechazaba el 100 % de los envíos, solo que en silencio y un
+rato después. La salida es la plantilla; el hilo queda creado en la lista, se abre
+y se usa «Enviar plantilla».
+
+Cubierto por `tests/Feature/VentanaDeServicioTest.php`.
 
 ### 1.2 Niveles de mensajería (*messaging tier*)
 

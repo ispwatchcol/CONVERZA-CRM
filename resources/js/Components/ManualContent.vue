@@ -246,6 +246,12 @@ onUnmounted(() => {
                             enviarlo igual — la ventana la calculamos con los mensajes que tenemos guardados y podría
                             faltarnos alguno.
                         </p>
+                        <p class="text-sm text-gray-600 mt-2">
+                            <strong>Escribirle primero a alguien que nunca te escribió</strong> (el botón <em>Nuevo
+                            chat</em>) está siempre fuera de la ventana, así que Converza no lo deja salir y te lo dice
+                            en el momento. Antes te dejaba enviarlo y el mensaje simplemente no llegaba nunca. El chat
+                            igual queda creado en la lista: ábrelo y usa <strong>Enviar plantilla</strong>.
+                        </p>
 
                         <h3 class="font-semibold text-gray-800 mt-5 mb-2">Contacto, conversación y mensaje</h3>
                         <ul class="space-y-2 text-sm text-gray-600 list-disc list-inside">

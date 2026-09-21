@@ -179,9 +179,16 @@ const messagesContainer = ref(null);
 const search = ref(props.search || '');
 const mobileShowChat = ref(false);
 
-const form = useForm({ phone: '', message: '', conversation_id: null });
+// `out_of_window_ack` viaja al servidor: desde CON-77 el envío fuera de ventana
+// lo corta el BACKEND, y esta marca es lo que dice "el asesor ya lo confirmó".
+// Sin ella el servidor no llama a Meta, que es justo lo que evita gastar quality
+// rating por los caminos que no pasan por este modal.
+const form = useForm({ phone: '', message: '', conversation_id: null, out_of_window_ack: false });
+// Sin `out_of_window_ack` a propósito: desde "Nuevo chat" no hay confirmación que
+// ofrecer, porque a alguien que nunca nos escribió WhatsApp no le entrega texto
+// libre nunca. La salida es la plantilla, y el error del servidor lo dice.
 const newChatForm = useForm({ phone: '', message: '' });
-const mediaForm = useForm({ phone: '', file: null, caption: '', conversation_id: null });
+const mediaForm = useForm({ phone: '', file: null, caption: '', conversation_id: null, out_of_window_ack: false });
 
 const fileInputRef = ref(null);
 const selectedFile = ref(null);
@@ -382,6 +389,7 @@ function templateFromOutOfWindow() {
 // rápida; si no, se manda lo que hay escrito en el composer.
 function enviarTexto(cuerpo = null) {
     if (cuerpo !== null) form.message = cuerpo;
+    form.out_of_window_ack = !!outOfWindowAck.value[props.activeConversationId];
     form.post(route('chat.send'), {
         onSuccess: () => { form.reset('message'); scrollToBottom(); },
         preserveScroll: true,
@@ -757,6 +765,7 @@ function enviarMedia() {
     mediaForm.file = selectedFile.value;
     mediaForm.phone = props.activePhone || '';
     mediaForm.conversation_id = props.activeConversationId;
+    mediaForm.out_of_window_ack = !!outOfWindowAck.value[props.activeConversationId];
     mediaForm.post(route('chat.send-media'), {
         forceFormData: true,
         onSuccess: () => { clearSelectedFile(); scrollToBottom(); },
@@ -2195,6 +2204,27 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
                         <!-- Error de grabación de micrófono -->
                         <p v-if="recordError" class="mb-2 text-xs text-red-500">{{ recordError }}</p>
 
+                        <!-- ── El servidor no dejó salir el mensaje ────────────────
+                             Antes los errores de chat.send no se pintaban en ningún
+                             lado: el asesor daba enviar y no pasaba nada. Con el
+                             corte de CON-77 eso ya no es aceptable — lo que este
+                             ticket vino a arreglar es justamente el envío que falla
+                             sin que nadie se entere, y no íbamos a cambiarlo por un
+                             fallo silencioso nuestro. -->
+                        <div v-if="form.errors.message"
+                             class="mb-2 flex flex-col sm:flex-row sm:items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5">
+                            <div class="flex items-start gap-2 flex-1 min-w-0">
+                                <svg class="w-4 h-4 text-red-500 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+                                </svg>
+                                <p class="text-xs text-red-800 leading-snug">{{ form.errors.message }}</p>
+                            </div>
+                            <button v-if="form.errors.out_of_window" type="button" @click="openTemplatePicker"
+                                    class="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-amber-600 text-white hover:bg-amber-700 transition">
+                                Enviar plantilla
+                            </button>
+                        </div>
+
                         <!-- ── Ventana de 24 h ─────────────────────────────────────
                              Cerrada: lo que escriba a mano NO va a llegar. Se lo
                              decimos antes de que lo escriba y le damos la salida. -->
@@ -2923,6 +2953,19 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
                                 <label class="block text-sm font-medium text-gray-700 mb-1">Mensaje</label>
                                 <textarea v-model="newChatForm.message" rows="3" placeholder="Hola..." class="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-accent/30 focus:border-accent resize-none"></textarea>
                             </div>
+                            <!-- Este modal no mostraba NINGÚN error: si el envío se
+                                 rechazaba, el asesor daba a Enviar y el modal se
+                                 quedaba quieto. Ahora importa más, porque escribirle
+                                 por primera vez a alguien que nunca nos escribió está
+                                 siempre fuera de ventana y el servidor lo corta. -->
+                            <div v-if="newChatForm.errors.message"
+                                 class="rounded-xl border border-red-200 bg-red-50 px-3 py-2.5">
+                                <p class="text-xs text-red-800 leading-snug">{{ newChatForm.errors.message }}</p>
+                                <p v-if="newChatForm.errors.out_of_window" class="text-xs text-red-700/80 mt-1.5">
+                                    El chat ya quedó creado en la lista: ábrelo y usa <strong>Enviar plantilla</strong>.
+                                </p>
+                            </div>
+
                             <div class="flex justify-end space-x-3 pt-2">
                                 <button type="button" @click="showNewChatModal = false" class="px-4 py-2.5 text-sm text-gray-600 hover:bg-gray-100 rounded-xl transition">Cancelar</button>
                                 <button type="submit" :disabled="newChatForm.processing" class="px-6 py-2.5 bg-accent text-white rounded-xl text-sm font-medium hover:bg-accent-hover transition disabled:opacity-50">Enviar</button>
