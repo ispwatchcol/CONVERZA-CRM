@@ -2,8 +2,10 @@
 
 namespace App\Http\Middleware;
 
+use App\Models\Brain\SupportTicket;
 use App\Services\WhatsAppService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Inertia\Middleware;
 
 class HandleInertiaRequests extends Middleware
@@ -81,6 +83,13 @@ class HandleInertiaRequests extends Middleware
                 'success' => fn() => $request->session()->get('success'),
                 'error' => fn() => $request->session()->get('error'),
             ],
+            // Tickets esperando respuesta nuestra, para el badge del Brain. Solo se
+            // calcula para el equipo interno —un admin de tenant ni siquiera tiene
+            // esas rutas— y se cachea 30 s: es un contador, no un dato en vivo, y
+            // si no lo fuera pagaríamos una consulta en CADA petición Inertia.
+            'brainPendientes' => fn() => $request->user()?->canAccessBrain()
+                ? Cache::remember('brain.tickets.esperando', 30, fn() => SupportTicket::esperandoNuestraRespuesta()->count())
+                : null,
             // Solo para usuarios con sesión. En las páginas públicas (/ayuda,
             // /login) un invitado no tiene qué hacer con este estado, y evaluarlo
             // dispararía una llamada al Graph API —con las credenciales del .env—

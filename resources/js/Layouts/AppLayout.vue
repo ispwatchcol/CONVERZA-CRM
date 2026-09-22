@@ -168,7 +168,13 @@ const visibleNavItems = computed(() => navItems.filter(i => !i.adminOnly || isTe
 const brainNavItems = [
     { name: 'Cockpit', route: 'brain.cockpit', activePrefix: 'brain.cockpit', icon: 'brain-cockpit' },
     { name: 'Cuentas', route: 'brain.accounts.index', activePrefix: 'brain.accounts', icon: 'brain-accounts' },
+    { name: 'Tickets', route: 'brain.tickets.index', activePrefix: 'brain.tickets', icon: 'brain-tickets', badge: 'pendientes' },
 ];
+
+// Tickets esperando respuesta nuestra. El badge existe por la misma razón que la
+// bandeja: si nadie mira, el portal del ISP es peor que el WhatsApp de siempre,
+// porque el cliente cree que ya lo recibimos.
+const brainPendientes = computed(() => page.props.brainPendientes ?? 0);
 
 function isBrainActive(prefix) {
     return currentRoute.value?.startsWith(prefix);
@@ -349,7 +355,7 @@ onUnmounted(() => {
                         v-for="item in brainNavItems"
                         :key="item.route"
                         :href="route(item.route)"
-                        class="group flex items-center rounded-lg font-medium transition-all duration-200"
+                        class="group relative flex items-center rounded-lg font-medium transition-all duration-200"
                         :class="[
                             sidebarOpen ? 'px-3 py-2.5 text-sm w-full' : 'p-3 justify-center w-12 h-12',
                             isBrainActive(item.activePrefix)
@@ -361,8 +367,17 @@ onUnmounted(() => {
                         <span class="shrink-0 flex items-center justify-center transition-transform group-hover:scale-110" :class="sidebarOpen ? 'w-5 h-5 mr-3' : 'w-6 h-6'">
                             <svg v-if="item.icon === 'brain-cockpit'" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M7.5 14.25v2.25m3-4.5v4.5m3-6.75v6.75m3-9v9M6 20.25h12A2.25 2.25 0 0020.25 18V6A2.25 2.25 0 0018 3.75H6A2.25 2.25 0 003.75 6v12A2.25 2.25 0 006 20.25z" /></svg>
                             <svg v-else-if="item.icon === 'brain-accounts'" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 21h16.5M4.5 3h15M5.25 3v18m13.5-18v18M9 6.75h1.5m-1.5 3h1.5m-1.5 3h1.5m3-6H15m-1.5 3H15m-1.5 3H15M9 21v-3.375c0-.621.504-1.125 1.125-1.125h3.75c.621 0 1.125.504 1.125 1.125V21" /></svg>
+                            <svg v-else-if="item.icon === 'brain-tickets'" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M16.5 6v.75m0 3v.75m0 3v.75m0 3V18m-9-5.25h5.25M7.5 15h3M3.375 5.25c-.621 0-1.125.504-1.125 1.125v3.026a2.999 2.999 0 010 5.198v3.026c0 .621.504 1.125 1.125 1.125h17.25c.621 0 1.125-.504 1.125-1.125v-3.026a2.999 2.999 0 010-5.198V6.375c0-.621-.504-1.125-1.125-1.125H3.375z" /></svg>
                         </span>
                         <span v-show="sidebarOpen" class="truncate">{{ item.name }}</span>
+                        <!-- Cuántos nos están esperando. En rojo y visible también con
+                             el sidebar plegado: si hay que abrirlo para enterarse, no
+                             sirve de aviso. -->
+                        <span v-if="item.badge === 'pendientes' && brainPendientes > 0"
+                              class="inline-flex items-center justify-center text-[10px] font-bold bg-red-500 text-white rounded-full"
+                              :class="sidebarOpen ? 'ml-auto min-w-[18px] h-[18px] px-1' : 'absolute top-1.5 right-1.5 min-w-[16px] h-[16px] px-0.5'">
+                            {{ brainPendientes > 99 ? '99+' : brainPendientes }}
+                        </span>
                     </Link>
                 </template>
             </nav>
