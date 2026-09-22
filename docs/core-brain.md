@@ -6,6 +6,7 @@
 
 **Archivos clave**
 - [app/Http/Controllers/Brain/](../app/Http/Controllers/Brain/) — Cockpit, Account, Billing, Ticket
+- [app/Http/Controllers/SupportController.php](../app/Http/Controllers/SupportController.php) — el portal del ISP (§9); la única puerta de un tenant hacia estas tablas
 - [app/Models/Brain/](../app/Models/Brain/) — Account, AccountProduct, AccountInvoice, AccountPayment, SupportTicket, TicketEvent, AccountNote
 - [app/Services/Brain/PlanCatalog.php](../app/Services/Brain/PlanCatalog.php) — catálogo de planes
 - [app/Http/Middleware/EnsureInternalAccess.php](../app/Http/Middleware/EnsureInternalAccess.php) — el muro
@@ -216,11 +217,11 @@ fecha.
 
 ---
 
-## 9. Soporte interno
+## 9. Soporte
 
 `support_tickets` con estado (`open`/`pending`/`resolved`/`closed`), prioridad
 (`low`/`normal`/`high`/`urgent`), categoría, producto y origen
-(`manual`/`whatsapp`/`email`), más `first_response_at` y `resolved_at`.
+(`manual`/`whatsapp`/`email`/`portal`), más `first_response_at` y `resolved_at`.
 
 `ticket_events` es la bitácora: `message`, `note`, `status_change`, `assignment`,
 con `meta` JSON (`{from:'open', to:'resolved'}`).
@@ -228,15 +229,71 @@ con `meta` JSON (`{from:'open', to:'resolved'}`).
 `account_notes` son notas de la cuenta, con `pinned` para fijar las importantes
 arriba.
 
+### El portal del ISP (`/support`)
+
+El ISP abre sus propios requerimientos y les sigue los avances desde su panel, en
+vez de preguntar por WhatsApp cómo va lo que pidió. Eso convierte al ticket en un
+objeto con **dos audiencias**, y ahí está todo el cuidado de este módulo.
+
+- **Rutas:** `/support` (lista), `/support/{id}` (hilo), y los POST para abrir y
+  responder. Van bajo `auth` + `role:admin`, **no** bajo `internal`.
+- **Controlador propio:** [`SupportController`](../app/Http/Controllers/SupportController.php).
+  No reutiliza `Brain\TicketController` a propósito: son dos modelos de
+  autorización distintos y mezclarlos en condicionales es donde se cuela el caso
+  que nadie contempló.
+- **De qué cuenta son "mis" tickets:** `app('tenant')` → `accounts.tenant_id` →
+  `support_tickets.account_id`. El `account_id` sale **siempre** de la sesión,
+  nunca de la petición. Un ticket de otro ISP responde **404, no 403**: la
+  diferencia de códigos ya confirmaría que existe.
+- **Qué puede hacer el ISP:** abrir un ticket, leer el historial visible y
+  responder. **No** puede cambiar estado, prioridad ni asignación — no hay ruta y
+  los campos no se leen de la petición. Lo único que mueve un estado es responder
+  sobre un ticket `resolved`: vuelve a `open`, porque si no quedaría fuera de toda
+  bandeja nuestra esperando a que alguien se acuerde.
+- **Cuenta sin tenant:** el portal es solo para cuentas con tenant de Converza.
+  Un workspace todavía sin ficha en el Brain ve un aviso y el WhatsApp de soporte,
+  no un botón que falla.
+
+### La frontera de visibilidad
+
+| Tipo de evento | ¿Lo ve el ISP? |
+|---|---|
+| `message` | **Sí** — es la conversación con el cliente |
+| `status_change` | Sí, en forma legible ("pasó a En progreso") |
+| `note` | **No** — nota interna del equipo |
+| `assignment` | **No** |
+
+La lista vive en una sola constante, `TicketEvent::VISIBLE_AL_ISP`, y es una
+**allowlist**: un tipo nuevo queda fuera por omisión. El filtro se aplica en la
+**consulta**, no en la vista — al navegador del cliente no viaja nada que no deba
+leer. `meta` tampoco se copia en bruto: de `status_change` solo salen `from` y
+`to`. Y del lado nuestro no se expone quién atendió: para el ISP somos "Soporte
+Converza", no una lista con los nombres de nuestra gente.
+
+En el Brain, escribir en un ticket **por defecto es nota interna**, y la caja
+cambia de color y de botón según el tipo: si alguien se equivoca, que se
+equivoque hacia el lado que no filtra.
+
+`first_response_at` lo marca nuestra primera respuesta visible. Una nota interna
+no cuenta — el cliente no la lee. (Hasta este cambio la columna nunca se llenaba:
+se guardaba el `created_at` de un evento recién creado, que es `null` porque la
+fecha la pone la BD.)
+
 ---
 
 ## 10. Principios no negociables
 
 Si tocas el Brain, estos son los límites:
 
-1. **Aislamiento total del inquilino.** Ningún usuario de tenant llega aquí.
-   Las tablas del Brain **no** usan `BelongsToTenant` y no aparecen en ningún
-   controlador tenant-scoped.
+1. **Aislamiento total del inquilino.** Ningún usuario de tenant llega a una ruta
+   del Brain. Las tablas del Brain **no** usan `BelongsToTenant`.
+
+   La única excepción es el **portal de soporte** (§9), y está construida para no
+   ser un agujero: ruta aparte fuera de `internal`, controlador aparte,
+   `account_id` derivado de la sesión, 404 para lo ajeno y una allowlist de tipos
+   de evento. Si mañana hace falta otra puerta, se abre igual —una ruta propia con
+   su propia consulta—, **nunca** relajando `EnsureInternalAccess` ni metiendo un
+   `if` en un controlador del Brain.
 2. **ispwatch es sagrado y read-only.** Solo `IspwatchRepository`, solo `SELECT`.
    Los clientes finales del ISP nunca se enteran ni se ven afectados.
 3. **Cambios aditivos.** La única columna que el Brain agregó a una tabla

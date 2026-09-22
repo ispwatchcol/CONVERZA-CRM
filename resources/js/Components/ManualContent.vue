@@ -299,6 +299,7 @@ onUnmounted(() => {
                                     <tr><td class="py-2 px-3">Gestionar Staff y Equipos</td><td class="py-2 px-3 text-center">Ver</td><td class="py-2 px-3 text-center">Ver</td><td class="py-2 px-3 text-center text-accent font-bold">Sí</td></tr>
                                     <tr><td class="py-2 px-3">Configurar el bot</td><td class="py-2 px-3 text-center">Ver</td><td class="py-2 px-3 text-center">Ver</td><td class="py-2 px-3 text-center text-accent font-bold">Sí</td></tr>
                                     <tr><td class="py-2 px-3">Contactos, Etiquetas, Plantillas</td><td class="py-2 px-3 text-center text-accent font-bold">Sí</td><td class="py-2 px-3 text-center text-accent font-bold">Sí</td><td class="py-2 px-3 text-center text-accent font-bold">Sí</td></tr>
+                                    <tr><td class="py-2 px-3">Soporte con Converza</td><td class="py-2 px-3 text-center text-gray-400">—</td><td class="py-2 px-3 text-center text-gray-400">—</td><td class="py-2 px-3 text-center text-accent font-bold">Sí</td></tr>
                                 </tbody>
                             </table>
                         </div>
@@ -1080,10 +1081,29 @@ vence el {{fecha_vencimiento}}.</pre>
                     <!-- ─────── Soporte ─────── -->
                     <section id="soporte" class="bg-white rounded-xl border border-gray-200 p-6 scroll-mt-4">
                         <h2 class="text-xl font-bold text-gray-900 mb-3">Soporte</h2>
+
+                        <h3 class="font-semibold text-gray-800 mb-2">Requerimientos que quieres poder seguir</h3>
                         <p class="text-gray-600 mb-4">
-                            ¿Necesitas ayuda? Usa el botón verde flotante de WhatsApp en la esquina inferior derecha. Al
-                            hacer clic se abre WhatsApp con un mensaje pre-armado que incluye tu nombre y el de tu
-                            workspace, para que el equipo de Converza te identifique al toque.
+                            En <strong>Soporte</strong> (menú lateral, solo para administradores) abres un requerimiento
+                            con el equipo de Converza y ves en qué va sin tener que preguntar por WhatsApp. Cada
+                            requerimiento guarda la conversación completa: lo que escribiste, lo que te respondimos y
+                            cuándo cambió de estado —<em>Abierto</em>, <em>En progreso</em>, <em>Resuelto</em>—.
+                            <span v-if="!publicMode">
+                                Se entra desde
+                                <a :href="route('support.index')" class="text-accent font-semibold hover:underline">Soporte</a>.
+                            </span>
+                        </p>
+                        <ul class="space-y-2 text-sm text-gray-600 list-disc list-inside mb-4">
+                            <li>Clasifícalo por <strong>tipo</strong> (técnico, facturación, puesta en marcha) y por <strong>producto</strong>: llega antes a quien corresponde.</li>
+                            <li>La <strong>prioridad</strong> y la asignación las ponemos nosotros; tú no tienes que decidirlas.</li>
+                            <li>Si lo dimos por resuelto y el tema sigue, responde en el mismo hilo: <strong>se vuelve a abrir solo</strong>.</li>
+                        </ul>
+
+                        <h3 class="font-semibold text-gray-800 mt-4 mb-2">Algo urgente, ahora</h3>
+                        <p class="text-gray-600 mb-4">
+                            Usa el botón verde flotante de WhatsApp en la esquina inferior derecha. Al hacer clic se abre
+                            WhatsApp con un mensaje pre-armado que incluye tu nombre y el de tu workspace, para que el
+                            equipo de Converza te identifique al toque.
                         </p>
 
                         <h3 class="font-semibold text-gray-800 mt-4 mb-2">Antes de escribir</h3>

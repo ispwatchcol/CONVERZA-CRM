@@ -54,7 +54,7 @@ igual que `WhatsAppService` es la única puerta hacia Meta y `EventCatalog` la
 | **Operación diaria** | Dashboard · Chat · Contactos · Etiquetas · Respuestas rápidas · Notas de cierre |
 | **Alcance y automatización** | Plantillas · Campañas masivas · Avisos automáticos · Bot |
 | **Administración** | Staff y Equipos · Métricas · Configuración |
-| **Ayuda** | Buenas prácticas anti-baneo · Preguntas frecuentes · Soporte |
+| **Ayuda** | Buenas prácticas anti-baneo · Preguntas frecuentes · Soporte (portal de requerimientos, solo admin · WhatsApp) |
 
 Para la documentación **técnica** (arquitectura, integraciones, operación) ver el
 [índice de docs](README.md).

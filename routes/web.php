@@ -15,6 +15,7 @@ use App\Http\Controllers\MetricsController;
 use App\Http\Controllers\NotificationLogController;
 use App\Http\Controllers\BotSettingsController;
 use App\Http\Controllers\SettingsController;
+use App\Http\Controllers\SupportController;
 use App\Http\Controllers\MediaController;
 use App\Http\Controllers\WhatsAppController;
 use App\Http\Controllers\ManualController;
@@ -166,6 +167,19 @@ Route::middleware('auth')->group(function () {
 
     // Manual de Usuario
     Route::get('/manual', [ManualController::class, 'index'])->name('manual.index');
+
+    // ── Soporte: el ISP nos abre requerimientos y les sigue los avances ──────
+    // La ÚNICA puerta de un usuario de tenant hacia las tablas del Core Brain.
+    // NO va bajo `internal` ni reutiliza Brain\TicketController a propósito: son
+    // dos modelos de autorización distintos (ver SupportController).
+    // Solo admin del ISP: es la relación comercial con nosotros, no trabajo de la
+    // bandeja de chat.
+    Route::middleware('role:admin')->group(function () {
+        Route::get('/support', [SupportController::class, 'index'])->name('support.index');
+        Route::post('/support', [SupportController::class, 'store'])->name('support.store');
+        Route::get('/support/{ticket}', [SupportController::class, 'show'])->whereNumber('ticket')->name('support.show');
+        Route::post('/support/{ticket}/messages', [SupportController::class, 'storeMessage'])->whereNumber('ticket')->name('support.messages.store');
+    });
 
     // ── Core Brain (equipo interno) ──────────────────────────────────────────
     Route::middleware('internal')->prefix('brain')->name('brain.')->group(function () {

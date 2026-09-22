@@ -41,6 +41,7 @@ const invStatusLabel = { draft:'Borrador', sent:'Enviada', paid:'Pagada', partia
 const invStatusColor = { draft:'bg-gray-100 text-gray-600', sent:'bg-blue-100 text-blue-700', paid:'bg-green-100 text-green-700', partial:'bg-yellow-100 text-yellow-700', overdue:'bg-red-100 text-red-700', void:'bg-gray-200 text-gray-400' };
 const ticketStatusLabel = { open:'Abierto', pending:'Pendiente', resolved:'Resuelto', closed:'Cerrado' };
 const ticketStatusColor = { open:'bg-blue-100 text-blue-700', pending:'bg-yellow-100 text-yellow-700', resolved:'bg-green-100 text-green-700', closed:'bg-gray-100 text-gray-500' };
+const ticketSourceLabel = { manual:'Manual', whatsapp:'WhatsApp', email:'Email', portal:'Portal del ISP' };
 const priorityLabel = { low:'Baja', normal:'Normal', high:'Alta', urgent:'Urgente' };
 const priorityColor = { low:'text-gray-500', normal:'text-blue-600', high:'text-orange-500', urgent:'text-red-600 font-semibold' };
 
@@ -227,7 +228,10 @@ const openTicket       = ref(null);
 const ticketForm = useForm({ subject:'', priority:'normal', category:'', product:'', source:'manual', assigned_to:'', body:'' });
 const ticketUpdateForm = useForm({ subject:'', status:'', priority:'', category:'', product:'', assigned_to:'' });
 const activeTicketForm = computed(() => editingTicket.value ? ticketUpdateForm : ticketForm);
-const eventForm = useForm({ type:'message', body:'' });
+// Por defecto NOTA INTERNA, no mensaje: desde que el ISP lee la bitácora de su
+// ticket en /support, lo que se escriba acá como `message` lo ve el cliente. Si
+// alguien se equivoca de tipo, que el error caiga del lado que no filtra.
+const eventForm = useForm({ type:'note', body:'' });
 
 function openAddTicket() { editingTicket.value=null; ticketForm.reset(); ticketForm.priority='normal'; ticketForm.source='manual'; showTicketModal.value=true; }
 function openEditTicket(t) { editingTicket.value=t; Object.assign(ticketUpdateForm, { subject:t.subject, status:t.status, priority:t.priority, category:t.category??'', product:t.product??'', assigned_to:t.assigned_to?.id??'' }); showTicketModal.value=true; }
@@ -238,7 +242,7 @@ function submitTicket() {
         : ticketForm.post(route('brain.accounts.tickets.store', props.account.id), opts);
 }
 function deleteTicket(t) { if (!confirm('¿Eliminar ticket?')) return; router.delete(route('brain.accounts.tickets.destroy', [props.account.id, t.id])); }
-function submitEvent(ticket) { eventForm.post(route('brain.accounts.tickets.events.store', [props.account.id, ticket.id]), { onSuccess: () => { eventForm.reset(); eventForm.type='message'; } }); }
+function submitEvent(ticket) { eventForm.post(route('brain.accounts.tickets.events.store', [props.account.id, ticket.id]), { onSuccess: () => { eventForm.reset(); eventForm.type='note'; } }); }
 
 // ── Notes ──────────────────────────────────────────────────────────────────
 const noteBody    = ref('');
@@ -632,12 +636,21 @@ function deleteAccount() { if (!confirm(`¿Eliminar "${props.account.name}"?`)) 
                                     <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium" :class="ticketStatusColor[t.status]">{{ ticketStatusLabel[t.status] }}</span>
                                     <span class="text-xs font-medium" :class="priorityColor[t.priority]">{{ priorityLabel[t.priority] }}</span>
                                     <span v-if="t.product" class="text-xs bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">{{ productLabel[t.product] }}</span>
+                                    <!-- De dónde salió. `portal` = lo abrió el ISP
+                                         solo y está mirando esta conversación. -->
+                                    <span v-if="t.source && t.source !== 'manual'" class="text-xs px-1.5 py-0.5 rounded font-medium"
+                                          :class="t.source === 'portal' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'">
+                                        {{ ticketSourceLabel[t.source] ?? t.source }}
+                                    </span>
                                 </div>
                                 <div class="flex flex-wrap gap-3 text-xs text-gray-500">
                                     <span v-if="t.assigned_to">Asignado: <strong>{{ t.assigned_to.name }}</strong></span>
                                     <span>Abierto {{ fmtDate(t.created_at) }}</span>
                                     <span v-if="t.resolved_at">Resuelto {{ fmtDate(t.resolved_at) }}</span>
-                                    <span>{{ t.events.length }} mensaje{{ t.events.length !== 1 ? 's' : '' }}</span>
+                                    <!-- Solo los mensajes: los cambios de estado y las
+                                         asignaciones también son eventos, y contarlos
+                                         como mensajes hacía ver conversación donde no había. -->
+                                    <span>{{ t.events.filter(e => e.type === 'message').length }} mensaje{{ t.events.filter(e => e.type === 'message').length !== 1 ? 's' : '' }}</span>
                                 </div>
                             </div>
                             <div class="flex items-center gap-1 shrink-0">
@@ -664,25 +677,59 @@ function deleteAccount() { if (!confirm(`¿Eliminar "${props.account.name}"?`)) 
                                         <strong>{{ e.author?.name }}</strong> asignó el ticket.
                                         <span class="ml-2 text-gray-400">{{ fmtDate(e.created_at) }}</span>
                                     </div>
-                                    <div v-else class="bg-white rounded-lg border border-gray-200 px-4 py-2.5">
+                                    <!-- Nota interna: amarillo. Respuesta al cliente:
+                                         blanco. Mensaje que ESCRIBIÓ el cliente desde
+                                         su portal: azul. Los tres colores distinguen
+                                         de un vistazo quién puede leer qué. -->
+                                    <div v-else class="rounded-lg border px-4 py-2.5"
+                                         :class="e.type === 'note' ? 'bg-yellow-50 border-yellow-200'
+                                                 : (e.from_client ? 'bg-blue-50 border-blue-200' : 'bg-white border-gray-200')">
                                         <div class="flex items-center justify-between mb-1">
-                                            <span class="text-xs font-semibold text-gray-700">{{ e.author?.name ?? 'Sistema' }}</span>
+                                            <span class="text-xs font-semibold text-gray-700">
+                                                {{ e.author?.name ?? 'Sistema' }}
+                                                <span v-if="e.from_client" class="ml-1 text-[10px] font-medium text-blue-700">· el cliente</span>
+                                            </span>
                                             <span class="text-[11px] text-gray-400">{{ fmtDate(e.created_at) }}</span>
                                         </div>
                                         <p class="text-gray-800 whitespace-pre-wrap">{{ e.body }}</p>
-                                        <span v-if="e.type === 'note'" class="mt-1 inline-block text-[10px] bg-yellow-100 text-yellow-700 px-1.5 rounded">nota interna</span>
+                                        <span v-if="e.type === 'note'" class="mt-1 inline-block text-[10px] bg-yellow-200 text-yellow-800 px-1.5 rounded">nota interna · no la ve el cliente</span>
+                                        <span v-else-if="!e.from_client" class="mt-1 inline-block text-[10px] bg-gray-100 text-gray-500 px-1.5 rounded">visible para el cliente</span>
                                     </div>
                                 </div>
                             </div>
 
-                            <!-- Añadir mensaje -->
-                            <div v-if="!['resolved','closed'].includes(t.status)" class="flex gap-2 mt-3">
-                                <select v-model="eventForm.type" class="px-2 py-1.5 text-xs border border-gray-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-amber-400">
-                                    <option value="message">Mensaje</option>
-                                    <option value="note">Nota interna</option>
-                                </select>
-                                <textarea v-model="eventForm.body" rows="1" placeholder="Escribe un mensaje..." class="flex-1 px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 resize-none"></textarea>
-                                <button @click="submitEvent(t)" :disabled="!eventForm.body.trim()" class="self-end px-3 py-1.5 text-xs font-medium bg-amber-600 text-white rounded-lg hover:bg-amber-700 disabled:opacity-40 transition">Enviar</button>
+                            <!-- Escribir: nota interna (por defecto) o respuesta al
+                                 cliente. Las dos se ven DISTINTAS a propósito — una
+                                 la lee el ISP en su portal y la otra no, y eso no
+                                 puede depender de acordarse de mirar el select. -->
+                            <div v-if="!['resolved','closed'].includes(t.status)" class="mt-3 rounded-lg border p-3 transition-colors"
+                                 :class="eventForm.type === 'message' ? 'border-blue-300 bg-blue-50' : 'border-yellow-300 bg-yellow-50'">
+                                <div class="flex items-center gap-2 mb-2">
+                                    <button @click="eventForm.type='note'" type="button"
+                                            class="px-2.5 py-1 text-xs font-medium rounded-lg border transition"
+                                            :class="eventForm.type === 'note' ? 'bg-yellow-200 border-yellow-400 text-yellow-900' : 'bg-white border-gray-200 text-gray-500 hover:border-gray-300'">
+                                        Nota interna
+                                    </button>
+                                    <button @click="eventForm.type='message'" type="button"
+                                            class="px-2.5 py-1 text-xs font-medium rounded-lg border transition"
+                                            :class="eventForm.type === 'message' ? 'bg-blue-200 border-blue-400 text-blue-900' : 'bg-white border-gray-200 text-gray-500 hover:border-gray-300'">
+                                        Responder al cliente
+                                    </button>
+                                    <span class="text-[11px] font-medium" :class="eventForm.type === 'message' ? 'text-blue-700' : 'text-yellow-800'">
+                                        {{ eventForm.type === 'message' ? 'Lo va a LEER el ISP en su portal' : 'Solo la vemos nosotros' }}
+                                    </span>
+                                </div>
+                                <div class="flex gap-2">
+                                    <textarea v-model="eventForm.body" rows="2"
+                                              :placeholder="eventForm.type === 'message' ? 'Respuesta que verá el cliente…' : 'Nota para el equipo…'"
+                                              class="flex-1 px-3 py-1.5 text-sm bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 resize-none"
+                                              :class="eventForm.type === 'message' ? 'focus:ring-blue-400' : 'focus:ring-yellow-400'"></textarea>
+                                    <button @click="submitEvent(t)" :disabled="!eventForm.body.trim()"
+                                            class="self-end px-3 py-1.5 text-xs font-medium text-white rounded-lg disabled:opacity-40 transition"
+                                            :class="eventForm.type === 'message' ? 'bg-blue-600 hover:bg-blue-700' : 'bg-yellow-600 hover:bg-yellow-700'">
+                                        {{ eventForm.type === 'message' ? 'Responder' : 'Guardar nota' }}
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </div>

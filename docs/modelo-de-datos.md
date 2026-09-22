@@ -372,9 +372,31 @@ aplicación de crédito.
 > No se guarda como columna, se calcula y se descuenta solo.
 
 ### `support_tickets` / `ticket_events` / `account_notes`
-Soporte interno por cuenta: tickets con estado, prioridad, categoría, producto y
-origen; una bitácora de eventos (`message`/`note`/`status_change`/`assignment`)
-y notas fijables (`pinned`).
+Soporte por cuenta: tickets con estado, prioridad, categoría, producto y origen;
+una bitácora de eventos (`message`/`note`/`status_change`/`assignment`) y notas
+fijables (`pinned`).
+
+`source` es `manual` | `whatsapp` | `email` | `portal`. **`portal` = lo abrió el
+propio ISP** desde `/support`: la diferencia entre "nos llamó y lo anotamos" y
+"entró solo y todavía nadie lo ha visto".
+
+Desde que el ISP lee su propio ticket, `ticket_events.type` **es una frontera de
+privacidad, no una etiqueta**:
+
+| Tipo | ¿Lo ve el ISP? |
+|---|---|
+| `message` | **Sí** — es la conversación con el cliente |
+| `status_change` | Sí, en forma legible ("pasó a En progreso") |
+| `note` | **No** — nota interna del equipo |
+| `assignment` | **No** — a quién se lo asignamos es asunto nuestro |
+
+La lista vive en `TicketEvent::VISIBLE_AL_ISP` y es una **allowlist**: un tipo
+nuevo queda fuera por omisión. `account_notes` no sale nunca, bajo ningún
+concepto — es la libreta comercial de la cuenta.
+
+`first_response_at` lo marca nuestra primera respuesta **visible** (un `message`
+escrito desde el Brain). Una nota interna no cuenta: el cliente no la lee, así
+que para él seguimos sin contestar.
 
 ---
 
