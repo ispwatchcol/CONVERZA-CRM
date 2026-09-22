@@ -103,10 +103,12 @@ class Conversation extends Model
      */
     public function serviceWindowExpiresAt(): ?Carbon
     {
-        // tenant_id explícito y no solo el global scope: este método se llama
-        // desde el chat, pero puede terminar llamándose desde un worker, donde
-        // el tenant del container puede ser el del job anterior.
-        $lastInboundAt = Message::query()
+        // tenant_id explícito y SIN el global scope: este método se llama desde el
+        // chat, pero también desde un worker —o desde el aviso de un ticket, que
+        // pregunta por el hilo de NUESTRO workspace mientras el tenant bindeado es
+        // el del ISP—. Con el scope puesto, las dos condiciones se suman y la
+        // consulta no devuelve nada: la ventana salía "cerrada" siempre.
+        $lastInboundAt = Message::withoutGlobalScopes()
             ->where('tenant_id', $this->tenant_id)
             ->where('conversation_id', $this->id)
             ->where('status', 'received')

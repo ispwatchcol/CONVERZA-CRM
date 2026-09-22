@@ -89,6 +89,8 @@ const editForm = useForm({
     country: props.account.country ?? 'CO', onboarding_at: props.account.onboarding_at ?? '',
     renewal_at: props.account.renewal_at ?? '', billing_day: props.account.billing_day ?? '',
     notes: props.account.notes ?? '',
+    support_notify_enabled: props.account.support_notify_enabled ?? false,
+    support_notify_phone: props.account.support_notify_phone ?? '',
 });
 function submitEdit() { editForm.put(route('brain.accounts.update', props.account.id), { onSuccess: () => { showEdit.value = false; } }); }
 
@@ -771,6 +773,23 @@ function deleteAccount() { if (!confirm(`¿Eliminar "${props.account.name}"?`)) 
                             <div><label class="block text-xs font-semibold text-gray-700 mb-1">Manager</label><select v-model="editForm.owner_user_id" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400"><option value="">Sin asignar</option><option v-for="u in internal_users" :key="u.id" :value="u.id">{{ u.name }}</option></select></div>
                         </div>
                         <div><label class="block text-xs font-semibold text-gray-700 mb-1">Notas</label><textarea v-model="editForm.notes" rows="3" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 resize-none"></textarea></div>
+
+                        <!-- Avisos de soporte al ISP. Opt-in: nace apagado, porque
+                             mandarle WhatsApp a un cliente que no lo pidió es como
+                             se queman los números. -->
+                        <div class="rounded-xl border border-gray-200 p-3 space-y-2">
+                            <label class="flex items-start gap-2 cursor-pointer">
+                                <input v-model="editForm.support_notify_enabled" type="checkbox" class="mt-0.5 rounded border-gray-300 text-amber-600 focus:ring-amber-400" />
+                                <span>
+                                    <span class="block text-xs font-semibold text-gray-700">Avisarle por WhatsApp cuando su ticket avance</span>
+                                    <span class="block text-xs text-gray-400">Tres momentos y nada más: lo recibimos, le respondimos, quedó resuelto.</span>
+                                </span>
+                            </label>
+                            <div v-if="editForm.support_notify_enabled">
+                                <input v-model="editForm.support_notify_phone" placeholder="Teléfono para avisos (vacío = usa el del contacto)" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400" />
+                                <p class="text-xs text-gray-400 mt-1">Con indicativo, ej. 573001234567. Fuera de la ventana de 24 h el aviso sale por plantilla aprobada; si no hay plantilla, no se manda nada.</p>
+                            </div>
+                        </div>
                         <div class="flex justify-end gap-3 pt-2">
                             <button type="button" @click="showEdit=false" class="px-4 py-2 text-sm text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 transition">Cancelar</button>
                             <button type="submit" :disabled="editForm.processing" class="px-6 py-2 text-sm font-medium text-white bg-amber-600 rounded-lg hover:bg-amber-700 disabled:opacity-60 transition">{{ editForm.processing ? 'Guardando...' : 'Guardar' }}</button>

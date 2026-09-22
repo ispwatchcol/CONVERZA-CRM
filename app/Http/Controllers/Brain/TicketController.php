@@ -7,6 +7,7 @@ use App\Models\Brain\Account;
 use App\Models\Brain\AccountNote;
 use App\Models\Brain\SupportTicket;
 use App\Models\Brain\TicketEvent;
+use App\Models\Brain\TicketNotificationLog;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Validation\Rule;
@@ -113,6 +114,9 @@ class TicketController extends Controller
         // un ticket donde lo único escrito era "este cliente está en mora".
         if ($validated['type'] === 'message') {
             $ticket->marcarPrimeraRespuesta($event->created_at);
+            // Le avisamos que respondimos. Una nota interna no dispara nada: el
+            // cliente no la lee, así que no hay nada que ir a ver.
+            $ticket->avisarAlIsp(TicketNotificationLog::KIND_RESPUESTA, $event);
         }
 
         return back()->with('success', 'Mensaje añadido.');

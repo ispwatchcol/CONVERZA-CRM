@@ -35,6 +35,8 @@ class Account extends Model
         'renewal_at',
         'billing_day',
         'notes',
+        'support_notify_enabled',
+        'support_notify_phone',
     ];
 
     protected function casts(): array
@@ -43,6 +45,7 @@ class Account extends Model
             'onboarding_at' => 'date',
             'renewal_at'    => 'date',
             'billing_day'   => 'integer',
+            'support_notify_enabled' => 'boolean',
         ];
     }
 

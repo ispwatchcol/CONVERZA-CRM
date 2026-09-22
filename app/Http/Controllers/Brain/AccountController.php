@@ -326,7 +326,13 @@ class AccountController extends Controller
             // Excepción de facturación por cliente: el día del mes en que se le cobra.
             'billing_day'        => ['nullable', 'integer', 'between:1,31'],
             'notes'              => ['nullable', 'string', 'max:2000'],
+            // Avisos de soporte: opt-in por cuenta. Apagado es el valor por defecto
+            // en la BD, y un checkbox que no viaja en el payload es 'false'.
+            'support_notify_enabled' => ['boolean'],
+            'support_notify_phone'   => ['nullable', 'string', 'max:30'],
         ]);
+
+        $validated['support_notify_enabled'] = $request->boolean('support_notify_enabled');
 
         if ($validated['ispwatch_tenant_id'] != $account->ispwatch_tenant_id
             && $error = $this->validateIspwatchLink($validated['ispwatch_tenant_id'] ?? null)) {
@@ -443,6 +449,8 @@ class AccountController extends Controller
             'renewal_at'         => $a->renewal_at?->toDateString(),
             'billing_day'        => $a->billing_day,
             'next_billing_at'    => $a->nextBillingDate()?->toDateString(),
+            'support_notify_enabled' => (bool) $a->support_notify_enabled,
+            'support_notify_phone'   => $a->support_notify_phone,
             'notes'              => $a->notes,
             'owner'              => $a->ownerUser?->only('id', 'name'),
             'tenant'             => $a->tenant?->only('id', 'name', 'slug'),

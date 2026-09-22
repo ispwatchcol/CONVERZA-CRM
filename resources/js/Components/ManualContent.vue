@@ -1094,6 +1094,7 @@ vence el {{fecha_vencimiento}}.</pre>
                             </span>
                         </p>
                         <ul class="space-y-2 text-sm text-gray-600 list-disc list-inside mb-4">
+                            <li>Si tu cuenta tiene los avisos activados, te escribimos por WhatsApp en tres momentos: cuando lo recibimos, cuando te respondemos y cuando queda resuelto. Nada más, para no llenarte de mensajes.</li>
                             <li>Clasifícalo por <strong>tipo</strong> (técnico, facturación, puesta en marcha) y por <strong>producto</strong>: llega antes a quien corresponde.</li>
                             <li>La <strong>prioridad</strong> y la asignación las ponemos nosotros; tú no tienes que decidirlas.</li>
                             <li>Si lo dimos por resuelto y el tema sigue, responde en el mismo hilo: <strong>se vuelve a abrir solo</strong>.</li>
