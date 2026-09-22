@@ -82,6 +82,11 @@ de tocar nada:
 | 2 | **Tus clientes: los ISPs** | `tenants` (Converza) + `tenant` (ispwatch) + `accounts` (Brain) | Cada ISP ve solo su workspace |
 | 3 | **Los clientes del ISP** (usuarios finales) | `contacts` (Converza) + `customer_profile` (ispwatch) | El equipo del ISP |
 
+La capa 2 tiene **un** canal hacia la capa 1: el portal de soporte (`/support`),
+donde el ISP nos abre requerimientos y sigue sus avances. Es la única ruta por la
+que un usuario de tenant toca tablas del Brain, y está construida aparte para que
+siga siéndolo — ver [core-brain.md §9](core-brain.md).
+
 Un `Contact` de Converza es una **persona con WhatsApp**. Puede o no
 corresponder a un cliente de ispwatch: si el número existe en ispwatch, el
 sidebar del chat muestra su servicio, IP, PPPoE y facturas; si no, se trata como

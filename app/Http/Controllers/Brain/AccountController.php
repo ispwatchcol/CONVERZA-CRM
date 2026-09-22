@@ -178,7 +178,9 @@ class AccountController extends Controller
 
         // Tickets
         $tickets = SupportTicket::where('account_id', $account->id)
-            ->with(['assignedTo:id,name', 'openedBy:id,name', 'events.author:id,name'])
+            // internal_role/is_superadmin para poder distinguir en la bitácora lo
+            // que escribió el cliente desde su portal de lo que escribimos nosotros.
+            ->with(['assignedTo:id,name', 'openedBy:id,name', 'events.author:id,name,internal_role,is_superadmin'])
             ->orderByDesc('created_at')
             ->get()
             ->map(fn ($t) => [
@@ -195,12 +197,16 @@ class AccountController extends Controller
                 'resolved_at'       => $t->resolved_at?->toIso8601String(),
                 'created_at'        => $t->created_at?->toIso8601String(),
                 'events'            => $t->events->map(fn ($e) => [
-                    'id'         => $e->id,
-                    'type'       => $e->type,
-                    'body'       => $e->body,
-                    'meta'       => $e->meta,
-                    'author'     => $e->author?->only('id', 'name'),
-                    'created_at' => $e->created_at?->toIso8601String(),
+                    'id'          => $e->id,
+                    'type'        => $e->type,
+                    'body'        => $e->body,
+                    'meta'        => $e->meta,
+                    'author'      => $e->author?->only('id', 'name'),
+                    // Lo escribió el ISP desde su portal, no nuestro equipo. La
+                    // bitácora tiene que dejarlo ver de un golpe: es la diferencia
+                    // entre leer y contestar.
+                    'from_client' => $e->author !== null && ! $e->author->canAccessBrain(),
+                    'created_at'  => $e->created_at?->toIso8601String(),
                 ]),
             ]);
 

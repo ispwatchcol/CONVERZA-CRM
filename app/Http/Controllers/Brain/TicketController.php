@@ -111,9 +111,16 @@ class TicketController extends Controller
             'body'              => $validated['body'],
         ]);
 
-        // Primer evento en un ticket abierto → marcar first_response_at
-        if (! $ticket->first_response_at) {
-            $ticket->update(['first_response_at' => $event->created_at]);
+        // Primera respuesta VISIBLE para el cliente → marcar first_response_at.
+        // Una nota interna no cuenta: el ISP no la lee, así que para él seguimos
+        // sin contestar. Antes cualquier evento la marcaba, y eso daba por atendido
+        // un ticket donde lo único escrito era "este cliente está en mora".
+        if ($validated['type'] === 'message' && ! $ticket->first_response_at) {
+            // `created_at` de ticket_events lo pone la BD (useCurrent) y el modelo
+            // no se enteró: recién creado, `$event->created_at` es null. Así que
+            // esto guardaba null y la columna llevaba meses vacía sin que nadie lo
+            // notara. `?? now()` difiere del valor real en milisegundos.
+            $ticket->update(['first_response_at' => $event->created_at ?? now()]);
         }
 
         return back()->with('success', 'Mensaje añadido.');
