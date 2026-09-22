@@ -133,6 +133,10 @@ class SupportController extends Controller
         // Acuse de recibo: que sepa que llegó sin tener que volver a entrar.
         $ticket->avisarAlIsp(TicketNotificationLog::KIND_ACUSE, $primerMensaje);
 
+        // Y el espejo: que nos llegue a nosotros. Si nadie mira el panel, el portal
+        // es peor que el WhatsApp de siempre — el cliente cree que ya lo recibimos.
+        $ticket->avisarInternamente($primerMensaje);
+
         // `first_response_at` se queda en null a propósito: mide NUESTRA primera
         // respuesta visible, y el mensaje con que el cliente abre el ticket no lo es.
         return redirect()

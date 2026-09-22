@@ -42,6 +42,7 @@ class EnviarAvisoDeTicket implements ShouldQueue
             TicketNotificationLog::KIND_ACUSE     => $avisos->acuse($ticket, $evento),
             TicketNotificationLog::KIND_RESPUESTA => $avisos->respuesta($ticket, $evento),
             TicketNotificationLog::KIND_RESUELTO  => $avisos->resuelto($ticket, $evento),
+            TicketNotificationLog::KIND_INTERNO   => $avisos->nuevoParaNosotros($ticket, $evento),
             default                               => null,
         };
     }

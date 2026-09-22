@@ -23,6 +23,19 @@ return [
     */
 
     'notify' => [
+        /*
+        | A dónde nos llega el aviso cuando un ISP abre un ticket por el portal.
+        |
+        | Va por correo y no por WhatsApp: el aviso al cliente tropieza con la
+        | ventana de 24 h y con las plantillas de Meta, y para avisarnos a nosotros
+        | mismos nada de eso hace falta.
+        |
+        | Ojo: necesita un transporte de correo de verdad (MAIL_MAILER=smtp y sus
+        | credenciales). Con el mailer en `log` el aviso se registra como omitido
+        | en vez de fingir que salió.
+        */
+        'internal_email' => env('SUPPORT_INTERNAL_EMAIL', 'ispwatchcol@gmail.com'),
+
         'language' => env('SUPPORT_NOTIFY_LANG', 'es_CO'),
 
         'templates' => [
