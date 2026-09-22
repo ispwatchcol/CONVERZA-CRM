@@ -310,6 +310,34 @@ Los cambios de estado pasan todos por `SupportTicket::cambiarEstadoA()`, que
 escribe el evento y mantiene `resolved_at`: al reabrir lo limpia, porque si no el
 ticket sigue diciendo que se resolvió un día en el que no quedó resuelto.
 
+### Avisarle al ISP que su ticket avanzó
+
+"Ver los avances" no puede depender de que el cliente se acuerde de entrar al
+panel: sin aviso, el portal no reemplaza al WhatsApp de siempre, que era el
+problema a resolver. Lo hace [`AvisosDeTicket`](../app/Services/Support/AvisosDeTicket.php),
+en cola (`EnviarAvisoDeTicket`) para que la petición no espere a Meta.
+
+**Tres momentos y nada más:** lo recibimos (acuse), le respondimos, quedó
+resuelto. Un aviso por cada movimiento interno convierte la función en ruido y el
+cliente la apaga. Pasar a `pending` o cerrar no avisa; una **nota interna**
+tampoco, porque el cliente no la lee y no hay nada que ir a ver.
+
+| Regla | Por qué |
+|---|---|
+| **Opt-in por cuenta** (`accounts.support_notify_enabled`, apagado por defecto) | Mandarle WhatsApp a quien no lo pidió es como se queman los números |
+| **Sale del número de Converza** (tenant `default`, vía `WhatsAppService::forTenant`) | El aviso es nuestro, no del ISP. No pasa por `EventCatalog` (ver [avisos-automaticos.md §1](avisos-automaticos.md)) |
+| **Nunca texto libre fuera de la ventana de 24 h** | Meta lo acepta con 200 y lo rechaza después por webhook; cada rechazo gasta quality rating. Sin plantilla configurada el aviso se registra como `skipped` y **no se intenta** |
+| **Idempotente** | La fila de `ticket_notification_logs` se crea ANTES del envío, con `(ticket_event_id, kind)` único: un reintento del job choca y no reenvía |
+| **Queda rastro donde se mira** | Cada intento escribe una `note` en la bitácora del propio ticket ("se le envió el acuse", "no se envió: fuera de ventana y sin plantilla"). Es interna: el ISP no la ve |
+
+El teléfono es `accounts.support_notify_phone` o, si está vacío, el
+`contact_phone` de la ficha.
+
+**Plantillas.** Los nombres van en `config/support.php` (`SUPPORT_NOTIFY_TPL_*`) y
+esperan dos variables nombradas: `{{numero}}` y `{{asunto}}`. Hasta que existan
+aprobadas en Meta, los avisos que caigan fuera de la ventana quedan en `skipped`
+— el sistema funciona, simplemente no manda lo que no puede entregar.
+
 ---
 
 ## 10. Principios no negociables
