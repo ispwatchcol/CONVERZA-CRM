@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Brain;
 use App\Http\Controllers\Controller;
 use App\Models\Brain\SupportTicket;
 use App\Models\Brain\TicketEvent;
+use App\Models\Brain\TicketNotificationLog;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -110,6 +111,7 @@ class TicketInboxController extends Controller
 
         if ($validated['type'] === 'message') {
             $ticket->marcarPrimeraRespuesta($event->created_at);
+            $ticket->avisarAlIsp(TicketNotificationLog::KIND_RESPUESTA, $event);
         }
 
         return back()->with('success', $validated['type'] === 'message' ? 'Respuesta enviada.' : 'Nota guardada.');

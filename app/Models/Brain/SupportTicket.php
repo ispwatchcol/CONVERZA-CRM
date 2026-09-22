@@ -2,6 +2,7 @@
 
 namespace App\Models\Brain;
 
+use App\Jobs\EnviarAvisoDeTicket;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
@@ -125,14 +126,38 @@ class SupportTicket extends Model
             : null;
         $this->save();
 
-        TicketEvent::create([
+        $evento = TicketEvent::create([
             'support_ticket_id' => $this->id,
             'author_user_id'    => $autorId,
             'type'              => 'status_change',
             'meta'              => ['from' => $anterior, 'to' => $nuevo],
         ]);
 
+        // Solo "resuelto" se le avisa. Que un ticket pase a "pendiente" o se
+        // cierre del todo es movimiento interno, y un aviso por cada movimiento
+        // convierte la función en ruido y el cliente la apaga.
+        if ($nuevo === 'resolved') {
+            $this->avisarAlIsp(TicketNotificationLog::KIND_RESUELTO, $evento);
+        }
+
         return true;
+    }
+
+    /**
+     * Pone en cola el aviso al ISP, si esa cuenta los pidió.
+     *
+     * El opt-in se mira ACÁ y no solo dentro del job: una cuenta con los avisos
+     * apagados no tiene por qué generar trabajo en la cola ni filas de bitácora
+     * en cada ticket. El servicio vuelve a comprobarlo de todos modos, por si se
+     * apagan entre que se encola y se ejecuta.
+     */
+    public function avisarAlIsp(string $kind, TicketEvent $origen): void
+    {
+        if (! $this->account?->support_notify_enabled) {
+            return;
+        }
+
+        EnviarAvisoDeTicket::dispatch($this->id, $origen->id, $kind);
     }
 
     /**

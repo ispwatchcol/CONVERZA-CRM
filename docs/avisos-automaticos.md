@@ -27,6 +27,14 @@ Ambos comparten: el catálogo de eventos, el enrutamiento
 (`tenant_notification_routes`), la bitácora (`billing_notification_logs`), el
 interruptor maestro y las reglas de pacing.
 
+> **No confundir con los avisos de soporte.** Los dos motores de acá son del
+> **ISP hacia sus suscriptores** y salen del número del ISP. Los avisos de
+> tickets (`AvisosDeTicket`, [core-brain.md §9](core-brain.md)) van en la otra
+> dirección — **nosotros hacia el ISP**, desde el número de Converza— y no usan
+> `EventCatalog` ni `tenant_notification_routes` a propósito: si vivieran ahí,
+> cada ISP vería "Ticket recibido" en su pantalla de Avisos, que es un evento
+> nuestro y no suyo.
+
 ---
 
 ## 2. Los siete eventos

@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Brain\Account;
 use App\Models\Brain\SupportTicket;
 use App\Models\Brain\TicketEvent;
+use App\Models\Brain\TicketNotificationLog;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Validation\Rule;
@@ -122,12 +123,15 @@ class SupportController extends Controller
             'source'     => 'portal',
         ]);
 
-        TicketEvent::create([
+        $primerMensaje = TicketEvent::create([
             'support_ticket_id' => $ticket->id,
             'author_user_id'    => Auth::id(),
             'type'              => 'message',
             'body'              => $validated['body'],
         ]);
+
+        // Acuse de recibo: que sepa que llegó sin tener que volver a entrar.
+        $ticket->avisarAlIsp(TicketNotificationLog::KIND_ACUSE, $primerMensaje);
 
         // `first_response_at` se queda en null a propósito: mide NUESTRA primera
         // respuesta visible, y el mensaje con que el cliente abre el ticket no lo es.
