@@ -5,7 +5,7 @@
 > ispwatch, más el cobro y el soporte de esa relación comercial.
 
 **Archivos clave**
-- [app/Http/Controllers/Brain/](../app/Http/Controllers/Brain/) — Cockpit, Account, Billing, Ticket
+- [app/Http/Controllers/Brain/](../app/Http/Controllers/Brain/) — Cockpit, Account, Billing, Ticket, TicketInbox
 - [app/Http/Controllers/SupportController.php](../app/Http/Controllers/SupportController.php) — el portal del ISP (§9); la única puerta de un tenant hacia estas tablas
 - [app/Models/Brain/](../app/Models/Brain/) — Account, AccountProduct, AccountInvoice, AccountPayment, SupportTicket, TicketEvent, AccountNote
 - [app/Services/Brain/PlanCatalog.php](../app/Services/Brain/PlanCatalog.php) — catálogo de planes
@@ -66,7 +66,10 @@ User::isBrainOwner()     // permite escribir
 En el menú lateral, los ítems del Brain aparecen en una sección aparte
 (*SaaS Admin*, en ámbar) solo para quien tiene acceso.
 
-Rutas: `/brain`, `/brain/accounts`, `/brain/accounts/{id}`.
+Rutas: `/brain`, `/brain/accounts`, `/brain/accounts/{id}`, `/brain/tickets`.
+
+El ítem *Tickets* lleva un badge rojo con los que están esperando respuesta
+nuestra (§9).
 
 ---
 
@@ -278,6 +281,34 @@ equivoque hacia el lado que no filtra.
 no cuenta — el cliente no la lee. (Hasta este cambio la columna nunca se llenaba:
 se guardaba el `created_at` de un evento recién creado, que es `null` porque la
 fecha la pone la BD.)
+
+### La bandeja interna (`/brain/tickets`)
+
+La ficha de la cuenta responde *"¿qué pasa con este ISP?"*. La bandeja responde la
+otra pregunta, la que aparece en cuanto los tickets los abre el cliente: *"¿qué
+entró y nadie ha atendido?"*.
+
+**Qué cuenta como pendiente** — `SupportTicket::scopeEsperandoNuestraRespuesta()`:
+
+> El ticket está abierto (`open`/`pending`) **y** o nunca le contestamos
+> (`first_response_at IS NULL`), o el cliente escribió después de nuestra última
+> respuesta.
+
+Esa definición vive en **un solo sitio** y la usan las tres cosas que cuentan:
+el filtro de la bandeja, sus contadores y el badge rojo de la navegación. Copiada
+en tres lugares se desincroniza, y un badge que no cuadra con la lista deja de
+mirarse a los dos días.
+
+- Orden por defecto: arriba lo que lleva más tiempo esperándonos.
+- Filtros por estado, prioridad, producto, origen, asignado y texto.
+- Se responde y se cambia el estado **desde la bandeja**, sin abrir la ficha. El
+  compositor es el mismo de la ficha y también arranca en **nota interna**.
+- El badge de la navegación sale de un contador cacheado 30 s: es un número, no
+  un dato en vivo, y sin caché costaría una consulta en cada petición Inertia.
+
+Los cambios de estado pasan todos por `SupportTicket::cambiarEstadoA()`, que
+escribe el evento y mantiene `resolved_at`: al reabrir lo limpia, porque si no el
+ticket sigue diciendo que se resolvió un día en el que no quedó resuelto.
 
 ---
 
