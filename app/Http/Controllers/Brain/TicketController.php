@@ -40,12 +40,17 @@ class TicketController extends Controller
         ]);
 
         if (! empty($validated['body'])) {
-            TicketEvent::create([
+            $event = TicketEvent::create([
                 'support_ticket_id' => $ticket->id,
                 'author_user_id'    => Auth::id(),
                 'type'              => 'message',
                 'body'              => $validated['body'],
             ]);
+
+            // Un ticket que abrimos nosotros con su primer mensaje ya está
+            // contestado: no hay nada del cliente esperando respuesta. Sin esto
+            // se quedaría para siempre arriba de la bandeja, en "sin responder".
+            $ticket->marcarPrimeraRespuesta($event->created_at);
         }
 
         return back()->with('success', 'Ticket creado.');
@@ -64,24 +69,15 @@ class TicketController extends Controller
             'assigned_to' => ['nullable', 'integer', Rule::exists('users', 'id')],
         ]);
 
-        $oldStatus     = $ticket->status;
         $oldAssignedTo = $ticket->assigned_to;
 
+        // El estado va aparte: `cambiarEstadoA` es la única regla, y también deja
+        // el evento y `resolved_at` como corresponde.
+        $nuevoEstado = $validated['status'];
+        unset($validated['status']);
+
         $ticket->update($validated);
-
-        // Registrar eventos de cambio automáticamente
-        if ($oldStatus !== $validated['status']) {
-            TicketEvent::create([
-                'support_ticket_id' => $ticket->id,
-                'author_user_id'    => Auth::id(),
-                'type'              => 'status_change',
-                'meta'              => ['from' => $oldStatus, 'to' => $validated['status']],
-            ]);
-
-            if (in_array($validated['status'], ['resolved', 'closed']) && ! $ticket->resolved_at) {
-                $ticket->update(['resolved_at' => now()]);
-            }
-        }
+        $ticket->cambiarEstadoA($nuevoEstado, Auth::id());
 
         if ($oldAssignedTo !== $validated['assigned_to']) {
             TicketEvent::create([
@@ -115,12 +111,8 @@ class TicketController extends Controller
         // Una nota interna no cuenta: el ISP no la lee, así que para él seguimos
         // sin contestar. Antes cualquier evento la marcaba, y eso daba por atendido
         // un ticket donde lo único escrito era "este cliente está en mora".
-        if ($validated['type'] === 'message' && ! $ticket->first_response_at) {
-            // `created_at` de ticket_events lo pone la BD (useCurrent) y el modelo
-            // no se enteró: recién creado, `$event->created_at` es null. Así que
-            // esto guardaba null y la columna llevaba meses vacía sin que nadie lo
-            // notara. `?? now()` difiere del valor real en milisegundos.
-            $ticket->update(['first_response_at' => $event->created_at ?? now()]);
+        if ($validated['type'] === 'message') {
+            $ticket->marcarPrimeraRespuesta($event->created_at);
         }
 
         return back()->with('success', 'Mensaje añadido.');

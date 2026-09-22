@@ -186,6 +186,13 @@ Route::middleware('auth')->group(function () {
         Route::get('/', [Brain\CockpitController::class, 'index'])->name('cockpit');
 
         // Cuentas (ISPs clientes)
+        // Bandeja de tickets de TODAS las cuentas. Va antes que /accounts porque es
+        // el otro eje: la ficha responde "qué pasa con esta cuenta", la bandeja
+        // responde "qué entró y nadie ha atendido".
+        Route::get('/tickets', [Brain\TicketInboxController::class, 'index'])->name('tickets.index');
+        Route::patch('/tickets/{ticket}/status', [Brain\TicketInboxController::class, 'updateStatus'])->whereNumber('ticket')->name('tickets.status');
+        Route::post('/tickets/{ticket}/events', [Brain\TicketInboxController::class, 'storeEvent'])->whereNumber('ticket')->name('tickets.events.store');
+
         Route::get('/accounts', [Brain\AccountController::class, 'index'])->name('accounts.index');
         Route::post('/accounts', [Brain\AccountController::class, 'store'])->name('accounts.store');
         Route::get('/accounts/{account}', [Brain\AccountController::class, 'show'])->name('accounts.show');

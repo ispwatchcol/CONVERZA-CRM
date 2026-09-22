@@ -161,14 +161,7 @@ class SupportController extends Controller
         // que un resuelto con una respuesta nueva encima no aparecería en ninguna
         // bandeja nuestra y quedaría esperando a que alguien se acuerde.
         if ($ticket->status === 'resolved') {
-            $ticket->update(['status' => 'open', 'resolved_at' => null]);
-
-            TicketEvent::create([
-                'support_ticket_id' => $ticket->id,
-                'author_user_id'    => Auth::id(),
-                'type'              => 'status_change',
-                'meta'              => ['from' => 'resolved', 'to' => 'open'],
-            ]);
+            $ticket->cambiarEstadoA('open', Auth::id());
         }
 
         return back()->with('success', 'Mensaje enviado.');
