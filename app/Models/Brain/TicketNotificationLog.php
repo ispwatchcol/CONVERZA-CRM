@@ -21,6 +21,8 @@ class TicketNotificationLog extends Model
     public const KIND_ACUSE     = 'acuse';
     public const KIND_RESPUESTA = 'respuesta';
     public const KIND_RESUELTO  = 'resuelto';
+    /** El que nos llega a NOSOTROS por correo cuando el ISP abre un ticket (CON-82). */
+    public const KIND_INTERNO   = 'interno_nuevo';
 
     protected $fillable = [
         'support_ticket_id', 'account_id', 'ticket_event_id',

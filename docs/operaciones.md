@@ -508,6 +508,39 @@ php artisan schedule:list
 grep CRON /var/log/syslog | tail -20
 ```
 
+### 🟠 Un ISP abrió un ticket y no me llegó el correo
+
+Los avisos del portal de tickets (`ticket_notification_logs`) dicen por qué no
+salieron. El caso más común no es un fallo: es que **el servidor no tiene
+transporte de correo**, y entonces el aviso se registra como omitido en vez de
+fingir que salió.
+
+```bash
+cd /var/www/converza-crm
+
+# ¿Qué pasó con los últimos avisos?
+php artisan tinker --execute="
+  dump(\App\Models\Brain\TicketNotificationLog::latest()->take(5)
+    ->get(['kind','status','channel','reason','created_at'])->toArray());
+"
+```
+
+| `reason` | Qué pasa |
+|---|---|
+| `correo_sin_transporte` | `MAIL_MAILER` está en `log` (o sin definir). Hay que configurar SMTP en el `.env` y `php artisan config:cache` |
+| `sin_correo` | `SUPPORT_INTERNAL_EMAIL` quedó vacío |
+| `sin_plantilla` | Es un aviso **al ISP** fuera de la ventana de 24 h y no hay plantilla aprobada (ver [core-brain.md §9](core-brain.md)) |
+| `apagado` | Esa cuenta no tiene activados los avisos de soporte en su ficha del Brain |
+| Cualquier otro texto | Es el error real de Meta o del SMTP |
+
+Si el `reason` está vacío y el `status` es `sent`, el aviso salió: el problema está
+del lado del correo (spam, filtros) y no de la app.
+
+```bash
+# Probar el transporte sin depender de que entre un ticket
+php artisan tinker --execute="Mail::raw('prueba de Converza', fn(\$m) => \$m->to(config('support.notify.internal_email'))->subject('Prueba'));"
+```
+
 ### 🔴 Toda la app devuelve 500 tras un deploy
 
 Casi siempre son assets desincronizados: `manifest.json` apunta a hashes que ya no

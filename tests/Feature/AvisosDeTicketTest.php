@@ -12,7 +12,9 @@ use App\Models\Message;
 use App\Models\Tenant;
 use App\Models\User;
 use Illuminate\Database\Schema\Blueprint;
+use App\Mail\TicketNuevoDelPortal;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Schema;
 use Tests\TestCase;
 
@@ -169,6 +171,14 @@ class AvisosDeTicketTest extends TestCase
         config()->set('services.whatsapp.token', 'test-token');
         config()->set('support.notify.language', 'es_CO');
         config()->set('support.notify.templates', ['acuse' => null, 'respuesta' => null, 'resuelto' => null]);
+        config()->set('support.notify.internal_email', 'ispwatchcol@gmail.com');
+        // phpunit.xml pone MAIL_MAILER=array, y el servicio trata `array`/`log`
+        // como "sin transporte" a propósito. Acá se finge uno real y Mail::fake()
+        // intercepta el envío.
+        config()->set('mail.default', 'smtp');
+        // Para toda la clase: el aviso interno se dispara en casi todas las pruebas
+        // y sin esto intentaría hablar con un SMTP de verdad.
+        Mail::fake();
 
         $this->tenantIsp = Tenant::create(['slug' => 'isp-a', 'name' => 'ISP A', 'is_active' => true]);
 
@@ -322,8 +332,13 @@ class AvisosDeTicketTest extends TestCase
 
         Http::assertNothingSent();
         // Ni siquiera se registra: una cuenta con los avisos apagados no tiene por
-        // qué llenar de filas la bitácora de cada ticket.
-        $this->assertSame(0, TicketNotificationLog::count());
+        // qué llenar de filas la bitácora de cada ticket. (El aviso interno sí se
+        // registra: ese es nuestro y no depende de este interruptor.)
+        $this->assertSame(0, TicketNotificationLog::whereIn('kind', [
+            TicketNotificationLog::KIND_ACUSE,
+            TicketNotificationLog::KIND_RESPUESTA,
+            TicketNotificationLog::KIND_RESUELTO,
+        ])->count());
     }
 
     public function test_sin_telefono_queda_registrado_por_que_no_salio(): void
@@ -370,5 +385,90 @@ class AvisosDeTicketTest extends TestCase
         $this->actingAs($this->adminIsp)->get("/support/{$ticket->id}")
             ->assertOk()
             ->assertDontSee('ventana de 24 h', false);
+    }
+
+    // ── El aviso en espejo: a nosotros, por correo (CON-82) ──────────────────
+
+    public function test_cuando_el_isp_abre_un_ticket_nos_llega_un_correo(): void
+    {
+        Http::fake();
+        Mail::fake();
+
+        $ticket = $this->abrirTicketDesdeElPortal();
+
+        Mail::assertSent(TicketNuevoDelPortal::class, function ($mail) use ($ticket) {
+            return $mail->hasTo('ispwatchcol@gmail.com')
+                && $mail->ticket->id === $ticket->id
+                && $mail->cuenta === 'ISP A';
+        });
+
+        $log = TicketNotificationLog::where('kind', TicketNotificationLog::KIND_INTERNO)->first();
+        $this->assertSame('sent', $log->status);
+        $this->assertSame('email', $log->channel);
+    }
+
+    public function test_el_aviso_interno_va_aunque_el_cliente_tenga_los_suyos_apagados(): void
+    {
+        Http::fake();
+        Mail::fake();
+        // El interruptor de la cuenta decide lo que recibe EL ISP, no lo que nos
+        // enteramos nosotros.
+        $this->cuenta->update(['support_notify_enabled' => false]);
+
+        $this->abrirTicketDesdeElPortal();
+
+        Mail::assertSent(TicketNuevoDelPortal::class);
+        $this->assertSame(0, TicketNotificationLog::where('kind', TicketNotificationLog::KIND_ACUSE)->count());
+    }
+
+    public function test_el_aviso_interno_no_se_manda_dos_veces_por_el_mismo_ticket(): void
+    {
+        Http::fake();
+        Mail::fake();
+
+        $ticket = $this->abrirTicketDesdeElPortal();
+        $evento = TicketEvent::where('type', 'message')->firstOrFail();
+
+        // Como si el job se reintentara.
+        app(\App\Services\Support\AvisosDeTicket::class)->nuevoParaNosotros($ticket, $evento);
+
+        Mail::assertSent(TicketNuevoDelPortal::class, 1);
+        $this->assertSame(1, TicketNotificationLog::where('kind', TicketNotificationLog::KIND_INTERNO)->count());
+    }
+
+    public function test_sin_transporte_de_correo_se_registra_en_vez_de_fingir_que_salio(): void
+    {
+        Http::fake();
+        Mail::fake();
+        // Es el estado del droplet hoy: sin MAIL_MAILER, Laravel cae en `log`.
+        config()->set('mail.default', 'log');
+
+        $this->abrirTicketDesdeElPortal();
+
+        Mail::assertNothingSent();
+
+        $log = TicketNotificationLog::where('kind', TicketNotificationLog::KIND_INTERNO)->first();
+        $this->assertSame('skipped', $log->status);
+        $this->assertSame('correo_sin_transporte', $log->reason);
+
+        // Y se dice en el ticket, que es donde alguien lo va a ver.
+        $nota = TicketEvent::where('type', 'note')->get()
+            ->first(fn ($e) => str_contains((string) $e->body, 'transporte de correo'));
+        $this->assertNotNull($nota);
+    }
+
+    public function test_el_aviso_interno_que_si_sale_no_ensucia_la_bitacora_del_ticket(): void
+    {
+        Http::fake(['*' => Http::response(['messages' => [['id' => 'wamid.X']]], 200)]);
+        Mail::fake();
+        $this->ventanaAbiertaCon('573001112233');
+
+        $this->abrirTicketDesdeElPortal();
+
+        // El aviso al ISP sí deja nota (salió por WhatsApp); el interno, no: sería
+        // una línea de ruido en cada ticket del portal.
+        $notas = TicketEvent::where('type', 'note')->get();
+        $this->assertCount(1, $notas);
+        $this->assertStringContainsString('acuse de recibo', $notas->first()->body);
     }
 }

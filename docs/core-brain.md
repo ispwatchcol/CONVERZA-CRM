@@ -338,6 +338,28 @@ esperan dos variables nombradas: `{{numero}}` y `{{asunto}}`. Hasta que existan
 aprobadas en Meta, los avisos que caigan fuera de la ventana quedan en `skipped`
 — el sistema funciona, simplemente no manda lo que no puede entregar.
 
+### El aviso en espejo: a nosotros, por correo
+
+Cuando un ISP abre un ticket por el portal nos llega un correo
+(`TicketNuevoDelPortal` → `SUPPORT_INTERNAL_EMAIL`). La bandeja y su badge avisan
+a quien ya está mirando la pantalla; esto avisa cuando nadie está mirando, que es
+justo cuando el portal se volvería peor que el WhatsApp de siempre — el cliente
+cree que ya lo recibimos.
+
+- **Va por correo, no por WhatsApp.** Para avisarnos a nosotros mismos no hace
+  falta pelear con la ventana de 24 h ni esperar que Meta apruebe una plantilla.
+- **No depende del opt-in de la cuenta.** Ese interruptor decide lo que recibe el
+  ISP, no lo que nos enteramos nosotros.
+- **Sin transporte de correo** (`MAIL_MAILER` en `log`, que es el default de
+  Laravel) el aviso se registra como `skipped` con motivo `correo_sin_transporte`
+  en vez de dejar una fila que diga "enviado" y a nadie avisado.
+- El que **sí** sale no escribe nota en el ticket: sería una línea de ruido en
+  cada ticket del portal. El que no sale, sí — eso hay que verlo sin ir a buscar
+  la tabla.
+
+Diagnóstico cuando no llega: [operaciones.md §7](operaciones.md) → "Un ISP abrió
+un ticket y no me llegó el correo".
+
 ---
 
 ## 10. Principios no negociables

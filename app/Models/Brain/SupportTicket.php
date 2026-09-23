@@ -161,6 +161,17 @@ class SupportTicket extends Model
     }
 
     /**
+     * Pone en cola el aviso a NOSOTROS (correo) de que entró un ticket del portal.
+     *
+     * No mira `support_notify_enabled`: ese interruptor es la decisión del ISP
+     * sobre lo que él recibe, no sobre lo que nos enteramos nosotros.
+     */
+    public function avisarInternamente(TicketEvent $origen): void
+    {
+        EnviarAvisoDeTicket::dispatch($this->id, $origen->id, TicketNotificationLog::KIND_INTERNO);
+    }
+
+    /**
      * Marca nuestra primera respuesta visible, si es que todavía no había ninguna.
      *
      * `$cuando` llega null cuando el evento se acaba de crear: `ticket_events.created_at`
