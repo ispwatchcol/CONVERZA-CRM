@@ -732,6 +732,7 @@ function deleteAccount() { if (!confirm(`¿Eliminar "${props.account.name}"?`)) 
                                         {{ eventForm.type === 'message' ? 'Responder' : 'Guardar nota' }}
                                     </button>
                                 </div>
+                                <p v-if="eventForm.errors.body" class="mt-1 text-xs text-red-600">{{ eventForm.errors.body }}</p>
                             </div>
                         </div>
                     </div>

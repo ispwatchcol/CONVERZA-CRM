@@ -105,7 +105,7 @@ class SupportController extends Controller
 
         $validated = $request->validate([
             'subject'  => ['required', 'string', 'max:200'],
-            'body'     => ['required', 'string', 'max:5000'],
+            'body'     => ['required', 'string', 'max:20000'],
             'category' => ['nullable', Rule::in(self::CATEGORIAS)],
             'product'  => ['nullable', Rule::in(['ispwatch', 'converza'])],
         ]);
@@ -154,7 +154,7 @@ class SupportController extends Controller
         }
 
         $validated = $request->validate([
-            'body' => ['required', 'string', 'max:5000'],
+            'body' => ['required', 'string', 'max:20000'],
         ]);
 
         TicketEvent::create([
