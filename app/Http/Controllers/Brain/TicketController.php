@@ -25,7 +25,7 @@ class TicketController extends Controller
             'product'     => ['nullable', Rule::in(['ispwatch', 'converza'])],
             'source'      => ['required', Rule::in(['manual', 'whatsapp', 'email'])],
             'assigned_to' => ['nullable', 'integer', Rule::exists('users', 'id')],
-            'body'        => ['nullable', 'string', 'max:5000'],
+            'body'        => ['nullable', 'string', 'max:20000'],
         ]);
 
         $ticket = SupportTicket::create([
@@ -98,7 +98,7 @@ class TicketController extends Controller
 
         $validated = $request->validate([
             'type' => ['required', Rule::in(['message', 'note'])],
-            'body' => ['required', 'string', 'max:5000'],
+            'body' => ['required', 'string', 'max:20000'],
         ]);
 
         $event = TicketEvent::create([

@@ -99,7 +99,7 @@ class TicketInboxController extends Controller
     {
         $validated = $request->validate([
             'type' => ['required', Rule::in(['message', 'note'])],
-            'body' => ['required', 'string', 'max:5000'],
+            'body' => ['required', 'string', 'max:20000'],
         ]);
 
         $event = TicketEvent::create([
