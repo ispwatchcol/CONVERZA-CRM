@@ -88,3 +88,14 @@ Schedule::command('webhooks:reconcile')
     ->everyFiveMinutes()
     ->withoutOverlapping(10)
     ->onOneServer();
+
+// ── Flujos del bot (Workspace) ────────────────────────────────────────────
+// Cada minuto: reanuda los bloques Espera vencidos y cierra las ejecuciones
+// abandonadas (preguntas sin respuesta en FLOWS_INPUT_TIMEOUT_HOURS, arranques
+// cuyo job nunca corrió). Sin este tic, una Espera no termina nunca y una
+// pregunta sin respuesta deja el chat "en manos del bot" para siempre, fuera
+// del alcance de la auto-asignación. En reposo son tres consultas por índice.
+Schedule::command('flows:tick')
+    ->everyMinute()
+    ->withoutOverlapping(5)
+    ->onOneServer();

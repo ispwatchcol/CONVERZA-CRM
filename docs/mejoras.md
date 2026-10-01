@@ -441,9 +441,11 @@ perdieron 18 mensajes entrantes.
 
 Sin priorizar; van aquí para no perderlas.
 
-- **Bot con IA** en lugar de palabras clave: hoy `IntentDetector` es una lista
-  fija muy acoplada al pitch de ISPWatch. Un LLM daría intención real y
-  respuestas contextuales.
+- **Bot con IA** en lugar de palabras clave (CON-25). La rigidez de
+  `IntentDetector` ya la resolvió el Workspace de flujos (cada ISP define sus
+  opciones y palabras clave sin deploy, ver [workflows-bot.md](workflows-bot.md));
+  lo que queda es la clasificación con un LLM, que entra como variante del bloque
+  Menú.
 - **Plantillas de cierre configurables** por tenant, para estandarizar las
   métricas de cierre.
 - **Programar mensajes individuales**, no solo campañas.

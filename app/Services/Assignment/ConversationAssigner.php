@@ -20,16 +20,28 @@ class ConversationAssigner
     /**
      * Asigna la conversación al agente menos ocupado y registra un mensaje de
      * sistema. Devuelve el StaffMember elegido, o null si no hay candidatos.
+     *
+     * Con `$teamId` elige solo entre los miembros de ese equipo (el traspaso de
+     * un flujo a "Soporte técnico" no debería caerle a alguien de ventas). Si
+     * el equipo no tiene a nadie disponible, se reparte entre todos: una
+     * conversación sin dueño es peor que una en el equipo equivocado.
      */
-    public function assignLeastBusy(Conversation $conversation, Tenant $tenant): ?StaffMember
+    public function assignLeastBusy(Conversation $conversation, Tenant $tenant, ?int $teamId = null): ?StaffMember
     {
-        $eligible = StaffMember::query()
+        $query = fn () => StaffMember::query()
             ->where('tenant_id', $tenant->id)
             ->where('is_active', true)
             ->whereIn('role', ['agent', 'admin'])
             ->with('user:id,name')
-            ->orderBy('id')
-            ->get();
+            ->orderBy('id');
+
+        $eligible = $teamId !== null
+            ? $query()->where('team_id', $teamId)->get()
+            : collect();
+
+        if ($eligible->isEmpty()) {
+            $eligible = $query()->get();
+        }
 
         if ($eligible->isEmpty()) {
             return null;

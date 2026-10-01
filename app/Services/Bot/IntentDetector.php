@@ -36,6 +36,17 @@ class IntentDetector
     ];
 
     /**
+     * Las palabras clave por intención. Las lee FlowTemplates para convertir
+     * este bot en un flujo editable del Workspace sin perder su vocabulario.
+     *
+     * @return array<string, list<string>>
+     */
+    public function keywordGroups(): array
+    {
+        return $this->keywords;
+    }
+
+    /**
      * Detecta la intención del mensaje.
      *
      * Retorna: demo | socio | info | price | agent | unknown

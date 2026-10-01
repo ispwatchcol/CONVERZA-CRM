@@ -2,7 +2,6 @@
 
 namespace App\Jobs;
 
-use App\Jobs\HandleBotResponse;
 use App\Models\Campaign;
 use App\Models\CampaignOptOut;
 use App\Models\CampaignRecipient;
@@ -12,6 +11,7 @@ use App\Models\Conversation;
 use App\Models\Message;
 use App\Models\Tenant;
 use App\Services\Assignment\ConversationAssigner;
+use App\Services\Flows\BotDispatcher;
 use App\Services\WhatsAppService;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Database\UniqueConstraintViolationException;
@@ -93,6 +93,10 @@ class ProcessIncomingWhatsAppMessage implements ShouldQueue
         // una nueva. Evita duplicar chats del mismo contacto en la lista.
         $conversation      = Conversation::resolveForContact($tenantId, $contact->id);
         $isNewConversation = $conversation->wasRecentlyCreated;
+        // resolveForContact reabre el hilo si estaba cerrado. Se lee ACÁ, antes
+        // del touch() de abajo, que borra el rastro de ese cambio. Un hilo
+        // reabierto es un disparador de los flujos (docs/workflows-bot.md).
+        $wasReopened = ! $isNewConversation && $conversation->wasChanged('status');
 
         $attributes = $this->buildAttributes($waMessageId, $type, $contact, $conversation, $whatsapp);
         $attributes['tenant_id'] = $tenantId;
@@ -113,22 +117,31 @@ class ProcessIncomingWhatsAppMessage implements ShouldQueue
             $this->handleCampaignSignals($tenantId, $phone, $type === 'text' ? ($attributes['body'] ?? '') : '');
         }
 
-        // Despachar la respuesta del bot ANTES de auto-asignar: el bot puede estar
-        // en medio de la calificación del lead (bot_active=true, assigned_to=null).
-        // Si auto-assign corriera primero, el observer desactivaría el bot y el
-        // dispatch nunca se ejecutaría.
+        // El bot se decide ANTES de auto-asignar: puede estar en medio de una
+        // conversación (bot_active=true, assigned_to=null), y si auto-assign
+        // corriera primero le quitaría el hilo.
         //
-        // Condiciones para despachar:
-        //   a) Conversación nueva → el bot decide si saludar según bot_settings.
-        //   b) Conversación existente con bot_active=true → el bot procesa la respuesta.
+        // BotDispatcher elige entre un flujo del Workspace y el bot clásico (que
+        // queda en pausa mientras el tenant tenga flujos activos). Al arrancar un
+        // flujo marca bot_active=true en el acto, así la auto-asignación de abajo
+        // no le quita la conversación antes de que el job del flujo corra.
         // Se excluyen duplicados de webhook (savedMessage = null) para no responder dos veces.
-        if ($savedMessage && $tenantId && ($isNewConversation || $conversation->bot_active)) {
-            HandleBotResponse::dispatch(
-                conversationId:    $conversation->id,
-                messageId:         $savedMessage->id,
-                tenantId:          $tenantId,
-                isNewConversation: $isNewConversation,
-            );
+        //
+        // Aislado con try/catch a propósito: esto corre en la ingesta de CADA
+        // mensaje. Si el enrutador falla (un esquema sin migrar, un flujo con un
+        // dato roto), el mensaje ya está guardado y tiene que seguir su curso
+        // hacia la auto-asignación y el equipo: sin bot, pero sin perderse.
+        if ($savedMessage && $tenant) {
+            try {
+                app(BotDispatcher::class)->route($tenant, $conversation, $savedMessage, $isNewConversation, $wasReopened);
+            } catch (\Throwable $e) {
+                report($e);
+                Log::error('Bot: el enrutador falló; el mensaje sigue sin bot', [
+                    'tenant_id'       => $tenantId,
+                    'conversation_id' => $conversation->id,
+                    'error'           => $e->getMessage(),
+                ]);
+            }
         }
 
         // Auto-asignación "al menos ocupado": si el tenant la activó y la
@@ -350,6 +363,13 @@ class ProcessIncomingWhatsAppMessage implements ShouldQueue
                     ?? $interactive['list_reply']['title']
                     ?? $interactive['list_reply']['description']
                     ?? '[Respuesta interactiva]';
+                // El id de la opción que tocó. Lo lee el bloque Menú de los
+                // flujos: el título visible puede repetirse o cambiar entre
+                // versiones; el id que le pusimos al enviarla, no.
+                $replyId = $interactive['button_reply']['id'] ?? $interactive['list_reply']['id'] ?? null;
+                if ($replyId !== null) {
+                    $attributes['raw_metadata'] = ['reason' => 'interactive', 'reply_id' => (string) $replyId];
+                }
                 break;
 
             default:

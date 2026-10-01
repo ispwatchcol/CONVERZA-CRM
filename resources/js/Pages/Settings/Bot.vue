@@ -1,7 +1,7 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
-import { useForm, Head, Link, usePage } from '@inertiajs/vue3';
-import { computed } from 'vue';
+import { useForm, Head, Link, router, usePage } from '@inertiajs/vue3';
+import { computed, ref } from 'vue';
 
 const props = defineProps({
     botSettings: { type: Object, default: () => ({}) },
@@ -9,6 +9,8 @@ const props = defineProps({
     botState:    { type: String, default: 'off' },
     timezones:   { type: Array,  default: () => [] },
     recentLogs:  { type: Array,  default: () => [] },
+    // Flujos del Workspace encendidos: con uno o más, este bot no responde.
+    activeFlows: { type: Number, default: 0 },
 });
 
 const isAdmin = computed(() => usePage().props.auth?.user?.role === 'admin');
@@ -45,6 +47,16 @@ function save() {
     form.put(route('settings.bot.update'), { preserveScroll: true });
 }
 
+// Crea un flujo del Workspace con ESTOS textos y pasos (FlowTemplates 'legacy').
+// No toca este bot: el flujo nace apagado y como borrador.
+const converting = ref(false);
+function convertToFlow() {
+    converting.value = true;
+    router.post(route('flows.store'), { name: 'Bot clásico (editable)', template: 'legacy' }, {
+        onFinish: () => { converting.value = false; },
+    });
+}
+
 // ── Horario ──────────────────────────────────────────────────────────────────
 // Días ISO-8601: 1 = lunes … 7 = domingo, igual que Carbon::dayOfWeekIso.
 const weekDays = [
@@ -74,6 +86,8 @@ const crossesMidnight = computed(() =>
 // estamos dentro de la franja, así que solo reaccionamos a cambios sin guardar.
 const headerState = computed(() => {
     if (!form.bot_enabled) return 'off';
+    // Encendido pero mudo: un flujo del Workspace atiende en su lugar.
+    if (props.activeFlows > 0) return 'paused_by_flows';
     if (props.botSettings.bot_enabled && props.botState === 'out_of_schedule') return 'out_of_schedule';
     return 'active';
 });
@@ -82,12 +96,14 @@ const headerLabel = computed(() => ({
     off:             'Bot inactivo',
     active:          'Bot activo',
     out_of_schedule: 'Activo — fuera de horario',
+    paused_by_flows: 'Activo — en pausa por un flujo',
 }[headerState.value]));
 
 const headerClass = computed(() => ({
     off:             'bg-gray-100 text-gray-500',
     active:          'bg-emerald-100 text-emerald-700',
     out_of_schedule: 'bg-amber-100 text-amber-700',
+    paused_by_flows: 'bg-amber-100 text-amber-700',
 }[headerState.value]));
 
 const intentLabel = {
@@ -151,6 +167,21 @@ function contextSummary(ctx) {
                 <span class="shrink-0 px-3 py-1 rounded-full text-xs font-semibold" :class="headerClass">
                     {{ headerLabel }}
                 </span>
+            </div>
+
+            <!-- Convivencia con el Workspace de flujos -->
+            <div v-if="activeFlows > 0" class="mb-6 flex items-start gap-3 px-4 py-3 bg-amber-50 border border-amber-200 rounded-2xl text-sm text-amber-900">
+                <span class="shrink-0">⏸</span>
+                <div>
+                    <p><strong>Este bot está en pausa.</strong> Tienes {{ activeFlows }} flujo(s) encendido(s) en <em>Flujos del bot</em>, y nunca contestan los dos a la vez.</p>
+                    <Link :href="route('flows.index')" class="inline-block mt-1 text-sm font-semibold text-amber-800 hover:underline">Ir a los flujos →</Link>
+                </div>
+            </div>
+            <div v-else-if="isAdmin" class="mb-6 flex flex-col sm:flex-row sm:items-center gap-3 px-4 py-3 bg-blue-50 border border-blue-200 rounded-2xl text-sm text-blue-900">
+                <p class="flex-1">¿Quieres cambiar las opciones del menú, agregar ramas o consultar el saldo en ispwatch? Convierte este bot en un <strong>flujo editable</strong> con tus mismos textos. Nace apagado: nada cambia hasta que lo enciendas.</p>
+                <button type="button" :disabled="converting" class="shrink-0 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold disabled:opacity-60" @click="convertToFlow">
+                    {{ converting ? 'Creando…' : 'Convertir en flujo' }}
+                </button>
             </div>
 
             <form @submit.prevent="save" class="space-y-6">

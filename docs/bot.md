@@ -12,11 +12,15 @@
 - [resources/js/Pages/Settings/Bot.vue](../resources/js/Pages/Settings/Bot.vue) — la UI
 - [app/Observers/ConversationObserver.php](../app/Observers/ConversationObserver.php) — apaga el bot al asignar
 
-> **Hacia dónde va esto.** Las ramas, las palabras clave y el orden de los pasos
-> están en código, y eso es el techo de este diseño. La arquitectura propuesta
-> para que cada ISP arme sus propios flujos está en
-> [workflows-bot.md](workflows-bot.md) — incluida la evidencia de que hoy ningún
-> ISP usa el bot, que es lo que decide cuándo conviene construirla.
+> **Este bot tiene reemplazo: los Flujos del bot (Workspace).** Las ramas, las
+> palabras clave y el orden de los pasos de este bot están en código; en el
+> Workspace cada ISP arma los suyos sin deploy. Ver [workflows-bot.md](workflows-bot.md).
+>
+> **Con un flujo encendido, este bot queda EN PAUSA**, aunque su interruptor diga
+> activado: `BotDispatcher` nunca deja contestar a los dos. La tarjeta de
+> Configuración y esta pantalla lo dicen ("en pausa por un flujo"). Para pasar de
+> uno al otro sin perder los textos: *Configuración → Bot → Convertir en flujo*
+> (plantilla "Tu bot actual, editable"). Retirarlo del todo es CON-51.
 
 ---
 
@@ -40,7 +44,8 @@ cuándo responde, qué pasos ejecuta y qué texto envía en cada uno.
 ```
 Cliente escribe
    └─ ProcessIncomingWhatsAppMessage (guarda el mensaje)
-      └─ si (conversación nueva || bot_active) → HandleBotResponse   [cola]
+      └─ BotDispatcher: ¿el tenant tiene flujos encendidos? → sí: flujos (este bot en pausa)
+         └─ no, y (conversación nueva || bot_active) → HandleBotResponse   [cola]
 
 HandleBotResponse — lock "bot:conv:{id}" 30 s
    ├─ ¿assigned_to es null?               si no → fin (lo tomó un humano)
@@ -186,6 +191,7 @@ Recorre la lista en orden. Casi siempre falla en los cinco primeros puntos.
 
 | # | Comprobar | Cómo |
 |---|---|---|
+| 0 | ¿Hay un flujo encendido? | `SELECT id, name FROM bot_flows WHERE tenant_id = ? AND is_active`. Con uno o más, este bot no responde: el diagnóstico sigue en [operaciones.md](operaciones.md#flujos-del-bot) |
 | 1 | Interruptor | `bot_settings.bot_enabled` del tenant |
 | 2 | Horario | `schedule_enabled` + la franja. La píldora de la UI dice *"Activo — fuera de horario"* cuando es esto |
 | 3 | Zona horaria | La app corre en UTC. Una zona mal puesta desplaza la franja horas enteras |
@@ -227,3 +233,11 @@ GROUP BY 1 ORDER BY 2 DESC;
    `IntentDetector`.
 4. `bot_logs.context_data` es `text` con JSON escrito a mano — no es filtrable con SQL de
    JSON.
+5. **Con auto-asignación activa, el saludo depende de un detalle frágil.** El job del
+   bot corre en otro worker DESPUÉS de que el webhook mira la auto-asignación. Hoy
+   saluda igual porque una conversación recién creada llega a esa comprobación sin
+   `status` cargado (`Conversation::create()` no trae el default de la base) y la
+   auto-asignación se la salta en el primer mensaje. Si alguien "arregla" ese
+   `status`, este bot deja de saludar con auto-asignación encendida. Los flujos del
+   Workspace no dependen de esto: reclaman la conversación en el acto. Registrado
+   en Jira, ligado a CON-51.

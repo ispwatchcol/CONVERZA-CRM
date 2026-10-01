@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\BotFlow;
 use App\Models\BotSetting;
 use App\Models\Template;
 use App\Models\TenantNotificationRoute;
@@ -40,7 +41,11 @@ class SettingsController extends Controller
      * estado real, que no es el flag: con horario activo el bot puede estar
      * encendido y aun así mudo.
      *
-     * @return array{enabled: bool, state: string, schedule_summary: ?string}
+     * `active_flows`: con un flujo del Workspace encendido el bot clásico queda
+     * en pausa aunque su interruptor diga "activado" (ver BotDispatcher). La
+     * tarjeta tiene que decirlo o el diagnóstico se pierde igual que con el horario.
+     *
+     * @return array{enabled: bool, state: string, schedule_summary: ?string, active_flows: int}
      */
     private function botCard(int $tenantId): array
     {
@@ -50,6 +55,7 @@ class SettingsController extends Controller
             'enabled'          => (bool) $settings?->bot_enabled,
             'state'            => BotSettingsController::stateOf($settings),
             'schedule_summary' => $settings?->scheduleSummary(),
+            'active_flows'     => BotFlow::where('tenant_id', $tenantId)->where('is_active', true)->count(),
         ];
     }
 

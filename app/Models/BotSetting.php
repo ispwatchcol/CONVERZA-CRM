@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Models\Concerns\BelongsToTenant;
+use App\Services\Bot\ScheduleWindow;
 use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Model;
 
@@ -93,30 +94,14 @@ class BotSetting extends Model
             return true;
         }
 
-        $days = array_map('intval', (array) ($this->schedule_days ?? []));
-
-        $start   = $this->minutesOf($this->schedule_start, 8 * 60);
-        $end     = $this->minutesOf($this->schedule_end, 18 * 60);
-        $minutes = $local->hour * 60 + $local->minute;
-
-        if ($start === $end) {
-            // Franja de 24 h: el día seleccionado cuenta entero.
-            $inWindow  = true;
-            $windowDay = $local->dayOfWeekIso;
-        } elseif ($end > $start) {
-            $inWindow  = $minutes >= $start && $minutes < $end;
-            $windowDay = $local->dayOfWeekIso;
-        } else {
-            // La ventana cruza medianoche (ej. 18:00 → 08:00). El día que cuenta
-            // es aquel en que la ventana EMPIEZA: a las 02:00 del martes seguimos
-            // dentro de la ventana que abrió el lunes.
-            $inWindow  = $minutes >= $start || $minutes < $end;
-            $windowDay = $minutes < $end
-                ? $local->copy()->subDay()->dayOfWeekIso
-                : $local->dayOfWeekIso;
-        }
-
-        $inside = $inWindow && in_array($windowDay, $days, true);
+        // La semántica de la franja (medianoche, 24 h, sin días) vive en
+        // ScheduleWindow porque la comparte la condición de horario de los flujos.
+        $inside = ScheduleWindow::contains(
+            (array) ($this->schedule_days ?? []),
+            $this->schedule_start,
+            $this->schedule_end,
+            $local,
+        );
 
         return $this->schedule_mode === 'outside' ? ! $inside : $inside;
     }
@@ -141,15 +126,6 @@ class BotSetting extends Model
         $prefix = $this->schedule_mode === 'outside' ? 'Fuera de' : 'Dentro de';
 
         return "{$prefix} {$labels} · {$this->schedule_start}–{$this->schedule_end} · {$this->schedule_timezone}";
-    }
-
-    private function minutesOf(?string $value, int $fallback): int
-    {
-        if (! preg_match('/^(\d{1,2}):(\d{2})$/', (string) $value, $m)) {
-            return $fallback;
-        }
-
-        return ((int) $m[1]) * 60 + (int) $m[2];
     }
 
     /**

@@ -246,6 +246,10 @@ sudo -u www-data php /var/www/converza-crm/artisan webhooks:reconcile --dry-run
 # 5 min, el scheduler no está vivo y podrían estarse perdiendo mensajes.
 cat /var/www/converza-crm/storage/app/webhooks-reconcile.marca
 
+# ¿Los flujos del bot están al día? (ninguna Espera vencida hace más de 5 min)
+sudo -u www-data php /var/www/converza-crm/artisan tinker \
+  --execute="echo App\Models\BotFlowRun::withoutGlobalScopes()->where('status','waiting_timer')->where('resume_at','<',now()->subMinutes(5))->count();"
+
 # Logs en vivo
 sudo tail -f /var/www/converza-crm/storage/logs/laravel.log
 sudo tail -f /var/log/supervisor/converza-worker.log
@@ -267,6 +271,7 @@ free -m
 | `queue:failed` | Vacío | Crece |
 | `webhooks:reconcile --dry-run` | «Sin huecos» | Reporta huecos |
 | Marca de agua (`storage/app/webhooks-reconcile.marca`) | Menos de 5 min de antigüedad | Atrasada: el scheduler no está corriendo |
+| Esperas de flujos vencidas hace > 5 min | 0 | Crece: `flows:tick` no corre o la cola no lo procesa |
 | Disco | < 80 % | > 90 % |
 | Calidad del número | Verde en Meta | Amarillo o rojo |
 
@@ -618,6 +623,63 @@ php artisan chats:auto-close --dry-run                # qué cerraría ahora
 php artisan chats:auto-close --tenant=2 --hours=1 --dry-run
 ```
 
+### Flujos del bot
+
+<a id="flujos-del-bot"></a>
+Arquitectura en [workflows-bot.md](workflows-bot.md). Lo primero siempre es la
+pantalla **Flujos del bot → Actividad** del flujo: cada conversación con su
+recorrido bloque a bloque, el motivo por el que terminó y si WhatsApp entregó cada
+mensaje. Casi todo se diagnostica ahí sin abrir la base.
+
+#### 🟠 El flujo no respondió
+
+| # | Comprobar | Cómo |
+|---|---|---|
+| 1 | ¿Está encendido y publicado? | Lista de flujos: «● Atendiendo» y una versión `vN`. Un borrador sin publicar no atiende |
+| 2 | ¿El mensaje dispara el flujo? | Inicio de conversación = conversación nueva, **reabierta**, o tras N horas de silencio (si se configuró). Un chat abierto con conversación reciente NO lo vuelve a disparar. Por palabra clave: tiene que estar como palabra completa |
+| 3 | ¿La conversación tiene asesor? | Con `assigned_to` el bot nunca arranca: los humanos mandan |
+| 4 | ¿Hubo ejecución? | Actividad del flujo, o `SELECT status, ended_reason, created_at FROM bot_flow_runs WHERE conversation_id = ? ORDER BY id DESC LIMIT 5` |
+| 5 | ¿Terminó por algo de afuera? | `ended_reason`: `assigned` / `human_replied` (un asesor), `flow_deactivated`, `input_timeout` (el cliente no contestó en 24 h) |
+| 6 | ¿No pudo enviar? | `window_closed` (ventana de 24 h cerrada: no se manda nada a Meta) o `send_failed` (WhatsApp rechazó la llamada; el chat muestra el motivo) |
+| 7 | ¿Se quedó en `pending`? | El job nunca corrió: workers caídos o la cola equivocada (ver abajo). `flows:tick` lo cierra a los 15 min y pasa el chat al equipo con una nota |
+| 8 | Workers y cola | `sudo supervisorctl status converza-worker:*`. El job `RunBotFlow` corre en `config('flows.queue')`, hoy `default` |
+
+```sql
+-- Qué hicieron los flujos en las últimas 24 h, por motivo de cierre
+SELECT f.name, r.status, r.ended_reason, count(*)
+FROM bot_flow_runs r JOIN bot_flows f ON f.id = r.bot_flow_id
+WHERE r.tenant_id = 1 AND r.created_at > now() - interval '1 day'
+GROUP BY 1, 2, 3 ORDER BY 1, 4 DESC;
+
+-- El recorrido de una ejecución
+SELECT node_id, node_type, outcome, input, left(output, 80), message_id, created_at
+FROM bot_flow_steps WHERE bot_flow_run_id = ? ORDER BY id;
+```
+
+> ⚠️ **No cambies `FLOWS_QUEUE` a `flows` sin agregar antes el programa de
+> Supervisor que escuche esa cola**: todos los flujos quedarían mudos, en silencio,
+> con las ejecuciones en `pending`. La cola propia la exige el nodo HTTP (CON-50).
+
+#### 🟠 Un flujo se portó mal y hay que frenarlo YA
+
+Desde la UI: apagar el interruptor del flujo. Corta las ejecuciones en curso y
+deja una nota en cada conversación afectada para que el equipo la retome. Si la
+UI no está disponible:
+
+```bash
+sudo -u www-data php /var/www/converza-crm/artisan tinker --execute="
+\$f = App\Models\BotFlow::withoutGlobalScopes()->findOrFail(ID_DEL_FLUJO);
+echo app(App\Services\Flows\FlowPublisher::class)->setActive(\$f, false) . ' ejecuciones cortadas';"
+```
+
+Con el flujo apagado, el tenant vuelve al bot clásico si lo tiene encendido.
+
+#### 🟠 El bot clásico dejó de responder
+
+Si el tenant tiene **cualquier** flujo encendido, el clásico está en pausa por
+diseño (nunca contestan los dos). Configuración lo muestra como «en pausa por un
+flujo».
+
 ### 🔴 Un tenant ve datos de otro
 
 **Incidente crítico.** Actuación:
@@ -636,7 +698,7 @@ Ver [seguridad.md §2](seguridad.md#2-aislamiento-multi-tenant).
 
 | Tarea | Frecuencia | Cómo |
 |---|---|---|
-| Revisar `queue:failed` | Diaria | `queue:failed` / `queue:retry all` |
+| Revisar `queue:failed` | Diaria | `queue:failed` / `queue:retry all`. **No reintentes `RunBotFlow`**: falló a propósito sin reintento para no reenviarle mensajes al cliente, y su conversación ya pasó al equipo |
 | Revisar la salud del número | Semanal | `/settings` de cada tenant |
 | Espacio en disco | Semanal | `df -h` |
 | Limpieza de medios | Automática (dom. 03:00) | `media:clean` |
