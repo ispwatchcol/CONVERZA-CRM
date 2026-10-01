@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\BotFlow;
 use App\Models\BotLog;
 use App\Models\BotSetting;
 use Illuminate\Http\Request;
@@ -70,6 +71,8 @@ class BotSettingsController extends Controller
             'botState'    => self::stateOf($settings),
             'timezones'   => self::TIMEZONES,
             'recentLogs'  => $recentLogs,
+            // Con un flujo del Workspace encendido este bot no responde (BotDispatcher).
+            'activeFlows' => BotFlow::where('tenant_id', $tenant->id)->where('is_active', true)->count(),
         ]);
     }
 

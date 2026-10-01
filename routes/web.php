@@ -14,6 +14,7 @@ use App\Http\Controllers\ClosingNoteController;
 use App\Http\Controllers\MetricsController;
 use App\Http\Controllers\NotificationLogController;
 use App\Http\Controllers\BotSettingsController;
+use App\Http\Controllers\FlowController;
 use App\Http\Controllers\SettingsController;
 use App\Http\Controllers\SupportController;
 use App\Http\Controllers\MediaController;
@@ -157,6 +158,24 @@ Route::middleware('auth')->group(function () {
         Route::put('/closing-notes/{closingNote}', [ClosingNoteController::class, 'update'])->name('closing-notes.update');
         Route::delete('/closing-notes/{closingNote}', [ClosingNoteController::class, 'destroy'])->name('closing-notes.destroy');
         Route::post('/closing-notes/{closingNote}/reopen', [ClosingNoteController::class, 'reopen'])->name('closing-notes.reopen');
+    });
+
+    // ── Flujos del bot (Workspace) ───────────────────────────────────────────
+    // Solo admin: un flujo decide qué se le dice a TODOS los clientes del ISP.
+    // El editor habla por JSON (guardar, validar, publicar, simular).
+    Route::middleware('role:admin')->prefix('flows')->name('flows.')->group(function () {
+        Route::get('/', [FlowController::class, 'index'])->name('index');
+        Route::post('/', [FlowController::class, 'store'])->name('store');
+        Route::get('/{flow}/edit', [FlowController::class, 'edit'])->whereNumber('flow')->name('edit');
+        Route::put('/{flow}', [FlowController::class, 'update'])->whereNumber('flow')->name('update');
+        Route::post('/{flow}/validate', [FlowController::class, 'validateDraft'])->whereNumber('flow')->name('validate');
+        Route::post('/{flow}/publish', [FlowController::class, 'publish'])->whereNumber('flow')->name('publish');
+        Route::patch('/{flow}/toggle', [FlowController::class, 'toggle'])->whereNumber('flow')->name('toggle');
+        Route::post('/{flow}/duplicate', [FlowController::class, 'duplicate'])->whereNumber('flow')->name('duplicate');
+        Route::delete('/{flow}', [FlowController::class, 'destroy'])->whereNumber('flow')->name('destroy');
+        Route::post('/{flow}/versions/{version}/restore', [FlowController::class, 'restore'])->whereNumber(['flow', 'version'])->name('versions.restore');
+        Route::post('/{flow}/simulate', [FlowController::class, 'simulate'])->whereNumber('flow')->name('simulate');
+        Route::get('/{flow}/runs', [FlowController::class, 'runs'])->whereNumber('flow')->name('runs');
     });
 
     // Metrics

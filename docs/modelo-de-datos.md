@@ -39,6 +39,8 @@ tenants ─┬─< users ──< staff_members ──< conversations (assigned_t
          ├─< quick_replies
          ├─< closing_notes
          ├─< bot_settings (1:1) · bot_logs
+         ├─< bot_flows ─┬─< bot_flow_versions
+         │              └─< bot_flow_runs ──< bot_flow_steps  (runs → conversations)
          ├─< billing_notification_logs · ispwatch_event_cursors
          └─< campaigns ─┬─< campaign_steps
                         └─< campaign_recipients ──< campaign_sends
@@ -133,8 +135,8 @@ chat ([`ChatController::getOrCreateStaffForUser`](../app/Http/Controllers/ChatCo
 | `status` | `open` \| `closed` \| `pending` |
 | `assigned_to` | FK a `staff_members`, nullable |
 | `team_id` | nullable |
-| `bot_active` | El bot tiene el control |
-| `bot_step` | `greeting_sent` \| `qualifying_subscribers` \| `qualifying_name` \| `handed_off` |
+| `bot_active` | Un bot (el clásico o un flujo del Workspace) tiene el control. Mientras está en `true`, la auto-asignación no toma la conversación |
+| `bot_step` | Bot clásico: `greeting_sent` \| `qualifying_subscribers` \| `qualifying_name` \| `handed_off`. `flow` = la reclamó un flujo del Workspace (su estado real está en `bot_flow_runs`) |
 | `bot_failed_intents` | Contador de "no entendí" |
 | `bot_context` | JSON con lo que el bot capturó (intención, nº de suscriptores, nombre) |
 
@@ -256,6 +258,49 @@ respuesta, si escaló y el contexto capturado. `intent_detected = 'cut_off'` mar
 handoff que envía el bot al apagarse a mitad de flujo.
 
 Ver [bot.md](bot.md) para el flujo y el diagnóstico.
+
+### Workspace de flujos: `bot_flows`, `bot_flow_versions`, `bot_flow_runs`, `bot_flow_steps`
+
+Los flujos del bot que arma cada ISP. Arquitectura y reglas en
+[workflows-bot.md](workflows-bot.md).
+
+**`bot_flows`** — un flujo.
+
+| Columna | Notas |
+|---|---|
+| `draft` | JSON `{nodes, edges}`: el **borrador** que edita el admin. El motor nunca lo ejecuta |
+| `draft_source_version` | Si el borrador se armó restaurando una versión vieja, cuál (la publicación siguiente lo anota) |
+| `published_version_id` | La versión que ejecuta el motor. **Sin FK** a propósito (referencia circular con `bot_flow_versions`) |
+| `is_active` | El interruptor. Solo puede estar en `true` con una versión publicada |
+| `trigger_type` / `trigger_config` | `conversation_start` (`{idle_hours}`) o `keyword` (`{keywords, match}`), copiados del bloque Inicio **al publicar** para que el enrutador no abra el grafo |
+| `priority` | Desempate entre flujos encendidos: menor gana |
+
+**`bot_flow_versions`** — copia **inmutable** del grafo (`graph`), con `version`
+(único por flujo), `note`, `published_by`, `published_at`. Nunca se edita.
+
+**`bot_flow_runs`** — una ejecución sobre una conversación.
+
+| Columna | Notas |
+|---|---|
+| `bot_flow_version_id` | La versión con la que arrancó: termina con ella aunque se publique otra |
+| `live_conversation_id` | Igual a `conversation_id` mientras la ejecución vive, NULL al terminar. **Índice único**: una sola ejecución viva por conversación sin índices parciales |
+| `status` | Vivas: `pending` (creada, el job no la arrancó), `waiting_input`, `waiting_timer`. Terminadas: `completed`, `handed_off`, `cancelled`, `failed` |
+| `current_node` | Id del bloque donde está |
+| `variables` / `state` | Lo que recogió (JSON) y los reintentos por bloque |
+| `trigger_message_id` / `last_message_id` | El mensaje que la arrancó y el último entrante ya leído. El motor lee la bandeja en orden desde aquí |
+| `resume_at` / `resume_dispatched_at` | La Espera en curso y cuándo `flows:tick` encoló su reanudación |
+| `steps_count` | Bloques ejecutados (tope en `flows.max_steps_per_run`) |
+| `ended_reason` | `completed`, `handoff`, `assigned`, `human_replied`, `flow_deactivated`, `input_timeout`, `window_closed`, `send_failed`, `step_limit`, `dead_end`, `error`, `stalled`… |
+
+**`bot_flow_steps`** — la traza: un registro por bloque ejecutado (`node_id`,
+`node_type`, `outcome` = la salida que tomó o lo que pasó, `input`, `output`,
+`detail`). `message_id` apunta al mensaje que envió, y por él se sabe si Meta lo
+entregó, lo leyó o lo rechazó. `node_type = 'engine'` marca un corte del propio
+motor (tope de pasos, salida sin conectar). Solo `created_at`.
+
+> El grafo vive como JSON y no en tablas de nodos y conexiones: una versión es una
+> fila inmutable y restaurarla es copiar un JSON. El formato es el del lienzo
+> (Vue Flow): `nodes[{id, type, position, data}]`, `edges[{id, source, sourceHandle, target}]`.
 
 ---
 

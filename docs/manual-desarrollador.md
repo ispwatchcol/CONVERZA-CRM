@@ -203,8 +203,14 @@ En producción el deploy corre `php artisan migrate --force` con el
 | Cambiar la bandeja de chat | [`ChatController`](../app/Http/Controllers/ChatController.php) | [`Pages/Chat/Index.vue`](../resources/js/Pages/Chat/Index.vue) |
 | Cambiar cómo se interpreta un mensaje entrante | [`ProcessIncomingWhatsAppMessage::buildAttributes`](../app/Jobs/ProcessIncomingWhatsAppMessage.php) | — |
 | Agregar un tipo de mensaje de WhatsApp | ídem, nuevo `case` en el `switch` | render en `Chat/Index.vue` |
-| Cambiar el bot | [`HandleBotResponse`](../app/Jobs/HandleBotResponse.php) + [`IntentDetector`](../app/Services/Bot/IntentDetector.php) · ver [bot.md](bot.md) | [`Pages/Settings/Bot.vue`](../resources/js/Pages/Settings/Bot.vue) |
-| Cambiar el horario o los pasos del bot | [`BotSetting`](../app/Models/BotSetting.php) (`respondsAt()`, `defaults()`) + [`BotSettingsController`](../app/Http/Controllers/BotSettingsController.php) | ídem |
+| Cambiar el bot clásico | [`HandleBotResponse`](../app/Jobs/HandleBotResponse.php) + [`IntentDetector`](../app/Services/Bot/IntentDetector.php) · ver [bot.md](bot.md) | [`Pages/Settings/Bot.vue`](../resources/js/Pages/Settings/Bot.vue) |
+| Cambiar el horario o los pasos del bot clásico | [`BotSetting`](../app/Models/BotSetting.php) (`respondsAt()`, `defaults()`) + [`BotSettingsController`](../app/Http/Controllers/BotSettingsController.php). La franja vive en [`ScheduleWindow`](../app/Services/Bot/ScheduleWindow.php), compartida con los flujos | ídem |
+| Cambiar cómo se ejecutan los flujos | [`FlowEngine`](../app/Services/Flows/FlowEngine.php) (intérprete) · [`FlowRunner`](../app/Services/Flows/FlowRunner.php) (lock, bandeja, persistencia) · ver [workflows-bot.md](workflows-bot.md) | — |
+| Cambiar qué flujo atiende un mensaje | [`BotDispatcher`](../app/Services/Flows/BotDispatcher.php) | — |
+| Agregar o cambiar un bloque de los flujos | `app/Services/Flows/Nodes/*` + [`NodeRegistry`](../app/Services/Flows/NodeRegistry.php) · ver §6.4 | [`nodeCatalog.js`](../resources/js/Components/Flows/nodeCatalog.js) + [`NodeInspector.vue`](../resources/js/Components/Flows/NodeInspector.vue) |
+| Cambiar qué impide publicar un flujo | [`FlowValidator`](../app/Services/Flows/FlowValidator.php) | — |
+| Cambiar las plantillas de arranque de flujos | [`FlowTemplates`](../app/Services/Flows/FlowTemplates.php) | — |
+| Cambiar el editor de flujos | [`FlowController`](../app/Http/Controllers/FlowController.php) | [`Pages/Flows/Editor.vue`](../resources/js/Pages/Flows/Editor.vue) (lienzo Vue Flow) + `Components/Flows/*` |
 | Agregar un aviso automático | [`EventCatalog`](../app/Services/Notifications/EventCatalog.php) + el comando correspondiente | `Settings/Index.vue` (aparece solo) |
 | Agregar una variable a un aviso | `EventCatalog::events()` + `resolveValues()` | automático |
 | Cambiar plantillas de Meta | [`TemplateController`](../app/Http/Controllers/TemplateController.php) | [`Pages/Templates/Index.vue`](../resources/js/Pages/Templates/Index.vue) |
@@ -317,6 +323,32 @@ Ese comentario vale más que el código que documenta. **Mantén ese estándar.*
 - Los estados de carga se manejan con `form.processing`.
 - El tema (claro/oscuro/sistema) vive en `localStorage` bajo `converza-theme` y
   lo aplica `AppLayout.vue` añadiendo la clase `dark` al `<html>`.
+
+### 6.4 Agregar un bloque a los flujos del bot
+
+Un bloque son tres piezas que tienen que coincidir:
+
+1. **Backend**: una subclase de [`NodeType`](../app/Services/Flows/Nodes/NodeType.php)
+   en `app/Services/Flows/Nodes/`, registrada en `NodeRegistry`. Declara:
+   - `outputs($data)`: sus salidas (el `sourceHandle` de las conexiones). Toda
+     salida tiene que estar conectada para publicar.
+   - `validate()`: su configuración. Señala el bloque con `Issue::error($msg, $node['id'])`.
+   - `enter()` (y `receive()` si espera al cliente, `resume()` si es una espera):
+     devuelve un `Step` (`next`, `waitInput`, `waitTimer`, `end`).
+   - `waitsForInput()`, `waitMinutes()`, `sendsMessage()`, `definesVariables()`,
+     `texts()`: los usa el validador para ciclos, la ventana de 24 h y las variables.
+   - **Todo lo que toca el mundo, por `$ex->io`** (`FlowIO`). Nunca HTTP ni
+     escrituras directas: así el simulador lo ejecuta sin efectos.
+2. **Editor**: su tarjeta en [`nodeCatalog.js`](../resources/js/Components/Flows/nodeCatalog.js)
+   (`NODE_TYPES`, `defaultData`, `summaryOf`) y **`outputsOf` idéntico a
+   `outputs()` del backend**: si dibujan salidas distintas, el admin conecta cosas
+   que el motor nunca recorre. Su formulario en `NodeInspector.vue`.
+3. **Pruebas**: el comportamiento en `tests/Feature/Flows/FlowEngineTest.php` y su
+   validación en `tests/Unit/Flows/FlowValidatorTest.php`.
+
+> En las plantillas Vue no escribas `}}` dentro de una interpolación: el parser
+> corta en el primer `}}` aunque esté dentro de un string. Para mostrar una
+> `{{variable}}` literal usa `v-text` con un helper, como `NodeInspector.vue`.
 
 ### 6.3 Nombres
 
@@ -552,21 +584,35 @@ try {
 
 ## 10. Testing
 
-**Estado actual: la suite no sirve.**
-[`tests/Feature/WhatsAppTest.php`](../tests/Feature/WhatsAppTest.php) prueba una
-ruta `POST /messages` y un archivo `messages.json` que no existen desde hace
-versiones. `ExampleTest` es el scaffold de Laravel.
-
 ```powershell
 composer test        # config:clear + artisan test
 php artisan test --filter=NombreDelTest
+php artisan test tests/Feature/Flows tests/Unit/Flows   # el Workspace de flujos
 ```
 
-Antes de escribir tests nuevos hay que resolver que el `.env` de testing apunte a
-un schema desechable. Propuesta concreta y orden sugerido de cobertura en
-[mejoras.md](mejoras.md#m-02-la-suite-de-tests-está-muerta).
+Las pruebas corren contra **SQLite en memoria** (`phpunit.xml`), nunca contra la
+base del `.env` —que en local es la de producción—. Como las migraciones son de
+Postgres, cada prueba arma a mano el esquema mínimo que necesita (ver
+`VentanaDeServicioTest`, `MensajeSinTelefonoTest`). Las de flujos además corren
+**la migración real** de sus tablas (`FlowsTestCase`), así que también la prueban.
 
-Mientras tanto, la verificación real es manual:
+Patrones que ya sirvieron:
+
+- `Http::fake()` para Graph API, con un `wamid` distinto por respuesta (la columna
+  `wa_message_id` es única).
+- La cola corre en `sync`: para probar carreras (mensajes en ráfaga), `Queue::fake()`
+  y ejecutar los jobs a mano en el orden que interese.
+- `Message::create()` ignora `created_at`: para un mensaje "viejo", `forceFill` +
+  `saveQuietly`.
+- Antes de dar por buena una prueba nueva, rompé a propósito lo que cubre y
+  confirmá que falla.
+
+> Antes decía "la suite no sirve". Ya no es cierto: hay pruebas de ventana de 24 h,
+> mensajes sin teléfono, tickets, reconciliación y flujos. Siguen fallando
+> `ExampleTest` y `WhatsAppTest` (scaffold y una ruta que no existe); la cobertura
+> que falta está en [mejoras.md M-02](mejoras.md#m-02-la-suite-de-tests-está-muerta).
+
+La verificación final sigue siendo manual para lo que toca a Meta:
 
 1. `composer dev`
 2. Enviar un WhatsApp al número de pruebas
@@ -624,7 +670,9 @@ Detalle completo, setup inicial del servidor y fallback manual en
 | Enviar imagen da 500 en producción | `storage/app/public` sin permisos de `www-data` | Ver [operaciones.md](operaciones.md#permisos-de-storage) |
 | Grabar audio falla | Falta ffmpeg | `apt install ffmpeg` |
 | Cambié `.env` en prod y no surte efecto | Config cacheada | `php artisan config:cache` |
-| El bot responde dos veces | Falta el lock por conversación | Ya está en `HandleBotResponse`; no lo quites |
+| El bot responde dos veces | Falta el lock por conversación | Ya está en `HandleBotResponse` y en `FlowRunner` (es el mismo `bot:conv:{id}`); no lo quites |
+| Un flujo encendido no hace nada en local | La cola no corre, o falta el scheduler para las Esperas | `composer dev` (incluye la cola); las Esperas las reanuda `php artisan flows:tick` |
+| El lienzo dibuja una salida que el validador dice que "ya no existe" | `outputsOf` (JS) y `outputs()` (PHP) divergieron | Ver §6.4 |
 | `route()` no existe en Vue | Ziggy desactualizado | Recargar la página tras cambiar rutas |
 | Meta rechaza la plantilla | Categoría o variables mal | Ver [integracion-whatsapp.md](integracion-whatsapp.md#plantillas) |
 
@@ -656,6 +704,9 @@ php artisan reminders:send --dry-run          # legado, sin agendar
 
 # Campañas
 php artisan campaigns:tick
+
+# Flujos del bot
+php artisan flows:tick                # reanuda Esperas y cierra ejecuciones abandonadas
 
 # Mantenimiento
 php artisan media:clean --dry-run --days=90

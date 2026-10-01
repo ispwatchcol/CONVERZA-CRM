@@ -665,4 +665,46 @@ class WhatsAppService
             return ['success' => false, 'error' => $e->getMessage()];
         }
     }
+
+    /**
+     * Mensaje interactivo: botones de respuesta (hasta 3) o lista (hasta 10).
+     *
+     * Es un mensaje de sesión, igual que el texto libre: solo se entrega dentro
+     * de la ventana de 24 h. Cuando el cliente toca un botón o una fila, el
+     * webhook trae el `id` que se le puso a la opción (ver
+     * ProcessIncomingWhatsAppMessage, caso 'interactive').
+     *
+     * @param array<string, mixed> $interactive El objeto `interactive` de la Cloud API.
+     */
+    public function sendInteractive(string $to, array $interactive): array
+    {
+        $baseUrl = $this->baseUrl();
+        $token   = $this->token();
+
+        if (empty($baseUrl)) {
+            Log::info("WhatsApp Mock sendInteractive: To $to", $interactive);
+            return ['success' => true, 'mock' => true];
+        }
+
+        try {
+            $response = Http::withToken($token)
+                ->post($baseUrl . '/messages', [
+                    'messaging_product' => 'whatsapp',
+                    'recipient_type'    => 'individual',
+                    ...$this->destinatario($to),
+                    'type'              => 'interactive',
+                    'interactive'       => $interactive,
+                ]);
+
+            if ($response->successful()) {
+                return ['success' => true, 'data' => $response->json()];
+            }
+
+            Log::error('WhatsApp sendInteractive Error: ' . $response->body());
+            return ['success' => false, 'error' => $response->json('error.message') ?? $response->body()];
+        } catch (\Exception $e) {
+            Log::error('WhatsApp sendInteractive Exception: ' . $e->getMessage());
+            return ['success' => false, 'error' => $e->getMessage()];
+        }
+    }
 }

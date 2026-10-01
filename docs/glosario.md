@@ -27,16 +27,29 @@ pero **solo ve las que tiene asignadas**. Ver [Rol de staff](#r--z).
 evento (factura generada, pago registrado, falla de router…). Ver
 [avisos-automaticos.md](avisos-automaticos.md).
 
-**Bot** · Máquina de estados por palabras clave que atiende el primer contacto y
-escala a un humano. Se apaga en cuanto un agente toma la conversación. Tiene
-interruptor, horario de atención y un switch por paso del flujo. Ver
-[bot.md](bot.md).
+**Bloque** (*nodo*) · Cada paso de un flujo del Workspace: Mensaje, Pregunta,
+Menú, Condición, Datos del cliente, Etiquetar, Espera, Pasar a un asesor, Fin.
+Ver [workflows-bot.md](workflows-bot.md).
+
+**Bot** · Hay dos. El **bot clásico** es una máquina de estados por palabras clave
+que atiende el primer contacto y escala a un humano (interruptor, horario y un
+switch por paso; ver [bot.md](bot.md)). Los **flujos del bot** son los que arma
+cada ISP en el Workspace. Nunca contestan los dos: con un flujo encendido, el
+clásico queda en pausa. Los dos se apagan en cuanto un asesor toma la conversación.
 
 **Campaña** · Envío masivo de plantillas a una lista, con secuencia de pasos y
 pacing. Ver [campanas.md](campanas.md).
 
 **Catch-up** · Ventana de días durante la cual un aviso perdido se reintenta sin
 duplicar. Default: 2 días.
+
+**Disparador** · Lo que arranca un flujo: el inicio de una conversación (nueva,
+reabierta o tras N horas de silencio) o una palabra clave. Se configura en el
+bloque Inicio.
+
+**Ejecución** (*run*) · Un flujo corriendo sobre una conversación concreta
+(`bot_flow_runs`). Hay como mucho una viva por conversación, y termina con la
+versión del flujo con la que arrancó.
 
 **Cloud API** · La API de WhatsApp de Meta alojada por ellos (frente a la
 *On-Premises API*, obsoleta). Es la que usa Converza.
@@ -58,6 +71,10 @@ tenant de Converza con su tenant de ispwatch, más plan, cobros y soporte.
 
 **Cursor de eventos** · Marca de agua (`ispwatch_event_cursors`) del último ID
 procesado por tenant y evento. Base del polling incremental sobre ispwatch.
+
+**Flujo** · Un bot armado con bloques en el Workspace (*Flujos del bot*). Tiene
+un **borrador** que se edita y **versiones publicadas** que son las que atienden.
+Ver [workflows-bot.md](workflows-bot.md).
 
 **Evento** (de aviso) · Un propósito del catálogo: `invoice_created`,
 `payment_reminder`, `service_activated`… Definidos en `EventCatalog`.
@@ -141,6 +158,9 @@ cuenta como `admin` dentro de cualquier tenant.
 sistema.
 
 **Throttle** · Mensajes por minuto de una campaña. Default 20.
+
+**Versión** (de un flujo) · Copia inmutable del flujo al publicar. Restaurar una
+versión vieja la copia al borrador; vuelve a atender cuando se la publica.
 
 **Ventana de 24 horas** · Periodo tras el último mensaje del cliente durante el
 cual puedes responder con texto libre. Fuera de ella, solo plantillas. **La regla

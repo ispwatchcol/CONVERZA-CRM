@@ -16,7 +16,7 @@ const props = defineProps({
     // Asignación actual: { event_key: { template_id, enabled } }
     notificationRoutes: { type: Object, default: () => ({}) },
     // Bot: { enabled, state: 'off'|'active'|'out_of_schedule', schedule_summary }
-    bot: { type: Object, default: () => ({ enabled: false, state: 'off', schedule_summary: null }) },
+    bot: { type: Object, default: () => ({ enabled: false, state: 'off', schedule_summary: null, active_flows: 0 }) },
 });
 
 // ── Forms (uno por sección) ──────────────────────────────────────────────────
@@ -747,6 +747,12 @@ const waBadge = computed(() => {
                                       :class="botForm.bot_enabled ? 'left-5' : 'left-0.5'"></span>
                             </button>
                         </div>
+
+                        <p v-if="bot.active_flows > 0" class="text-xs text-amber-800 bg-amber-50 rounded-lg px-3 py-2">
+                            <strong>En pausa:</strong> tienes {{ bot.active_flows }} flujo(s) encendido(s) en
+                            <Link :href="route('flows.index')" class="font-semibold underline">Flujos del bot</Link>,
+                            y mientras tanto este bot no responde aunque esté activado.
+                        </p>
 
                         <p class="text-xs text-gray-500">
                             Al apagarlo, las conversaciones que el bot tenía a medias reciben el mensaje de handoff y quedan libres para un asesor: nadie se queda esperando.

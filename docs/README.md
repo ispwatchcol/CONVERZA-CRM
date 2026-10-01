@@ -43,9 +43,9 @@ Sobre esa base hay cuatro capas de valor:
 | [Modelo de datos](modelo-de-datos.md) | Diccionario de tablas, relaciones y decisiones de esquema |
 | [Integración WhatsApp](integracion-whatsapp.md) | Cloud API, webhook, plantillas, medios, ventana de 24 h, límites |
 | [Avisos automáticos](avisos-automaticos.md) | `whatsapp:billing-notify`, `whatsapp:events-notify`, catálogo de eventos |
-| [Bot de atención](bot.md) | Máquina de estados del primer contacto, horario, switches por paso, diagnóstico |
+| [Bot de atención](bot.md) | El bot clásico: máquina de estados del primer contacto, horario, switches por paso, diagnóstico. Queda en pausa mientras haya un flujo encendido |
 | [Campañas masivas](campanas.md) | Audiencias, secuencias, warm-up, opt-out, métricas de campaña |
-| [Workflows del bot](workflows-bot.md) | **Propuesta.** Arquitectura del Workspace de flujos que se le va a dar al ISP: decisión de motor, bloques, cotas y orden de construcción |
+| [Workflows del bot](workflows-bot.md) | **Implementado (v1).** El Workspace de flujos: decisión de motor, bloques, enrutamiento, ventana de 24 h, cotas del motor, validación y observabilidad |
 | [Core Brain](core-brain.md) | Cuentas de ISPs, catálogo de planes, cobros del SaaS |
 | [Seguridad](seguridad.md) | Aislamiento multi-tenant, roles, secretos, superficie de ataque |
 
@@ -80,7 +80,8 @@ Sobre esa base hay cuatro capas de valor:
 → [Avisos automáticos · Diagnóstico](avisos-automaticos.md#diagnóstico-cuando-no-sale-un-aviso)
 
 **"El bot no responde / responde cuando no debe"**
-→ [Bot · Diagnóstico](bot.md#diagnóstico-el-bot-no-respondió) → [Bot · Horario](bot.md#horario-de-atención)
+→ Si el tenant tiene un flujo encendido: [Operaciones · Flujos del bot](operaciones.md#flujos-del-bot) (y la pantalla *Actividad* del flujo)
+→ Si no: [Bot · Diagnóstico](bot.md#diagnóstico-el-bot-no-respondió) → [Bot · Horario](bot.md#horario-de-atención)
 
 **"Quiero entender por qué el chat no usa WebSockets"**
 → [Arquitectura · Tiempo real por polling](arquitectura.md#tiempo-real-sin-websockets)

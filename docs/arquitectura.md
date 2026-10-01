@@ -48,7 +48,9 @@
    │                                                            │
    │  WhatsAppController ─► Jobs (cola) ─► Conversación/Mensaje │
    │          │                  │                              │
-   │          │                  └─► HandleBotResponse          │
+   │          │                  └─► BotDispatcher              │
+   │          │                       ├─► RunBotFlow (flujos)   │
+   │          │                       └─► HandleBotResponse     │
    │          │                  └─► ConversationAssigner       │
    │          │                                                 │
    │  ChatController ◄── polling 5 s ── Vue (Chat/Index.vue)    │
@@ -57,7 +59,7 @@
    │                                                            │
    │  Scheduler (cada minuto)                                   │
    │    · whatsapp:billing-notify   · campaigns:tick            │
-   │    · whatsapp:events-notify                                │
+   │    · whatsapp:events-notify    · flows:tick                │
    └───────────┬────────────────────────────────┬───────────────┘
                │ SELECT-only                    │
                ▼                                ▼
@@ -144,7 +146,8 @@ archiva mensajes en el tenant equivocado — una fuga de datos entre clientes.
 
 Por eso todo job que toca datos de tenant sigue este patrón obligatorio
 ([ProcessIncomingWhatsAppMessage](../app/Jobs/ProcessIncomingWhatsAppMessage.php),
-[HandleBotResponse](../app/Jobs/HandleBotResponse.php)):
+[HandleBotResponse](../app/Jobs/HandleBotResponse.php),
+[RunBotFlow](../app/Jobs/RunBotFlow.php)):
 
 ```php
 app()->forgetInstance('tenant');            // 1. descartar herencia
@@ -255,25 +258,31 @@ Dentro de `ProcessIncomingWhatsAppMessage`:
    = webhook reintentado → se ignora silenciosamente (idempotencia).
 7. `handleCampaignSignals()`: detecta opt-out y cierra secuencias de campaña si
    el contacto respondió.
-8. Despacha `HandleBotResponse` **antes** de auto-asignar (si auto-asignara
-   primero, el observer apagaría el bot y el flujo nunca correría). El bot
-   decide luego si habla: además del interruptor del tenant, honra un **horario
-   de atención** y puede tener pasos del flujo desactivados. Si se apaga a mitad
-   de una conversación, envía el handoff en vez de dejarla en el aire — ver
+8. Llama a [`BotDispatcher`](../app/Services/Flows/BotDispatcher.php)
+   **antes** de auto-asignar. Si la conversación tiene una ejecución de flujo
+   viva, le entrega el mensaje (`RunBotFlow`); si el tenant tiene flujos del
+   Workspace encendidos, arranca el que coincida y **reclama** la conversación
+   en el acto (`bot_active = true`) para que la auto-asignación del paso 9 no se
+   la quite al job, que corre después en otro worker; si no hay flujos
+   encendidos, despacha el bot clásico `HandleBotResponse` como siempre. El
+   enrutador está aislado con try/catch: si falla, el mensaje sigue sin bot. Ver
+   [workflows-bot.md §5](workflows-bot.md#5-cómo-se-enruta-un-mensaje) y
    [bot.md](bot.md).
-9. Auto-asigna al agente menos ocupado si el tenant lo tiene activado.
+9. Auto-asigna al agente menos ocupado si el tenant lo tiene activado y ningún
+   bot tiene la conversación.
 
 ---
 
 ## 6. Ciclo de vida de un mensaje saliente
 
-Hay **cuatro** caminos de salida, todos vía `WhatsAppService`:
+Hay **cinco** caminos de salida, todos vía `WhatsAppService`:
 
 | Origen | Método | Cuándo |
 |---|---|---|
 | Agente escribe en el chat | `sendMessage()` | Dentro de la ventana de 24 h |
 | Agente adjunta archivo | `uploadMedia()` + `sendMedia()` | Ídem |
-| Bot | `sendMessage()` | Conversación nueva o bot activo |
+| Bot clásico | `sendMessage()` | Conversación nueva o bot activo |
+| Flujos del Workspace | `sendMessage()` · `sendInteractive()` (botones y listas) | Ejecución viva; el motor mira la ventana antes de llamar a Meta |
 | Avisos y campañas | `sendTemplate()` | Siempre (fuera de la ventana) |
 
 «Dentro de la ventana de 24 h» dejó de ser una convención y pasó a ser una
@@ -380,11 +389,14 @@ dueño del SaaS con `php artisan tenant:link`.
 |---|---|---|
 | [`ProcessIncomingWhatsAppMessage`](../app/Jobs/ProcessIncomingWhatsAppMessage.php) | Webhook | Persiste el mensaje entrante, descarga medios, señales de campaña |
 | [`ProcessWhatsAppStatusUpdate`](../app/Jobs/ProcessWhatsAppStatusUpdate.php) | Webhook | Actualiza `sent/delivered/read/failed` en mensajes y campañas |
-| [`HandleBotResponse`](../app/Jobs/HandleBotResponse.php) | Job anterior | Ejecuta la máquina de estados del bot ([bot.md](bot.md)) |
+| [`HandleBotResponse`](../app/Jobs/HandleBotResponse.php) | Job anterior | Ejecuta la máquina de estados del bot clásico ([bot.md](bot.md)) |
+| [`RunBotFlow`](../app/Jobs/RunBotFlow.php) | `BotDispatcher` · `flows:tick` | Avanza una ejecución de un flujo del Workspace ([workflows-bot.md](workflows-bot.md)). Cola `config('flows.queue')`, hoy `default` |
 | [`SendCampaignMessageJob`](../app/Jobs/SendCampaignMessageJob.php) | `campaigns:tick` | Envía un mensaje de campaña |
 
 `tries = 3`, `backoff = 5s` en el job de entrada; `tries = 2`, `backoff = 3s` en
-el bot. En producción corren 4 workers de Supervisor con `--max-time=3600`
+el bot clásico. `RunBotFlow` tiene `tries = 5` pero `maxExceptions = 1`: los
+reintentos son solo para esperar el lock de la conversación; una excepción no se
+reintenta, porque reenviaría al cliente lo que ya salió. En producción corren 4 workers de Supervisor con `--max-time=3600`
 (reinicio horario contra fugas de memoria).
 
 ### Scheduler ([routes/console.php](../routes/console.php))
@@ -394,6 +406,7 @@ el bot. En producción corren 4 workers de Supervisor con `--max-time=3600`
 | `whatsapp:billing-notify` | cada minuto | Factura generada / recordatorio / suspensión |
 | `whatsapp:events-notify` | cada minuto | Bienvenida / pago / falla masiva de router |
 | `campaigns:tick` | cada minuto | Promueve campañas agendadas y despacha lotes |
+| `flows:tick` | cada minuto | Reanuda las Esperas de los flujos y cierra ejecuciones abandonadas |
 | `media:clean` | domingos 03:00 | Borra medios de más de `MEDIA_CLEANUP_DAYS` días |
 
 Los tres primeros corren **cada minuto** y no una vez al día porque tienen que
@@ -434,11 +447,12 @@ app/
 │   ├── Brain/              # Core Brain (sin BelongsToTenant)
 │   ├── Ispwatch/           # espejos read-only
 │   └── Concerns/           # BelongsToTenant
-├── Observers/              # ConversationObserver (apaga el bot al asignar)
+├── Observers/              # ConversationObserver (apaga el bot y corta el flujo al asignar)
 ├── Providers/
 └── Services/
     ├── Assignment/         # ConversationAssigner (least-busy)
-    ├── Bot/                # IntentDetector
+    ├── Bot/                # IntentDetector, ScheduleWindow (bot clásico)
+    ├── Flows/              # Workspace de flujos: motor, bloques, enrutador, validador
     ├── Brain/              # PlanCatalog
     ├── Campaigns/          # AudienceBuilder, CampaignMessageBuilder, WarmupBudget
     ├── Ispwatch/           # IspwatchRepository  ← única puerta a ispwatch

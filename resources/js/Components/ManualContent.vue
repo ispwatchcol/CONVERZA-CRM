@@ -45,6 +45,7 @@ const groups = [
             { id: 'campanas',   title: 'Campañas masivas' },
             { id: 'avisos',     title: 'Avisos automáticos' },
             { id: 'bot',        title: 'Bot de atención' },
+            { id: 'flujos',     title: 'Flujos del bot' },
         ],
     },
     {
@@ -298,6 +299,7 @@ onUnmounted(() => {
                                     <tr><td class="py-2 px-3">Crear y lanzar campañas</td><td class="py-2 px-3 text-center">Ver</td><td class="py-2 px-3 text-center">Ver</td><td class="py-2 px-3 text-center text-accent font-bold">Sí</td></tr>
                                     <tr><td class="py-2 px-3">Gestionar Staff y Equipos</td><td class="py-2 px-3 text-center">Ver</td><td class="py-2 px-3 text-center">Ver</td><td class="py-2 px-3 text-center text-accent font-bold">Sí</td></tr>
                                     <tr><td class="py-2 px-3">Configurar el bot</td><td class="py-2 px-3 text-center">Ver</td><td class="py-2 px-3 text-center">Ver</td><td class="py-2 px-3 text-center text-accent font-bold">Sí</td></tr>
+                                    <tr><td class="py-2 px-3">Flujos del bot (armar, probar, publicar, encender)</td><td class="py-2 px-3 text-center text-gray-400">—</td><td class="py-2 px-3 text-center text-gray-400">—</td><td class="py-2 px-3 text-center text-accent font-bold">Sí</td></tr>
                                     <tr><td class="py-2 px-3">Contactos, Etiquetas, Plantillas</td><td class="py-2 px-3 text-center text-accent font-bold">Sí</td><td class="py-2 px-3 text-center text-accent font-bold">Sí</td><td class="py-2 px-3 text-center text-accent font-bold">Sí</td></tr>
                                     <tr><td class="py-2 px-3">Soporte con Converza</td><td class="py-2 px-3 text-center text-gray-400">—</td><td class="py-2 px-3 text-center text-gray-400">—</td><td class="py-2 px-3 text-center text-accent font-bold">Sí</td></tr>
                                 </tbody>
@@ -818,6 +820,11 @@ vence el {{fecha_vencimiento}}.</pre>
                             Un bot de palabras clave que atiende el primer contacto y escala a un humano. Se configura en
                             <em>Configuración → Bot</em>.
                         </p>
+                        <p class="text-sm text-amber-800 bg-amber-50 rounded-lg px-3 py-2 mb-4">
+                            Si quieres cambiar las opciones del menú, agregar ramas o consultar el saldo del cliente, usa
+                            los <a href="#flujos" class="font-semibold underline">Flujos del bot</a>: puedes convertir este bot
+                            en un flujo editable con tus mismos textos. Mientras haya un flujo encendido, este bot queda en pausa.
+                        </p>
 
                         <pre class="bg-gray-100 rounded-lg p-4 text-xs text-gray-700 overflow-x-auto leading-relaxed">Cliente escribe por primera vez
       ↓
@@ -851,6 +858,70 @@ vence el {{fecha_vencimiento}}.</pre>
                             <li>La etiqueta <em>"Activo — fuera de horario"</em> significa que el bot está encendido pero ahora mismo no responde por la franja configurada.</li>
                             <li>Ojo: las respuestas de las ramas <strong>terminan preguntando por el nº de suscriptores</strong>. Si apagas ese paso, quita la pregunta de esos textos.</li>
                         </ul>
+                    </section>
+
+                    <!-- ─────── Flujos del bot ─────── -->
+                    <section id="flujos" class="bg-white rounded-xl border border-gray-200 p-6 scroll-mt-4">
+                        <h2 class="text-xl font-bold text-gray-900 mb-3">Flujos del bot</h2>
+                        <p class="text-gray-600 mb-4">
+                            Aquí armas cómo atiende tu bot de WhatsApp, bloque a bloque y sin pedirnos nada: el menú, las
+                            preguntas, la consulta del saldo en ispwatch y cuándo pasa la conversación a tu equipo. Está en
+                            <em>Flujos del bot</em> (solo administradores).
+                        </p>
+
+                        <h3 class="font-semibold text-gray-800 mt-4 mb-2">Cómo se trabaja</h3>
+                        <ol class="space-y-2 text-sm text-gray-600 list-decimal list-inside">
+                            <li><strong>Crea un flujo</strong> desde una plantilla: <em>Atención a clientes de un ISP</em> (saldo, fallas, pagos y asesor), <em>Tu bot actual, editable</em> (el bot de Configuración con tus mismos textos) o <em>Empezar casi de cero</em>.</li>
+                            <li><strong>Edítalo en el lienzo.</strong> Arrastra bloques desde la izquierda y conéctalos arrastrando desde el punto de la derecha de una salida hasta el bloque siguiente. Haz clic en un bloque para editarlo a la derecha. Lo que guardas es un <strong>borrador</strong>: tus clientes no lo ven.</li>
+                            <li><strong>Pruébalo en <em>Probar</em>.</strong> Escribes como si fueras el cliente y el bot te contesta, con el mismo motor de verdad pero <strong>sin enviar nada por WhatsApp</strong>. Puedes poner el teléfono de un cliente real para ver su saldo, y saltar las esperas.</li>
+                            <li><strong>Publica.</strong> Antes de publicar se revisa el flujo; si algo está mal, te dice exactamente qué bloque falla. Cada publicación es una <strong>versión</strong> nueva.</li>
+                            <li><strong>Enciéndelo</strong> con el interruptor. Desde ese momento atiende las conversaciones nuevas.</li>
+                        </ol>
+
+                        <h3 class="font-semibold text-gray-800 mt-5 mb-2">Los bloques</h3>
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-sm">
+                                <tbody class="divide-y divide-gray-100 text-gray-600">
+                                    <tr><td class="py-2 pr-3 font-medium text-gray-800 whitespace-nowrap">Inicio</td><td class="py-2">Cuándo arranca: cuando empieza una conversación (nueva, o reabierta, y si quieres también cuando el cliente vuelve tras unas horas de silencio) o cuando escribe una palabra clave, como «menú».</td></tr>
+                                    <tr><td class="py-2 pr-3 font-medium text-gray-800">Mensaje</td><td class="py-2">Envía un texto y sigue.</td></tr>
+                                    <tr><td class="py-2 pr-3 font-medium text-gray-800">Pregunta</td><td class="py-2">Pregunta, espera la respuesta y la guarda. Puede exigir un número, correo o teléfono, y copiar la respuesta al nombre o correo del contacto.</td></tr>
+                                    <tr><td class="py-2 pr-3 font-medium text-gray-800">Menú</td><td class="py-2">Opciones numeradas, botones (hasta 3) o lista (hasta 10). El cliente elige tocando, con el número, el nombre o una palabra clave. Si no entiende, reintenta y luego sale por «No entendió».</td></tr>
+                                    <tr><td class="py-2 pr-3 font-medium text-gray-800">Condición</td><td class="py-2">Sí / No según lo que respondió el cliente, sus etiquetas o el horario (por ejemplo, fuera de horario dejar un mensaje).</td></tr>
+                                    <tr><td class="py-2 pr-3 font-medium text-gray-800 whitespace-nowrap">Datos del cliente</td><td class="py-2">Busca al cliente en ispwatch por su teléfono: estado del servicio, facturas pendientes, cuánto debe y cuándo vence. Solo lee.</td></tr>
+                                    <tr><td class="py-2 pr-3 font-medium text-gray-800">Etiquetar</td><td class="py-2">Pone o quita una etiqueta del contacto.</td></tr>
+                                    <tr><td class="py-2 pr-3 font-medium text-gray-800">Espera</td><td class="py-2">Pausa unos minutos antes de seguir.</td></tr>
+                                    <tr><td class="py-2 pr-3 font-medium text-gray-800 whitespace-nowrap">Pasar a un asesor</td><td class="py-2">Entrega la conversación a tu equipo (o a un equipo en particular), la asigna si tienes la auto-asignación activa y le deja al asesor una nota con todo lo que respondió el cliente.</td></tr>
+                                    <tr><td class="py-2 pr-3 font-medium text-gray-800">Fin</td><td class="py-2">Termina: el bot resolvió solo.</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <h3 class="font-semibold text-gray-800 mt-5 mb-2">Variables</h3>
+                        <p class="text-sm text-gray-600">
+                            En los textos puedes usar datos entre llaves, por ejemplo <code v-pre class="bg-gray-100 px-1.5 py-0.5 rounded text-xs">{{contacto.primer_nombre}}</code>,
+                            <code v-pre class="bg-gray-100 px-1.5 py-0.5 rounded text-xs">{{saludo}}</code> (buenos días / tardes / noches) o
+                            <code v-pre class="bg-gray-100 px-1.5 py-0.5 rounded text-xs">{{cliente.total_pendiente}}</code> después de un bloque «Datos del cliente».
+                            El botón <em>Insertar variable</em> de cada texto te las muestra todas.
+                        </p>
+
+                        <h3 class="font-semibold text-gray-800 mt-5 mb-2">Reglas que conviene conocer</h3>
+                        <ul class="space-y-2 text-sm text-gray-600 list-disc list-inside">
+                            <li><strong>Tu equipo manda.</strong> El bot nunca atiende un chat con asesor asignado, y si un asesor toma el chat o le escribe al cliente, el bot se calla.</li>
+                            <li><strong>Nunca contestan dos bots.</strong> Mientras haya un flujo encendido, el bot de <em>Configuración → Bot</em> queda en pausa.</li>
+                            <li><strong>La ventana de 24 horas.</strong> WhatsApp solo deja escribir texto libre hasta 24 h después del último mensaje del cliente. Por eso las esperas seguidas no pueden sumar más de 23 h, y el editor no deja publicar un flujo que se pase.</li>
+                            <li><strong>Publicar no rompe lo que está en curso.</strong> Las conversaciones que ya iban por el flujo terminan con la versión anterior; las nuevas usan la nueva.</li>
+                            <li><strong>Volver atrás:</strong> en <em>Versiones</em> puedes restaurar una versión vieja al borrador y publicarla de nuevo.</li>
+                            <li><strong>Apagar un flujo</strong> corta las conversaciones que estaba atendiendo y le deja una nota a tu equipo en cada una para que las retome.</li>
+                            <li>Si el cliente no responde una pregunta en 24 horas, el flujo termina solo.</li>
+                        </ul>
+
+                        <h3 class="font-semibold text-gray-800 mt-5 mb-2">¿Funciona? Mira la actividad</h3>
+                        <p class="text-sm text-gray-600">
+                            En la lista de flujos ves, de los últimos 7 días, cuántas conversaciones atendió cada uno, cuántas
+                            resolvió solo, cuántas pasaron a tu equipo y cuántas veces el menú <strong>no entendió</strong> al cliente
+                            (si ese número sube, agrega palabras clave). En <em>Actividad</em> ves cada conversación paso a paso:
+                            qué escribió el cliente, qué le contestó el bot y si WhatsApp lo entregó.
+                        </p>
                     </section>
 
                     <!-- ─────── Staff y equipos ─────── -->
