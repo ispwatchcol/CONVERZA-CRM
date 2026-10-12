@@ -708,6 +708,10 @@ php artisan campaigns:tick
 # Flujos del bot
 php artisan flows:tick                # reanuda Esperas y cierra ejecuciones abandonadas
 
+# Core Brain (cobro del SaaS y finanzas) — ¡el .env local apunta a PRODUCCIÓN!
+php artisan brain:billing-run --account=1   # factura / recuerda / corta / reactiva esa cuenta
+php artisan brain:expenses-recurring        # registra los gastos fijos a los que les llegó el día
+
 # Mantenimiento
 php artisan media:clean --dry-run --days=90
 php artisan chat:backfill-answered-reads --dry-run

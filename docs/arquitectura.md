@@ -407,6 +407,8 @@ reintenta, porque reenviaría al cliente lo que ya salió. En producción corren
 | `whatsapp:events-notify` | cada minuto | Bienvenida / pago / falla masiva de router |
 | `campaigns:tick` | cada minuto | Promueve campañas agendadas y despacha lotes |
 | `flows:tick` | cada minuto | Reanuda las Esperas de los flujos y cierra ejecuciones abandonadas |
+| `brain:billing-run` | cada hora, 8 a. m.–8 p. m. (Bogotá) | Cobro automático del SaaS a los ISP: factura, recuerda, corta y reactiva ([core-brain.md §8](core-brain.md)) |
+| `brain:expenses-recurring` | diario 06:00 (Bogotá) | Registra los gastos fijos del negocio a los que les llegó el día |
 | `media:clean` | domingos 03:00 | Borra medios de más de `MEDIA_CLEANUP_DAYS` días |
 
 Los tres primeros corren **cada minuto** y no una vez al día porque tienen que

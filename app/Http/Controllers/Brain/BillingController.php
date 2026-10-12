@@ -6,12 +6,15 @@ use App\Http\Controllers\Controller;
 use App\Models\Brain\Account;
 use App\Models\Brain\AccountInvoice;
 use App\Models\Brain\AccountPayment;
+use App\Services\Brain\CobroAutomatico;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Validation\Rule;
 
 class BillingController extends Controller
 {
+    public function __construct(private CobroAutomatico $cobro) {}
+
     // ── Facturas ──────────────────────────────────────────────────────────────
 
     public function storeInvoice(Request $request, Account $account)
@@ -43,49 +46,12 @@ class BillingController extends Controller
         ]);
 
         $credit = $validated['apply_credit'] ?? true
-            ? $this->applyCredit($account, $invoice)
+            ? $account->allocateCredit(Auth::id())
             : 0;
 
         return back()->with('success', $credit > 0
             ? 'Factura creada. Se aplicaron ' . number_format($credit, 2) . ' ' . $invoice->currency . ' de saldo a favor.'
             : 'Factura creada.');
-    }
-
-    /**
-     * Aplica el saldo a favor de la cuenta a una factura recién creada, como descuento.
-     *
-     * Se materializa como un pago marcado `is_credit_application` por el menor entre el
-     * saldo disponible y el total de la factura — así la factura queda con su saldo
-     * pendiente ya neteado y el saldo de la cuenta no cuenta la plata dos veces (ver
-     * `Account::balanceByCurrency`). Si no hay saldo a favor en esa moneda, no hace nada.
-     *
-     * @return float Monto aplicado (0 si no hubo saldo).
-     */
-    private function applyCredit(Account $account, AccountInvoice $invoice): float
-    {
-        // Se excluye la factura recién creada: el saldo a aplicar es el que había ANTES.
-        $available = $account->load(['payments', 'invoices'])->availableCredit($invoice->currency, $invoice->id);
-        $toApply   = min($available, (float) $invoice->total);
-
-        if ($toApply <= 0) {
-            return 0;
-        }
-
-        AccountPayment::create([
-            'account_id'            => $account->id,
-            'account_invoice_id'    => $invoice->id,
-            'recorded_by'           => Auth::id(),
-            'amount'                => $toApply,
-            'currency'              => $invoice->currency,
-            'method'                => 'other',
-            'is_credit_application' => true,
-            'reference'             => 'Saldo a favor aplicado',
-            'paid_at'               => $invoice->issued_at ?? now(),
-        ]);
-
-        $invoice->load('payments')->recalculateStatus();
-
-        return $toApply;
     }
 
     public function updateInvoice(Request $request, Account $account, AccountInvoice $invoice)
@@ -111,6 +77,10 @@ class BillingController extends Controller
             'total' => $amount + $tax,
         ]);
 
+        // Correrle la fecha o marcarla pagada a mano puede dejar al día a una
+        // cuenta cortada por cobro.
+        $this->cobro->reactivarSiQuedoAlDia($account->fresh());
+
         return back()->with('success', 'Factura actualizada.');
     }
 
@@ -124,6 +94,11 @@ class BillingController extends Controller
         $invoice->payments()->where('is_credit_application', true)->delete();
         $invoice->update(['status' => 'void']);
 
+        // Lo que se había pagado sobre la anulada queda libre y cubre la siguiente
+        // factura abierta; y si era la vencida, la cuenta puede quedar al día.
+        $account->allocateCredit(Auth::id());
+        $this->cobro->reactivarSiQuedoAlDia($account->fresh());
+
         return back()->with('success', 'Factura anulada.');
     }
 
@@ -132,7 +107,8 @@ class BillingController extends Controller
     public function storePayment(Request $request, Account $account)
     {
         $validated = $request->validate([
-            'account_invoice_id' => ['nullable', 'integer', Rule::exists('account_invoices', 'id')],
+            // De ESTA cuenta: si no, un pago podía colgarse de la factura de otra.
+            'account_invoice_id' => ['nullable', 'integer', Rule::exists('account_invoices', 'id')->where('account_id', $account->id)],
             'amount'             => ['required', 'numeric', 'min:0.01'],
             'currency'           => ['required', 'string', 'size:3'],
             'method'             => ['required', Rule::in(['transfer', 'cash', 'card', 'other'])],
@@ -152,7 +128,16 @@ class BillingController extends Controller
             $invoice?->load('payments')->recalculateStatus();
         }
 
-        return back()->with('success', 'Pago registrado.');
+        // Un pago suelto (o lo que sobró de uno) va a la factura abierta más vieja.
+        // Antes se quedaba esperando a la PRÓXIMA factura, y con el cobro
+        // automático eso es un cliente que pagó y sigue cortado.
+        $account->allocateCredit(Auth::id());
+
+        $reactivada = $this->cobro->reactivarSiQuedoAlDia($account->fresh());
+
+        return back()->with('success', $reactivada
+            ? 'Pago registrado. La cuenta quedó al día y el servicio se reactivó.'
+            : 'Pago registrado.');
     }
 
     public function destroyPayment(Account $account, AccountPayment $payment)
@@ -168,5 +153,35 @@ class BillingController extends Controller
         }
 
         return back()->with('success', 'Pago eliminado.');
+    }
+
+    // ── Cobro automático ──────────────────────────────────────────────────────
+
+    public function updateAutoBilling(Request $request, Account $account)
+    {
+        $validated = $request->validate([
+            'auto_billing_enabled' => ['required', 'boolean'],
+            'billing_day'          => ['required_if:auto_billing_enabled,true', 'nullable', 'integer', 'between:1,31'],
+            'billing_grace_days'   => ['required', 'integer', 'between:0,60'],
+        ], [
+            'billing_day.required_if' => 'Para cobrar solo hace falta el día del mes en que se cobra.',
+        ]);
+
+        $enabled = $request->boolean('auto_billing_enabled');
+
+        $account->update([
+            'auto_billing_enabled' => $enabled,
+            'billing_day'          => $validated['billing_day'] ?? $account->billing_day,
+            'billing_grace_days'   => $validated['billing_grace_days'],
+            // Desde HOY: encenderlo no factura los meses anteriores. Al apagarlo se
+            // olvida, y al volver a encenderlo arranca de nuevo desde ese día.
+            'auto_billing_since'   => $enabled
+                ? ($account->auto_billing_enabled ? $account->auto_billing_since : CobroAutomatico::hoy()->toDateString())
+                : null,
+        ]);
+
+        return back()->with('success', $enabled
+            ? 'Cobro automático encendido.'
+            : 'Cobro automático apagado. Las facturas ya creadas siguen igual.');
     }
 }

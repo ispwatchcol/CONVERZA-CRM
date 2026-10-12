@@ -1178,6 +1178,16 @@ vence el {{fecha_vencimiento}}.</pre>
                             equipo de Converza te identifique al toque.
                         </p>
 
+                        <h3 class="font-semibold text-gray-800 mt-4 mb-2">Si el panel dice "servicio suspendido"</h3>
+                        <p class="text-gray-600 mb-4">
+                            Aparece cuando una factura de Converza venció sin pagar. Te avisamos por WhatsApp cuando
+                            sale la factura y el día antes de que venza. La pantalla muestra qué se debe y cómo pagar;
+                            en cuanto registramos el pago, el panel se reactiva solo. Mientras tanto
+                            <strong>tus clientes no se ven afectados</strong>: los mensajes que te escriben se siguen
+                            guardando y el bot y los avisos automáticos siguen funcionando. Desde esa pantalla puedes
+                            escribirnos por WhatsApp o abrir un requerimiento.
+                        </p>
+
                         <h3 class="font-semibold text-gray-800 mt-4 mb-2">Antes de escribir</h3>
                         <ul class="space-y-2 text-sm text-gray-600 list-disc list-inside">
                             <li>Revisa este manual: probablemente tu pregunta ya está respondida.</li>

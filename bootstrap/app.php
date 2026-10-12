@@ -21,6 +21,15 @@ return Application::configure(basePath: dirname(__DIR__))
         then: function () {
             Route::get('/health', [\App\Http\Controllers\HealthController::class, 'check'])
                 ->name('health');
+
+            // Estado del servicio de un ISP, para que ispwatch sepa si cortarle el
+            // panel (Converza lee ispwatch en solo lectura y no puede hacerlo él).
+            // Fuera del grupo `web` por lo mismo que /health: es una API con token,
+            // no necesita sesión, CSRF ni Inertia.
+            Route::get('/saas/estado/{ispwatchTenantId}', [\App\Http\Controllers\SaasStatusController::class, 'show'])
+                ->whereNumber('ispwatchTenantId')
+                ->middleware('throttle:120,1')
+                ->name('saas.estado');
         },
     )
     ->withMiddleware(function (Middleware $middleware): void {
@@ -29,6 +38,9 @@ return Application::configure(basePath: dirname(__DIR__))
             \App\Http\Middleware\HandleInertiaRequests::class,
             \App\Http\Middleware\ResolveTenant::class,
             \App\Http\Middleware\EnsureConsistentIdentity::class,
+            // Después de los de arriba: necesita al usuario resuelto y las props
+            // compartidas de Inertia para pintar la pantalla de suspendido.
+            \App\Http\Middleware\EnsureServicioActivo::class,
         ]);
         $middleware->alias([
             'superadmin' => \App\Http\Middleware\EnsureSuperadmin::class,

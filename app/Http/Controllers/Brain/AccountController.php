@@ -11,6 +11,7 @@ use App\Models\Brain\AccountProduct;
 use App\Models\Brain\SupportTicket;
 use App\Models\Tenant;
 use App\Models\User;
+use App\Services\Brain\CobroAutomatico;
 use App\Services\Brain\PlanCatalog;
 use App\Services\Ispwatch\IspwatchRepository;
 use Illuminate\Http\Request;
@@ -20,7 +21,10 @@ use Inertia\Inertia;
 
 class AccountController extends Controller
 {
-    public function __construct(protected IspwatchRepository $ispwatch) {}
+    public function __construct(
+        protected IspwatchRepository $ispwatch,
+        protected CobroAutomatico $cobro,
+    ) {}
 
     public function index(Request $request)
     {
@@ -145,6 +149,7 @@ class AccountController extends Controller
                 'period_start'       => $inv->period_start?->toDateString(),
                 'period_end'         => $inv->period_end?->toDateString(),
                 'account_product_id' => $inv->account_product_id,
+                'source'             => $inv->source ?? 'manual',
                 'created_by_name'    => $inv->createdBy?->name,
                 'payments'           => $inv->payments->map(fn ($p) => [
                     'id'        => $p->id,
@@ -236,6 +241,22 @@ class AccountController extends Controller
             'balance'        => $account->loadMissing(['payments', 'invoices'])->balanceByCurrency(),
             'tickets'        => $tickets,
             'notes'          => $notes,
+            'auto_billing'   => $this->cobro->vistaPrevia($account),
+            'billing_notices' => $account->billingNotices()
+                ->with('invoice:id,number')
+                ->latest('id')
+                ->limit(30)
+                ->get()
+                ->map(fn ($n) => [
+                    'id'             => $n->id,
+                    'kind'           => $n->kind,
+                    'status'         => $n->status,
+                    'channel'        => $n->channel,
+                    'reason'         => $n->reason,
+                    'phone'          => $n->phone,
+                    'invoice_number' => $n->invoice?->number,
+                    'created_at'     => $n->created_at?->toIso8601String(),
+                ]),
             'tenants'        => $this->linkableTenants(),
             'plan_catalog'   => PlanCatalog::forFrontend(),
         ]);
@@ -333,6 +354,16 @@ class AccountController extends Controller
         ]);
 
         $validated['support_notify_enabled'] = $request->boolean('support_notify_enabled');
+
+        // Corte y reactivación a mano. Un corte de una persona queda marcado
+        // `manual`: el cobro automático no lo levanta aunque llegue el pago.
+        if ($validated['status'] === 'suspended' && ! $account->isSuspended()) {
+            $validated['suspended_at']      = now();
+            $validated['suspension_reason'] = Account::SUSPENSION_MANUAL;
+        } elseif ($validated['status'] !== 'suspended' && $account->isSuspended()) {
+            $validated['suspended_at']      = null;
+            $validated['suspension_reason'] = null;
+        }
 
         if ($validated['ispwatch_tenant_id'] != $account->ispwatch_tenant_id
             && $error = $this->validateIspwatchLink($validated['ispwatch_tenant_id'] ?? null)) {
@@ -451,6 +482,8 @@ class AccountController extends Controller
             'next_billing_at'    => $a->nextBillingDate()?->toDateString(),
             'support_notify_enabled' => (bool) $a->support_notify_enabled,
             'support_notify_phone'   => $a->support_notify_phone,
+            'suspended_at'           => $a->suspended_at?->toIso8601String(),
+            'suspension_reason'      => $a->suspension_reason,
             'notes'              => $a->notes,
             'owner'              => $a->ownerUser?->only('id', 'name'),
             'tenant'             => $a->tenant?->only('id', 'name', 'slug'),

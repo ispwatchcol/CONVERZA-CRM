@@ -7,10 +7,6 @@ use App\Models\Brain\Account;
 use App\Models\Brain\SupportTicket;
 use App\Models\Brain\TicketEvent;
 use App\Models\Brain\TicketNotificationLog;
-use App\Models\Contact;
-use App\Models\Conversation;
-use App\Models\Tenant;
-use App\Services\WhatsAppService;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
@@ -43,7 +39,7 @@ use Illuminate\Support\Facades\Mail;
  */
 class AvisosDeTicket
 {
-    public function __construct(private WhatsAppService $whatsapp) {}
+    public function __construct(private CanalDeConverza $canal) {}
 
     public function acuse(SupportTicket $ticket, TicketEvent $origen): void
     {
@@ -176,8 +172,8 @@ class AvisosDeTicket
         // Dentro de la ventana podemos escribir como una persona; fuera, solo
         // plantilla. El orden importa: preguntar primero por la ventana evita
         // gastar una plantilla cuando el hilo está abierto.
-        if ($this->ventanaAbierta($telefono)) {
-            $resultado = $this->whatsappDeConverza()->sendMessage($telefono, $texto);
+        if ($this->canal->ventanaAbierta($telefono)) {
+            $resultado = $this->canal->whatsapp()->sendMessage($telefono, $texto);
             $log->channel = 'whatsapp_text';
         } else {
             $plantilla = config("support.notify.templates.{$kind}");
@@ -188,7 +184,7 @@ class AvisosDeTicket
                 return;
             }
 
-            $resultado = $this->whatsappDeConverza()->sendTemplate(
+            $resultado = $this->canal->whatsapp()->sendTemplate(
                 $telefono,
                 $plantilla,
                 (string) config('support.notify.language', 'es_CO'),
@@ -277,74 +273,31 @@ class AvisosDeTicket
             default                               => 'aviso de resolución',
         };
 
+        // Lo que SÍ pasó, dicho primero. La nota vieja ("No se envió el aviso de
+        // respuesta…") se leía como si la respuesta misma no hubiera salido, y la
+        // respuesta siempre queda en el portal del ISP: lo único que puede fallar
+        // es el WhatsApp que le avisa que vaya a verla.
+        $loQuePaso = match ($log->kind) {
+            TicketNotificationLog::KIND_ACUSE     => 'El ticket quedó registrado',
+            TicketNotificationLog::KIND_RESPUESTA => 'La respuesta quedó publicada en el portal del ISP',
+            default                               => 'El ticket quedó resuelto en el portal del ISP',
+        };
+
         return match ($log->status) {
             'sent'  => "Se le envió al ISP el {$que} por WhatsApp ({$log->phone}).",
-            'failed' => "No se pudo enviar el {$que} al ISP: {$log->reason}.",
+            'failed' => "{$loQuePaso}, pero el {$que} por WhatsApp falló: {$log->reason}.",
             default => match ($log->reason) {
-                'apagado'          => "No se envió el {$que}: la cuenta tiene los avisos de soporte apagados.",
-                'sin_telefono'     => "No se envió el {$que}: la cuenta no tiene teléfono para avisos.",
-                'sin_plantilla'    => "No se envió el {$que}: el hilo está fuera de la ventana de 24 h y no hay plantilla aprobada para este aviso.",
-                default            => "No se envió el {$que}.",
+                'apagado'          => "{$loQuePaso}. No se le avisó por WhatsApp: la cuenta tiene los avisos de soporte apagados.",
+                'sin_telefono'     => "{$loQuePaso}. No se le avisó por WhatsApp: la cuenta no tiene teléfono para avisos.",
+                'sin_plantilla'    => "{$loQuePaso}. No se le avisó por WhatsApp: hace más de 24 h que no nos escribe a nuestro número, y para escribirle primero Meta exige una plantilla aprobada que todavía no está configurada.",
+                default            => "{$loQuePaso}. No se le avisó por WhatsApp.",
             },
         };
     }
 
     private function telefono(Account $account): ?string
     {
-        $crudo = $account->support_notify_phone ?: $account->contact_phone;
-
-        if (! $crudo) {
-            return null;
-        }
-
-        // Meta quiere solo dígitos, con indicativo y sin '+'.
-        return preg_replace('/\D+/', '', $crudo) ?: null;
-    }
-
-    /**
-     * ¿Hay ventana de 24 h abierta con ese número EN NUESTRO propio workspace?
-     *
-     * Se consulta sin el global scope de tenant y con el id explícito del tenant
-     * `default`: esto corre en un worker, donde el container puede traer el tenant
-     * del job anterior, y preguntar por la conversación equivocada sería mirar el
-     * hilo de otro ISP.
-     */
-    private function ventanaAbierta(string $telefono): bool
-    {
-        $converza = $this->tenantDeConverza();
-
-        if (! $converza) {
-            return false;
-        }
-
-        $contacto = Contact::withoutGlobalScopes()
-            ->where('tenant_id', $converza->id)
-            ->where('phone', $telefono)
-            ->first();
-
-        if (! $contacto) {
-            return false;
-        }
-
-        $conversacion = Conversation::withoutGlobalScopes()
-            ->where('tenant_id', $converza->id)
-            ->where('contact_id', $contacto->id)
-            ->latest('id')
-            ->first();
-
-        return $conversacion?->serviceWindowIsOpen() ?? false;
-    }
-
-    private function whatsappDeConverza(): WhatsAppService
-    {
-        // forTenant() en vez de confiar en app('tenant'): el aviso sale SIEMPRE
-        // del número de Converza, se dispare desde donde se dispare.
-        return $this->whatsapp->forTenant($this->tenantDeConverza());
-    }
-
-    private function tenantDeConverza(): ?Tenant
-    {
-        return Tenant::where('slug', 'default')->first();
+        return CanalDeConverza::normalizarTelefono($account->support_notify_phone ?: $account->contact_phone);
     }
 
     private function enlace(SupportTicket $ticket): string

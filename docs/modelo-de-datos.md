@@ -48,8 +48,11 @@ tenants ─┬─< users ──< staff_members ──< conversations (assigned_t
 
 accounts (Core Brain, SIN tenant_id) ─┬─< account_products
                                       ├─< account_invoices ──< account_payments
+                                      ├─< account_billing_notices
                                       ├─< support_tickets ──< ticket_events
                                       └─< account_notes
+
+brain_recurring_expenses ──< brain_expenses   (egresos del negocio, SIN tenant_id)
 ```
 
 ---
@@ -380,6 +383,8 @@ La ficha unificada de cada ISP cliente.
 | `owner_user_id` | Responsable interno |
 | `contact_*`, `country` | Datos comerciales |
 | `onboarding_at`, `renewal_at`, `billing_day` | |
+| `auto_billing_enabled`, `auto_billing_since`, `billing_grace_days` | Cobro automático ([core-brain.md §8](core-brain.md)). Nace apagado; `since` = desde qué día factura solo (los meses anteriores no) |
+| `suspended_at`, `suspension_reason` | `billing` = lo cortó el cobro y el pago lo levanta solo; `manual` = solo una persona |
 | `notes`, `deleted_at` | |
 
 > **Por qué `accounts` y no reutilizar `tenants`:** (1) un ISP puede tener un
@@ -407,7 +412,10 @@ Cobros del SaaS a sus ISPs.
 
 `account_invoices`: `number` (único), `concept`, `amount`, `tax`, `total`,
 `currency`, `status` (`draft`/`sent`/`paid`/`partial`/`overdue`/`void`),
-`issued_at`, `due_at`, `paid_at`, `period_start`, `period_end`.
+`issued_at`, `due_at`, `paid_at`, `period_start`, `period_end`, `source`
+(`manual`/`auto`) y `billing_period` (`YYYY-MM`, solo las automáticas). Único
+`(account_id, currency, billing_period)`: un mes no se factura dos veces solo (los
+NULL de las manuales no chocan entre sí).
 
 `account_payments`: `amount`, `currency`, `method`
 (`transfer`/`cash`/`card`/`other`), `reference`, `paid_at`, y un flag de
@@ -415,6 +423,24 @@ aplicación de crédito.
 
 > El **saldo a favor** de una cuenta es **derivado**: `Σ pagos − Σ facturas`.
 > No se guarda como columna, se calcula y se descuenta solo.
+
+### `account_billing_notices`
+Bitácora de los avisos del cobro automático al ISP (`factura`, `recordatorio`,
+`suspension`, `reactivacion`) con `status`, `channel`, `reason`. Único
+`(account_id, kind, ref)`: es la idempotencia del envío. `ref` es `inv:{id}` para
+los de una factura y `susp:{timestamp}` para los de un episodio de corte.
+
+### `brain_expenses` / `brain_recurring_expenses`
+Egresos del negocio ([core-brain.md §8 bis](core-brain.md)). Prefijo `brain_`
+porque no son de ningún tenant.
+
+`brain_recurring_expenses`: la plantilla de un gasto fijo — `concept`, `vendor`,
+`category`, `app`, `amount`, `currency`, `cycle` (`monthly`/`yearly`),
+`day_of_month`, `month_of_year`, `starts_on`, `ends_on`, `active`.
+
+`brain_expenses`: cada egreso — los mismos datos más `kind` (`fixed`/`variable`),
+`spent_at`, `method`, `reference`, y `recurring_expense_id` + `period` si lo
+generó un gasto fijo. Único `(recurring_expense_id, period)`.
 
 ### `support_tickets` / `ticket_events` / `account_notes`
 Soporte por cuenta: tickets con estado, prioridad, categoría, producto y origen;

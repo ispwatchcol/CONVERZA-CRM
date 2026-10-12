@@ -99,3 +99,28 @@ Schedule::command('flows:tick')
     ->everyMinute()
     ->withoutOverlapping(5)
     ->onOneServer();
+
+// ── Cobro automático del SaaS a los ISP (Core Brain) ──────────────────────
+// Cada hora entre 8 a. m. y 8 p. m. de Colombia: factura el período vigente de
+// las cuentas con el cobro encendido, recuerda el día antes del vencimiento,
+// corta el panel si una factura vence sin pagar y reactiva lo que quedó al día.
+// Cada hora y no una vez al día para que una corrida fallida se recupere sola
+// la hora siguiente; es idempotente (factura única por cuenta+moneda+mes,
+// avisos únicos por bitácora). Solo en horario de oficina porque manda WhatsApp
+// al ISP: un aviso de corte a las 3 a. m. no lo lee nadie y suena a amenaza.
+// Sin cuentas encendidas, es una consulta y sale.
+Schedule::command('brain:billing-run')
+    ->hourly()
+    ->between('8:00', '20:00')
+    ->timezone('America/Bogota')
+    ->withoutOverlapping(30)
+    ->onOneServer();
+
+// ── Gastos fijos del negocio (Core Brain → Finanzas) ──────────────────────
+// Una vez al día: registra el egreso de cada gasto fijo al que le llegó su día
+// (servidor, base de datos, dominio). Idempotente por (gasto fijo, período).
+Schedule::command('brain:expenses-recurring')
+    ->dailyAt('06:00')
+    ->timezone('America/Bogota')
+    ->withoutOverlapping(10)
+    ->onOneServer();

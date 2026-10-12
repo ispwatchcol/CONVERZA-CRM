@@ -454,5 +454,8 @@ Sin priorizar; van aquí para no perderlas.
 - **Encuestas de satisfacción** tras cerrar una conversación.
 - **App móvil o PWA:** los asesores viven en el móvil.
 - **Panel del cliente final** para consultar factura y estado sin escribir.
-- **Automatización de cobros del SaaS** en el Core Brain (hoy todo manual, tal
-  como se diseñó: "manual primero, automático después").
+- **Cobro con pasarela de pago** en el Core Brain. La facturación, los avisos y
+  el corte automáticos ya existen ([core-brain.md §8](core-brain.md)); el pago
+  sigue llegando por transferencia y alguien lo registra a mano. Una pasarela
+  (Wompi, Bold, Mercado Pago) con su webhook registraría el pago sola y cerraría
+  el ciclo.

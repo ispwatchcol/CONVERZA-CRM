@@ -546,6 +546,55 @@ del lado del correo (spam, filtros) y no de la app.
 php artisan tinker --execute="Mail::raw('prueba de Converza', fn(\$m) => \$m->to(config('support.notify.internal_email'))->subject('Prueba'));"
 ```
 
+### 🔴 Un ISP pagó y sigue viendo "servicio suspendido"
+
+El cobro automático ([core-brain.md §8](core-brain.md)) reactiva solo, pero
+únicamente si el corte fue **por cobro** y ya **no queda ninguna factura vencida
+con saldo**. Al registrar el pago en la ficha se reactiva en el acto; si no:
+
+| Qué mirar en la ficha → Cobros | Qué significa |
+|---|---|
+| La cabecera dice "Cortado **a mano**" | Lo cortó una persona: el pago no lo levanta. Botón **Reactivar** |
+| Queda otra factura **Vencida** con saldo | Pagó una pero debe otra. El pago va a la más vieja primero |
+| El pago se registró en otra moneda | La plata libre en COP no cubre una factura en USD |
+
+```bash
+# Forzar una pasada solo para esa cuenta (id del Brain): aplica la plata libre,
+# y reactiva si quedó al día.
+php artisan brain:billing-run --account=1
+```
+
+El panel lee el estado de un caché de 60 s que se borra al guardar la cuenta: si
+se cambió la BD a mano, `php artisan cache:forget brain.tenant_suspendido.<tenant_id>`.
+
+### 🟠 El cobro automático no creó la factura del mes
+
+`brain:billing-run` solo factura: cuentas con el cobro **encendido**, con
+`billing_day`, con productos **mensuales** activos con valor, y períodos que
+empiezan **desde el día en que se encendió** (`auto_billing_since`). Si el mes ya
+tiene una factura (manual con ese período, o automática aunque esté anulada), no
+crea otra. Para ver qué pasa:
+
+```bash
+php artisan brain:billing-run --account=1        # dice cuántas creó
+php artisan schedule:list | grep brain           # ¿está agendado?
+```
+
+Los avisos de cobro dicen por qué no salieron en **Cobros → Avisos de cobro**, o:
+
+```bash
+php artisan tinker --execute="
+  dump(\App\Models\Brain\AccountBillingNotice::latest()->take(10)
+    ->get(['account_id','kind','status','channel','reason','created_at'])->toArray());
+"
+```
+
+| `reason` | Qué pasa |
+|---|---|
+| `sin_plantilla` | Fuera de la ventana de 24 h y sin `BRAIN_BILLING_TPL_*` aprobada. La factura se creó igual |
+| `sin_telefono` | La cuenta no tiene `contact_phone` |
+| `cubierta_con_saldo` | El saldo a favor pagó la factura entera: no había nada que cobrar |
+
 ### 🔴 Toda la app devuelve 500 tras un deploy
 
 Casi siempre son assets desincronizados: `manifest.json` apunta a hashes que ya no

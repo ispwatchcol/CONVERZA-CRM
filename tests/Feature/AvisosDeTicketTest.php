@@ -380,11 +380,15 @@ class AvisosDeTicketTest extends TestCase
         // ISP no la ve nunca (TicketEvent::VISIBLE_AL_ISP).
         $nota = TicketEvent::where('type', 'note')->first();
         $this->assertNotNull($nota, 'El intento de aviso deja rastro donde se mira: en el propio ticket.');
-        $this->assertStringContainsString('ventana de 24 h', $nota->body);
+        $this->assertStringContainsString('No se le avisó por WhatsApp', $nota->body);
+        $this->assertStringContainsString('plantilla aprobada', $nota->body);
+        // Lo que SÍ pasó va primero: la nota vieja ("No se envió el acuse…") se
+        // leía como si el ticket o la respuesta misma no hubieran salido.
+        $this->assertStringStartsWith('El ticket quedó registrado', $nota->body);
 
         $this->actingAs($this->adminIsp)->get("/support/{$ticket->id}")
             ->assertOk()
-            ->assertDontSee('ventana de 24 h', false);
+            ->assertDontSee('No se le avisó por WhatsApp', false);
     }
 
     // ── El aviso en espejo: a nosotros, por correo (CON-82) ──────────────────
