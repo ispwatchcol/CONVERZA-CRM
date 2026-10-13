@@ -5,7 +5,9 @@
 > ispwatch, más el cobro y el soporte de esa relación comercial.
 
 **Archivos clave**
-- [app/Http/Controllers/Brain/](../app/Http/Controllers/Brain/) — Cockpit, Account, Billing, Ticket, TicketInbox
+- [app/Http/Controllers/Brain/](../app/Http/Controllers/Brain/) — Cockpit, Account, Billing, Finance, Ticket, TicketInbox
+- [app/Services/Brain/CobroAutomatico.php](../app/Services/Brain/CobroAutomatico.php) — cobro automático (§8), y [`AvisosDeCobro`](../app/Services/Brain/AvisosDeCobro.php)
+- [app/Http/Middleware/EnsureServicioActivo.php](../app/Http/Middleware/EnsureServicioActivo.php) — el corte del panel (§8)
 - [app/Http/Controllers/SupportController.php](../app/Http/Controllers/SupportController.php) — el portal del ISP (§9); la única puerta de un tenant hacia estas tablas
 - [app/Models/Brain/](../app/Models/Brain/) — Account, AccountProduct, AccountInvoice, AccountPayment, SupportTicket, TicketEvent, AccountNote
 - [app/Services/Brain/PlanCatalog.php](../app/Services/Brain/PlanCatalog.php) — catálogo de planes
@@ -66,7 +68,8 @@ User::isBrainOwner()     // permite escribir
 En el menú lateral, los ítems del Brain aparecen en una sección aparte
 (*SaaS Admin*, en ámbar) solo para quien tiene acceso.
 
-Rutas: `/brain`, `/brain/accounts`, `/brain/accounts/{id}`, `/brain/tickets`.
+Rutas: `/brain`, `/brain/accounts`, `/brain/accounts/{id}`, `/brain/tickets`,
+`/brain/finanzas`.
 
 El ítem *Tickets* lleva un badge rojo con los que están esperando respuesta
 nuestra (§9).
@@ -201,13 +204,12 @@ de clientes es **informativo**: un semáforo para decidir el upgrade a mano.
 
 ## 8. Cobros del SaaS
 
-`account_invoices` + `account_payments`. Registro manual — el Brain nace como
-lugar donde anotar lo que hoy se hace a mano, no como motor de facturación
-automática.
+`account_invoices` + `account_payments`. Las facturas se crean a mano o las crea
+el **cobro automático** (abajo), por cuenta.
 
 Facturas: número único, concepto, importe, impuesto, total, moneda, estado
 (`draft`/`sent`/`paid`/`partial`/`overdue`/`void`), fechas de emisión,
-vencimiento, pago y periodo.
+vencimiento, pago y periodo, y de dónde salió (`source`: `manual`/`auto`).
 
 Pagos: importe, moneda, método (`transfer`/`cash`/`card`/`other`), referencia y
 fecha.
@@ -217,6 +219,107 @@ fecha.
 > de crédito.
 
 `billing_day` en la cuenta define el día de corte de facturación de ese ISP.
+
+### Cómo se aplica la plata
+
+`Account::allocateCredit()` reparte la plata que entró y todavía no cubre
+ninguna factura entre las facturas abiertas, **de la más vieja a la más nueva**,
+como pagos `is_credit_application`. Corre al crear una factura, al registrar un
+pago, al anular una factura y en cada pasada del cobro automático.
+
+> **Antes**, un pago sin factura se quedaba esperando a la *próxima* factura. Con
+> el cobro automático eso es un cliente que pagó y sigue cortado: la factura
+> vencida seguía debiendo. Por eso ahora va primero a la abierta más vieja.
+
+"Plata libre" no es lo mismo que el saldo de la cuenta. Con una factura abierta
+de 69 y un pago suelto de 69, el saldo da 0 (no debe nada) pero esos 69 están
+libres y le tocan justo a esa factura. `Account::freeCreditByCurrency()` lo
+calcula topando lo cubierto de cada factura en su total.
+
+### Cobro automático
+
+Por cuenta, desde **Cobros → Cobro automático** en la ficha. Nace apagado.
+Lo corre `brain:billing-run` cada hora entre 8 a. m. y 8 p. m. de Colombia
+([`CobroAutomatico`](../app/Services/Brain/CobroAutomatico.php)):
+
+1. **Aplica la plata libre** (arriba).
+2. **Factura el período vigente** si no tiene factura: una por moneda, con los
+   productos **mensuales** activos con valor (la fila ispwatch de un combo, en
+   0, cae sola). Número `F-NNN` consecutivo, concepto "Plan — mes año".
+3. **Recuerda** el día antes del vencimiento.
+4. **Corta** si hay una factura vencida con saldo, y **reactiva** si el corte fue
+   por cobro y ya no queda nada vencido.
+
+| Regla | Por qué |
+|---|---|
+| **Vence `billing_grace_days` después de EMITIDA**, no del inicio del período | Si el comando estuvo caído una semana, la factura no nace vencida y nadie se corta el mismo día que la recibe |
+| **No factura meses anteriores a encenderlo** (`auto_billing_since`) | Pudieron cobrarse por fuera. Una factura vieja que aparece sola termina en un corte injusto. La del mes en curso, si falta, se crea a mano |
+| **Una factura por cuenta, moneda y mes** (`billing_period` + índice único) | El comando corre cada hora. Si alguien anula la automática del mes, no se rehace |
+| **Respeta la manual del mes** (`period_start` dentro del período) | Nadie cobra dos veces octubre porque una la hizo una persona y otra el comando |
+| **Trimestrales y anuales quedan afuera** | Cobrarlos cada mes sería cobrar de más; la ficha los lista como "no se cobran solos" |
+| **El corte de una persona no lo levanta el pago** (`suspension_reason`: `manual` vs `billing`) | Lo cortó por una razón que el código no conoce |
+
+**Avisos al ISP** — [`AvisosDeCobro`](../app/Services/Brain/AvisosDeCobro.php):
+factura nueva, recordatorio, corte y reactivación. Mismas reglas que los avisos de
+tickets (§9): salen del número de Converza al `contact_phone` de la cuenta, texto
+libre solo dentro de la ventana de 24 h, plantilla fuera (`BRAIN_BILLING_TPL_*`),
+y sin plantilla se registran como `skipped` y no se intentan. La bitácora
+(`account_billing_notices`, única por cuenta+tipo+ref) es la idempotencia y se ve
+en la ficha. Un aviso que no sale **no frena el cobro**: el aviso es cortesía, la
+fecha de vencimiento es el contrato. Si el saldo a favor cubre la factura entera,
+no se avisa.
+
+`BRAIN_BILLING_PAY_INSTRUCTIONS` (p. ej. el Nequi) va al final de cada aviso de
+texto y en la pantalla de suspendido.
+
+### Qué es "cortar"
+
+`accounts.status = suspended`. Lo pone el cobro automático o el botón **Cortar
+servicio** de la ficha (que ahora sí corta: antes solo cambiaba la etiqueta).
+
+- **Converza:** [`EnsureServicioActivo`](../app/Http/Middleware/EnsureServicioActivo.php)
+  le muestra al equipo del ISP la pantalla "servicio suspendido" (con lo que debe
+  y cómo pagar) en vez del panel, y responde **423** a las llamadas de fondo.
+  Quedan abiertos cerrar sesión, el manual y el portal de soporte. Corta el
+  **panel** y nada más: los webhooks no pasan por ahí, así que los mensajes de los
+  clientes del ISP se siguen guardando y el bot y los avisos automáticos siguen
+  andando. Los clientes finales no se enteran de que su proveedor nos debe.
+  El estado se cachea 60 s por tenant y `Account` lo olvida al guardar: un pago
+  reabre el panel en el acto. Si la consulta falla, **deja pasar** (un error
+  nuestro no deja sin servicio a quien pagó).
+- **ispwatch:** Converza no puede escribir allá (§10.2). Publica el estado en
+  `GET /saas/estado/{ispwatch_tenant_id}` con `Authorization: Bearer
+  BRAIN_SAAS_STATUS_TOKEN` (sin token configurado, 404). Responde
+  `{suspended, known, reason, since, message, payment_instructions}`. Un ISP que
+  no es cuenta nuestra da `known: false, suspended: false`. Que ispwatch lo
+  consulte y cierre su panel es trabajo del repo de ispwatch, y debe **fallar
+  abierto** si esta ruta no responde.
+
+## 8 bis. Finanzas (`/brain/finanzas`)
+
+Lo que entra por cobros contra lo que cuesta mantener las apps, mes a mes.
+[`FinanceController`](../app/Http/Controllers/Brain/FinanceController.php).
+
+- **Ingresos** = plata que entró de verdad: `account_payments` sin las
+  aplicaciones de saldo a favor (esa plata ya se contó al entrar). No es lo
+  facturado: una factura sin pagar no paga el servidor.
+- **Egresos** (`brain_expenses`): concepto, proveedor, categoría (lista fija, para
+  que el reporte no se parta en "Servidor" y "servidores"), app (texto libre con
+  sugerencias: `converza`, `ispwatch`, `general`; se guarda en minúsculas), tipo
+  **fijo** o **variable**, valor, moneda y fecha.
+- **Gastos fijos** (`brain_recurring_expenses`): la plantilla de lo que se paga
+  cada mes o cada año. `brain:expenses-recurring` (diario, 6 a. m.) crea el egreso
+  cuando le llega el día, uno por período (índice único). Solo el período
+  vigente: si estuvo apagado meses, no aparecen meses viejos de golpe. Al crear
+  uno cuyo día ya pasó, el del mes se registra en el acto. Editarlo cambia lo que
+  viene, no lo ya registrado.
+- La página muestra el resultado del mes, el "mes típico" (MRR contra gastos fijos
+  llevados a mensual), los últimos seis meses y el desglose por categoría y por
+  app.
+
+**Todo por moneda, sin convertir.** El negocio cobra y paga en USD y COP; una tasa
+de cambio inventada en el reporte haría parecer exacto lo que no lo es. Por la
+misma razón no hay ingreso "por app": un combo se cobra en una sola fila.
 
 ---
 
@@ -328,7 +431,7 @@ tampoco, porque el cliente no la lee y no hay nada que ir a ver.
 | **Sale del número de Converza** (tenant `default`, vía `WhatsAppService::forTenant`) | El aviso es nuestro, no del ISP. No pasa por `EventCatalog` (ver [avisos-automaticos.md §1](avisos-automaticos.md)) |
 | **Nunca texto libre fuera de la ventana de 24 h** | Meta lo acepta con 200 y lo rechaza después por webhook; cada rechazo gasta quality rating. Sin plantilla configurada el aviso se registra como `skipped` y **no se intenta** |
 | **Idempotente** | La fila de `ticket_notification_logs` se crea ANTES del envío, con `(ticket_event_id, kind)` único: un reintento del job choca y no reenvía |
-| **Queda rastro donde se mira** | Cada intento escribe una `note` en la bitácora del propio ticket ("se le envió el acuse", "no se envió: fuera de ventana y sin plantilla"). Es interna: el ISP no la ve |
+| **Queda rastro donde se mira** | Cada intento escribe una `note` en la bitácora del propio ticket ("se le envió el acuse", "la respuesta quedó publicada en el portal del ISP. No se le avisó por WhatsApp: …"). Es interna: el ISP no la ve. Dice primero lo que **sí** pasó: la versión anterior ("No se envió el aviso de respuesta") se leía como si la respuesta misma no hubiera salido, y la respuesta siempre queda en el portal |
 
 El teléfono es `accounts.support_notify_phone` o, si está vacío, el
 `contact_phone` de la ficha.
@@ -369,12 +472,20 @@ Si tocas el Brain, estos son los límites:
 1. **Aislamiento total del inquilino.** Ningún usuario de tenant llega a una ruta
    del Brain. Las tablas del Brain **no** usan `BelongsToTenant`.
 
-   La única excepción es el **portal de soporte** (§9), y está construida para no
-   ser un agujero: ruta aparte fuera de `internal`, controlador aparte,
-   `account_id` derivado de la sesión, 404 para lo ajeno y una allowlist de tipos
-   de evento. Si mañana hace falta otra puerta, se abre igual —una ruta propia con
-   su propia consulta—, **nunca** relajando `EnsureInternalAccess` ni metiendo un
-   `if` en un controlador del Brain.
+   Las excepciones son tres, y están construidas para no ser un agujero:
+
+   - El **portal de soporte** (§9): ruta aparte fuera de `internal`, controlador
+     aparte, `account_id` derivado de la sesión, 404 para lo ajeno y una
+     allowlist de tipos de evento.
+   - La **pantalla de servicio suspendido** (§8): la cuenta sale del `tenant_id`
+     del usuario, nunca de la petición, y solo muestra número, concepto, saldo y
+     vencimiento de las facturas abiertas de ESA cuenta.
+   - **`GET /saas/estado/{id}`** (§8): fuera del grupo `web`, con token propio,
+     404 si no hay token configurado, y solo dice si está cortado.
+
+   Si mañana hace falta otra puerta, se abre igual —una ruta propia con su propia
+   consulta—, **nunca** relajando `EnsureInternalAccess` ni metiendo un `if` en un
+   controlador del Brain.
 2. **ispwatch es sagrado y read-only.** Solo `IspwatchRepository`, solo `SELECT`.
    Los clientes finales del ISP nunca se enteran ni se ven afectados.
 3. **Cambios aditivos.** La única columna que el Brain agregó a una tabla
@@ -383,5 +494,6 @@ Si tocas el Brain, estos son los límites:
 4. **Reutilizar, no reinventar.** El patrón superadmin, el motor de WhatsApp,
    Inertia y `AppLayout.vue` ya existían. El Brain se monta encima.
 5. **Manual primero, automático después.** Primero un lugar donde registrar y ver
-   claro; la automatización (recordatorios de cobro, conciliación) viene cuando
-   la data esté estructurada.
+   claro; la automatización viene cuando la data esté estructurada. El cobro
+   automático (§8) llegó así: opt-in por cuenta, y nunca sobre meses anteriores a
+   encenderlo.

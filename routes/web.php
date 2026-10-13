@@ -229,6 +229,17 @@ Route::middleware('auth')->group(function () {
         Route::patch('/accounts/{account}/invoices/{invoice}/void', [Brain\BillingController::class, 'voidInvoice'])->name('accounts.invoices.void');
         Route::post('/accounts/{account}/payments', [Brain\BillingController::class, 'storePayment'])->name('accounts.payments.store');
         Route::delete('/accounts/{account}/payments/{payment}', [Brain\BillingController::class, 'destroyPayment'])->name('accounts.payments.destroy');
+        // Cobro automático: factura sola cada mes y corta si vence sin pago.
+        Route::put('/accounts/{account}/auto-billing', [Brain\BillingController::class, 'updateAutoBilling'])->name('accounts.auto-billing.update');
+
+        // Finanzas: ingresos (cobros) contra egresos (lo que cuestan las apps).
+        Route::get('/finanzas', [Brain\FinanceController::class, 'index'])->name('finance.index');
+        Route::post('/finanzas/egresos', [Brain\FinanceController::class, 'storeExpense'])->name('finance.expenses.store');
+        Route::put('/finanzas/egresos/{expense}', [Brain\FinanceController::class, 'updateExpense'])->whereNumber('expense')->name('finance.expenses.update');
+        Route::delete('/finanzas/egresos/{expense}', [Brain\FinanceController::class, 'destroyExpense'])->whereNumber('expense')->name('finance.expenses.destroy');
+        Route::post('/finanzas/fijos', [Brain\FinanceController::class, 'storeRecurring'])->name('finance.recurring.store');
+        Route::put('/finanzas/fijos/{recurring}', [Brain\FinanceController::class, 'updateRecurring'])->whereNumber('recurring')->name('finance.recurring.update');
+        Route::delete('/finanzas/fijos/{recurring}', [Brain\FinanceController::class, 'destroyRecurring'])->whereNumber('recurring')->name('finance.recurring.destroy');
 
         // Soporte — Tickets
         Route::post('/accounts/{account}/tickets', [Brain\TicketController::class, 'storeTicket'])->name('accounts.tickets.store');

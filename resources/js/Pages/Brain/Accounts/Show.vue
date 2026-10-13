@@ -16,6 +16,8 @@ const props = defineProps({
     tenants:        { type: Array, default: () => [] },
     plan_catalog:   { type: Object, default: () => ({ base_currency: 'USD', ispwatch: [], converza: [], combo: [] }) },
     plan_usage:     { type: Object, default: () => ({ clients: null, agents: null }) },
+    auto_billing:   { type: Object, default: () => ({ enabled: false, amounts: {}, excluded: [] }) },
+    billing_notices: { type: Array, default: () => [] },
 });
 
 const baseCurrency = props.plan_catalog.base_currency ?? 'USD';
@@ -102,8 +104,42 @@ function setAccountStatus(newStatus, confirmMsg) {
     editForm.status = newStatus;
     editForm.put(route('brain.accounts.update', props.account.id), { preserveScroll: true });
 }
-function cutService()      { setAccountStatus('suspended', `¿Suspender el servicio de "${props.account.name}"? Podrás reactivarlo cuando pague.`); }
+function cutService()      { setAccountStatus('suspended', `¿Suspender el servicio de "${props.account.name}"? Su equipo verá "servicio suspendido" en el panel de Converza hasta que lo reactives a mano (un corte manual no se levanta solo con el pago).`); }
 function reactivateService() { setAccountStatus('active'); }
+
+// ── Cobro automático ───────────────────────────────────────────────────────
+// Factura solo cada mes, avisa por WhatsApp y corta el panel si vence sin pago.
+const showAutoBilling = ref(false);
+const autoBillingForm = useForm({
+    auto_billing_enabled: props.auto_billing?.enabled ?? false,
+    billing_day: props.account.billing_day ?? '',
+    billing_grace_days: props.auto_billing?.grace_days ?? 5,
+});
+function openAutoBilling() {
+    Object.assign(autoBillingForm, {
+        auto_billing_enabled: props.auto_billing?.enabled ?? false,
+        billing_day: props.account.billing_day ?? '',
+        billing_grace_days: props.auto_billing?.grace_days ?? 5,
+    });
+    autoBillingForm.clearErrors();
+    showAutoBilling.value = true;
+}
+function submitAutoBilling() {
+    autoBillingForm.put(route('brain.accounts.auto-billing.update', props.account.id), {
+        preserveScroll: true,
+        onSuccess: () => { showAutoBilling.value = false; },
+    });
+}
+const autoAmounts = computed(() => Object.entries(props.auto_billing?.amounts ?? {}));
+const suspensionLabel = { billing: 'por factura vencida', manual: 'a mano' };
+const noticeKindLabel = { factura: 'Factura', recordatorio: 'Recordatorio', suspension: 'Corte', reactivacion: 'Reactivación' };
+const noticeStatusColor = { sent: 'bg-green-100 text-green-700', skipped: 'bg-gray-100 text-gray-600', failed: 'bg-red-100 text-red-700' };
+const noticeStatusLabel = { sent: 'Enviado', skipped: 'No enviado', failed: 'Falló' };
+const noticeReasonLabel = {
+    sin_telefono: 'la cuenta no tiene teléfono de contacto',
+    sin_plantilla: 'fuera de la ventana de 24 h y sin plantilla aprobada',
+    cubierta_con_saldo: 'el saldo a favor cubrió la factura entera',
+};
 
 // Semáforo de vencimiento de un producto según su fecha "vence el" (renews_at).
 function expiryInfo(dateStr) {
@@ -280,6 +316,10 @@ function deleteAccount() { if (!confirm(`¿Eliminar "${props.account.name}"?`)) 
                             <h1 class="text-2xl font-bold text-gray-900">{{ account.name }}</h1>
                             <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium" :class="statusColor[account.status]">{{ statusLabel[account.status] }}</span>
                             <span v-if="account.health" class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium" :class="healthColor[account.health]">{{ healthLabel[account.health] }}</span>
+                            <span v-if="account.status === 'suspended' && account.suspended_at" class="text-xs text-yellow-700">
+                                Cortado {{ suspensionLabel[account.suspension_reason] ?? '' }} desde {{ fmtDate(account.suspended_at) }}
+                            </span>
+                            <span v-if="auto_billing.enabled" class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-700">Cobro automático</span>
                         </div>
                         <p v-if="account.legal_name" class="text-sm text-gray-500 mt-1">{{ account.legal_name }}</p>
                         <div class="flex flex-wrap items-center gap-4 mt-3 text-sm text-gray-600">
@@ -465,6 +505,31 @@ function deleteAccount() { if (!confirm(`¿Eliminar "${props.account.name}"?`)) 
             <!-- ── Tab: Cobros ─────────────────────────────────────────────── -->
             <div v-show="activeTab === 'billing'" class="space-y-6">
 
+                <!-- Cobro automático -->
+                <div class="rounded-xl border px-5 py-4" :class="auto_billing.enabled ? 'bg-indigo-50 border-indigo-200' : 'bg-white border-gray-200'">
+                    <div class="flex flex-wrap items-start justify-between gap-3">
+                        <div class="min-w-0">
+                            <h3 class="text-sm font-semibold" :class="auto_billing.enabled ? 'text-indigo-900' : 'text-gray-900'">
+                                Cobro automático {{ auto_billing.enabled ? 'encendido' : 'apagado' }}
+                            </h3>
+                            <p v-if="auto_billing.enabled" class="text-sm text-indigo-900/80 mt-1">
+                                Factura sola los días <strong>{{ auto_billing.billing_day }}</strong>
+                                <template v-if="autoAmounts.length"> por <strong v-for="([cur, amt], i) in autoAmounts" :key="cur">{{ i ? ' + ' : '' }}{{ formatAmount(amt, cur) }}</strong></template>,
+                                con <strong>{{ auto_billing.grace_days }}</strong> días para pagar. Si vence sin pago, se corta el panel; al registrar el pago se reactiva solo.
+                                <span v-if="auto_billing.next_date" class="block mt-1">Próxima factura: <strong>{{ fmtDate(auto_billing.next_date + 'T00:00:00') }}</strong>.</span>
+                            </p>
+                            <p v-else class="text-sm text-gray-500 mt-1">Las facturas se crean a mano. Al encenderlo, factura cada mes, avisa por WhatsApp y corta si la factura vence sin pagar.</p>
+                            <p v-if="auto_billing.enabled && !autoAmounts.length" class="text-xs text-red-600 mt-1">No hay productos mensuales activos con valor: no hay nada que facturar.</p>
+                            <p v-if="auto_billing.excluded?.length" class="text-xs text-amber-700 mt-1">No se cobran solos (no son mensuales): {{ auto_billing.excluded.join(', ') }}.</p>
+                            <p v-if="auto_billing.enabled && !auto_billing.has_phone" class="text-xs text-amber-700 mt-1">La cuenta no tiene teléfono de contacto: las facturas se crean, pero no se le avisa.</p>
+                        </div>
+                        <button @click="openAutoBilling" class="shrink-0 px-3 py-1.5 text-xs font-medium rounded-lg border transition"
+                            :class="auto_billing.enabled ? 'text-indigo-700 bg-white border-indigo-200 hover:bg-indigo-100' : 'text-indigo-700 bg-indigo-50 border-indigo-200 hover:bg-indigo-100'">
+                            {{ auto_billing.enabled ? 'Configurar' : 'Encender' }}
+                        </button>
+                    </div>
+                </div>
+
                 <!-- Resumen de cobros -->
                 <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
                     <div class="bg-white rounded-xl border border-gray-200 p-4 text-center">
@@ -522,6 +587,7 @@ function deleteAccount() { if (!confirm(`¿Eliminar "${props.account.name}"?`)) 
                             <span class="text-xs font-mono text-gray-500">#{{ inv.number }}</span>
                             <span class="font-medium text-gray-900 truncate">{{ inv.concept }}</span>
                             <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium shrink-0" :class="invStatusColor[inv.status]">{{ invStatusLabel[inv.status] }}</span>
+                            <span v-if="inv.source === 'auto'" class="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700 shrink-0" title="La creó el cobro automático">AUTO</span>
                         </div>
                         <div class="flex items-center gap-4 shrink-0">
                             <div class="text-right">
@@ -576,8 +642,24 @@ function deleteAccount() { if (!confirm(`¿Eliminar "${props.account.name}"?`)) 
                         </div>
                     </div>
                     <p v-if="payments.some(p => !p.invoice_number)" class="text-xs text-gray-500 mt-2">
-                        Los recaudos <strong>sin factura</strong> quedan como saldo a favor de la cuenta y se descuentan solos en la próxima factura.
+                        Los recaudos <strong>sin factura</strong> se aplican solos a la factura abierta más vieja; lo que sobre queda como saldo a favor para la siguiente.
                     </p>
+                </div>
+
+                <!-- Avisos de cobro: qué se le mandó al ISP y qué no, y por qué -->
+                <div v-if="billing_notices.length" class="pt-2">
+                    <h3 class="text-sm font-semibold text-gray-900 mb-3">Avisos de cobro ({{ billing_notices.length }})</h3>
+                    <div class="bg-white rounded-xl border border-gray-200 overflow-hidden divide-y divide-gray-100">
+                        <div v-for="n in billing_notices" :key="n.id" class="flex items-center justify-between gap-4 px-5 py-2.5 text-sm">
+                            <div class="flex items-center gap-3 min-w-0">
+                                <span class="font-medium text-gray-900">{{ noticeKindLabel[n.kind] ?? n.kind }}</span>
+                                <span v-if="n.invoice_number" class="text-xs font-mono text-gray-500">#{{ n.invoice_number }}</span>
+                                <span class="text-[11px] font-medium px-2 py-0.5 rounded-full" :class="noticeStatusColor[n.status]">{{ noticeStatusLabel[n.status] ?? n.status }}</span>
+                                <span v-if="n.status !== 'sent' && n.reason" class="text-xs text-gray-500 truncate">{{ noticeReasonLabel[n.reason] ?? n.reason }}</span>
+                            </div>
+                            <span class="text-xs text-gray-400 shrink-0">{{ fmtDate(n.created_at) }}</span>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -795,6 +877,41 @@ function deleteAccount() { if (!confirm(`¿Eliminar "${props.account.name}"?`)) 
                             <button type="button" @click="showEdit=false" class="px-4 py-2 text-sm text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 transition">Cancelar</button>
                             <button type="submit" :disabled="editForm.processing" class="px-6 py-2 text-sm font-medium text-white bg-amber-600 rounded-lg hover:bg-amber-700 disabled:opacity-60 transition">{{ editForm.processing ? 'Guardando...' : 'Guardar' }}</button>
                         </div>
+                    </form>
+                </div>
+            </div>
+        </Transition>
+
+        <!-- Cobro automático -->
+        <Transition enter-from-class="opacity-0" enter-active-class="transition duration-200" leave-to-class="opacity-0" leave-active-class="transition duration-150">
+            <div v-if="showAutoBilling" class="fixed inset-0 z-50 flex items-start justify-center pt-24 px-4">
+                <div class="absolute inset-0 bg-black/40" @click="showAutoBilling=false"></div>
+                <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg">
+                    <div class="border-b border-gray-100 px-6 py-4 flex items-center justify-between"><h2 class="text-lg font-bold text-gray-900">Cobro automático</h2><button @click="showAutoBilling=false" class="p-2 rounded-lg hover:bg-gray-100 text-gray-400"><svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg></button></div>
+                    <form @submit.prevent="submitAutoBilling" class="p-6 space-y-4">
+                        <label class="flex items-start gap-2.5 cursor-pointer">
+                            <input v-model="autoBillingForm.auto_billing_enabled" type="checkbox" class="mt-0.5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-400" />
+                            <span>
+                                <span class="block text-sm font-semibold text-gray-800">Facturar y cortar automáticamente</span>
+                                <span class="block text-xs text-gray-500">Cada mes crea la factura con los productos mensuales activos, le descuenta el saldo a favor y le avisa al ISP por WhatsApp. Si vence sin pago, el panel de Converza muestra "servicio suspendido" hasta que se registre el pago.</span>
+                            </span>
+                        </label>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-xs font-semibold text-gray-700 mb-1">Día de cobro</label>
+                                <input v-model="autoBillingForm.billing_day" type="number" min="1" max="31" class="w-full px-3 py-2 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400" :class="autoBillingForm.errors.billing_day?'border-red-400':'border-gray-300'" />
+                                <p v-if="autoBillingForm.errors.billing_day" class="text-xs text-red-500 mt-1">{{ autoBillingForm.errors.billing_day }}</p>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-semibold text-gray-700 mb-1">Días para pagar</label>
+                                <input v-model="autoBillingForm.billing_grace_days" type="number" min="0" max="60" required class="w-full px-3 py-2 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400" :class="autoBillingForm.errors.billing_grace_days?'border-red-400':'border-gray-300'" />
+                                <p class="text-xs text-gray-400 mt-1">Desde que se emite. Pasados, se corta.</p>
+                            </div>
+                        </div>
+                        <p v-if="autoBillingForm.auto_billing_enabled && !auto_billing.enabled" class="text-xs text-indigo-800 bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2">
+                            Arranca desde hoy: los meses anteriores no se facturan solos (pueden haberse cobrado por fuera). Si a este cliente le falta la factura del mes en curso, créala a mano.
+                        </p>
+                        <div class="flex justify-end gap-3 pt-2"><button type="button" @click="showAutoBilling=false" class="px-4 py-2 text-sm text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 transition">Cancelar</button><button type="submit" :disabled="autoBillingForm.processing" class="px-6 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-60 transition">{{ autoBillingForm.processing ? 'Guardando...' : 'Guardar' }}</button></div>
                     </form>
                 </div>
             </div>
