@@ -4,8 +4,11 @@ namespace App\Services\Support;
 
 use App\Models\Contact;
 use App\Models\Conversation;
+use App\Models\Message;
 use App\Models\Tenant;
 use App\Services\WhatsAppService;
+use Illuminate\Support\Facades\Log;
+use Throwable;
 
 /**
  * El número de Converza (el tenant `default`), visto como canal para hablarle
@@ -51,6 +54,57 @@ class CanalDeConverza
             ->first();
 
         return $conversacion?->serviceWindowIsOpen() ?? false;
+    }
+
+    /**
+     * Deja el aviso que ya salió en el hilo de ese número en NUESTRA bandeja, para
+     * que la respuesta del ISP se lea con su contexto (antes solo quedaba en la
+     * bitácora del Brain y en el chat aparecía la respuesta suelta).
+     *
+     * Con el `wa_message_id` el webhook de estados le pone los checks de
+     * entregado / leído como a cualquier saliente.
+     *
+     * Tenant explícito y sin global scope, por lo mismo que ventanaAbierta(). Si
+     * falla, se registra y sigue: el aviso ya salió y no puede quedar como fallido
+     * por no haberse podido anotar en el chat.
+     */
+    public function registrarEnChat(
+        string $telefono,
+        ?string $nombre,
+        string $cuerpo,
+        string $tipo,
+        ?string $waMessageId,
+    ): void {
+        try {
+            $converza = $this->tenant();
+
+            if (! $converza) {
+                return;
+            }
+
+            $contacto = Contact::withoutGlobalScopes()->firstOrCreate(
+                ['tenant_id' => $converza->id, 'phone' => $telefono],
+                ['name' => $nombre],
+            );
+
+            $conversacion = Conversation::resolveForContact($converza->id, $contacto->id);
+
+            Message::withoutGlobalScopes()->create([
+                'tenant_id'       => $converza->id,
+                'conversation_id' => $conversacion->id,
+                'contact_id'      => $contacto->id,
+                'body'            => $cuerpo,
+                'status'          => 'sent',
+                'type'            => $tipo,
+                'wa_message_id'   => $waMessageId,
+            ]);
+
+            $conversacion->touch();
+        } catch (Throwable $e) {
+            Log::warning('El aviso salió pero no se pudo anotar en el chat de Converza', [
+                'phone' => $telefono, 'wa_message_id' => $waMessageId, 'error' => $e->getMessage(),
+            ]);
+        }
     }
 
     public function whatsapp(): WhatsAppService

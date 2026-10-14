@@ -42,7 +42,9 @@ class Conversation extends Model
      */
     public static function resolveForContact(?int $tenantId, int $contactId, bool $reopen = true): self
     {
-        $conversation = static::query()
+        // Sin el global scope: el tenant va explícito, y en un worker el container
+        // puede traer bindeado el de otro job (no encontraría el hilo y abriría otro).
+        $conversation = static::withoutGlobalScopes()
             ->where('tenant_id', $tenantId)
             ->where('contact_id', $contactId)
             ->orderByDesc('updated_at')
