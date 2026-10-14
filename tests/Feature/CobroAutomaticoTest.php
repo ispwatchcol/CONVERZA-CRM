@@ -110,6 +110,7 @@ class CobroAutomaticoTest extends TestCase
             $t->text('body')->nullable();
             $t->string('status')->nullable();
             $t->string('type')->nullable();
+            $t->string('wa_message_id')->nullable();
             $t->unsignedBigInteger('tenant_id')->nullable();
             $t->timestamps();
         });
@@ -443,6 +444,49 @@ class CobroAutomaticoTest extends TestCase
             && ($r['to'] ?? null) === '573001112233');
 
         $this->assertSame('sent', AccountBillingNotice::where('kind', 'factura')->first()->status);
+
+        // Y queda en el mismo hilo de la bandeja, debajo de lo que el ISP escribió.
+        $enChat = Message::withoutGlobalScopes()->where('conversation_id', $conv->id)->orderBy('id')->get();
+        $this->assertCount(2, $enChat);
+        $this->assertSame('text', $enChat[1]->type);
+        $this->assertSame('sent', $enChat[1]->status);
+        $this->assertSame('wamid.X', $enChat[1]->wa_message_id);
+        $this->assertStringContainsString('Nequi 300 000 0000', $enChat[1]->body);
+    }
+
+    public function test_el_aviso_por_plantilla_queda_en_la_bandeja_con_el_texto_que_vio_el_isp(): void
+    {
+        config()->set('brain.billing.templates.factura', 'converza_factura_emitida');
+
+        $this->correr('2026-10-01');
+
+        Http::assertSent(fn ($r) => ($r['template']['name'] ?? null) === 'converza_factura_emitida');
+
+        $converza = Tenant::where('slug', 'default')->first();
+        $contacto = Contact::withoutGlobalScopes()->where('tenant_id', $converza->id)->where('phone', '573001112233')->first();
+        $this->assertNotNull($contacto, 'el aviso crea el contacto en la bandeja de Converza');
+        $this->assertSame('ISP A', $contacto->name);
+
+        $msg = Message::withoutGlobalScopes()->where('contact_id', $contacto->id)->sole();
+        $this->assertSame($converza->id, $msg->tenant_id);
+        $this->assertSame('template', $msg->type);
+        $this->assertSame('wamid.X', $msg->wa_message_id);
+        $this->assertStringStartsWith('Hola, ISP A. Se generó la factura F-001 de tu suscripción por 69,00 USD, con vencimiento el 06/10/2026.', $msg->body);
+        $this->assertStringNotContainsString('{{', $msg->body);
+        $this->assertSame(1, Conversation::withoutGlobalScopes()->where('contact_id', $contacto->id)->count());
+    }
+
+    public function test_un_aviso_que_meta_rechaza_no_se_anota_en_la_bandeja(): void
+    {
+        config()->set('brain.billing.templates.factura', 'converza_factura_emitida');
+        // Otro fake encima no sirve: gana el '*' del setUp, que se registró primero.
+        Http::swap(new \Illuminate\Http\Client\Factory);
+        Http::fake(['*' => Http::response(['error' => ['message' => 'Template not found']], 404)]);
+
+        $this->correr('2026-10-01');
+
+        $this->assertSame('failed', AccountBillingNotice::where('kind', 'factura')->first()->status);
+        $this->assertSame(0, Message::withoutGlobalScopes()->count());
     }
 
     // ── El panel del ISP ─────────────────────────────────────────────────────

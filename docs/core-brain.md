@@ -269,6 +269,14 @@ en la ficha. Un aviso que no sale **no frena el cobro**: el aviso es cortesía, 
 fecha de vencimiento es el contrato. Si el saldo a favor cubre la factura entera,
 no se avisa.
 
+Cada aviso que **sale** queda además como mensaje saliente en el hilo de ese
+número en la bandeja de Converza (tenant `default`), con el `wa_message_id`
+para que reciba los checks de entregado/leído: la respuesta del ISP se lee con
+su contexto. Si salió por plantilla, se anota el texto aprobado con las
+variables puestas (copia en `AvisosDeCobro::PLANTILLAS`, porque Meta no devuelve
+el texto renderizado: **si se edita una plantilla en Meta, se edita ahí también**).
+Un aviso que falla o se omite no se anota en el chat; solo en la bitácora.
+
 `BRAIN_BILLING_PAY_INSTRUCTIONS` (p. ej. el Nequi) va al final de cada aviso de
 texto y en la pantalla de suspendido.
 

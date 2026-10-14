@@ -27,7 +27,46 @@ use Illuminate\Support\Facades\Log;
  */
 class AvisosDeCobro
 {
+    /**
+     * Copia del texto de las plantillas aprobadas en Meta (UTILITY, es_CO), solo
+     * para anotar en el chat lo que el ISP leyó de verdad. Meta no devuelve el
+     * texto renderizado: si se edita una plantilla en Meta, se edita también acá.
+     */
+    private const CIERRE = 'Para recibir los datos de pago o enviar tu comprobante, responde a este mensaje.';
+
+    private const PLANTILLAS = [
+        AccountBillingNotice::KIND_FACTURA => "Hola, {{cliente}}. Se generó la factura {{numero}} de tu suscripción por {{total}}, con vencimiento el {{vence}}.\n\n"
+            . 'Si el pago no se registra antes de esa fecha, el acceso al panel queda suspendido hasta que se registre. ' . self::CIERRE,
+        AccountBillingNotice::KIND_RECORDATORIO => "Hola, {{cliente}}. Te recordamos que la factura {{numero}} de tu suscripción por {{total}} vence el {{vence}}.\n\n"
+            . 'Si ya realizaste el pago, puedes ignorar este mensaje. ' . self::CIERRE,
+        AccountBillingNotice::KIND_SUSPENSION => "Hola, {{cliente}}. El acceso al panel de tu suscripción quedó suspendido porque la cuenta tiene un saldo vencido de {{total}}.\n\n"
+            . 'La información de tu cuenta se conserva y el acceso se reactiva automáticamente cuando se registre el pago. ' . self::CIERRE,
+        AccountBillingNotice::KIND_REACTIVACION => 'Hola, {{cliente}}. Registramos el pago de tu suscripción y el acceso al panel quedó reactivado. Ya puedes ingresar con normalidad.',
+    ];
+
     public function __construct(private CanalDeConverza $canal) {}
+
+    /**
+     * Lo que el ISP vio de un aviso que salió por plantilla, con las variables
+     * puestas. `public static` para poder anotar en el chat avisos que salieron
+     * antes de que existiera el registro.
+     *
+     * @param  array<string, string>  $params
+     */
+    public static function textoDePlantilla(string $kind, array $params): ?string
+    {
+        $texto = self::PLANTILLAS[$kind] ?? null;
+
+        if ($texto === null) {
+            return null;
+        }
+
+        foreach ($params as $nombre => $valor) {
+            $texto = str_replace('{{' . $nombre . '}}', $valor, $texto);
+        }
+
+        return $texto;
+    }
 
     public function factura(Account $account, AccountInvoice $invoice): void
     {
@@ -126,6 +165,7 @@ class AvisosDeCobro
         if ($this->canal->ventanaAbierta($telefono)) {
             $resultado = $this->canal->whatsapp()->sendMessage($telefono, $texto);
             $log->channel = 'whatsapp_text';
+            $enChat       = $texto;
         } else {
             $plantilla = config("brain.billing.templates.{$kind}");
 
@@ -143,11 +183,20 @@ class AvisosDeCobro
             );
             $log->channel  = 'whatsapp_template';
             $log->template = $plantilla;
+            $enChat        = self::textoDePlantilla($kind, $params) ?? $texto;
         }
 
         if ($resultado['success'] ?? false) {
             $log->wa_message_id = $resultado['data']['messages'][0]['id'] ?? null;
             $this->cerrar($log, 'sent', null);
+
+            $this->canal->registrarEnChat(
+                $telefono,
+                $account->name,
+                $enChat,
+                $log->channel === 'whatsapp_template' ? 'template' : 'text',
+                $log->wa_message_id,
+            );
 
             return;
         }
