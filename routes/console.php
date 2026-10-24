@@ -109,10 +109,14 @@ Schedule::command('flows:tick')
 // avisos únicos por bitácora). Solo en horario de oficina porque manda WhatsApp
 // al ISP: un aviso de corte a las 3 a. m. no lo lee nadie y suena a amenaza.
 // Sin cuentas encendidas, es una consulta y sale.
+//
+// timezone() ANTES de between(): between() arma la ventana con la zona que el
+// evento tiene en ese momento. Al revés quedó de 8 a 20 UTC (3 a. m. a 3 p. m.
+// de Colombia) y el corte del 24/10/2026 salió a las 3 a. m.
 Schedule::command('brain:billing-run')
     ->hourly()
-    ->between('8:00', '20:00')
     ->timezone('America/Bogota')
+    ->between('8:00', '20:00')
     ->withoutOverlapping(30)
     ->onOneServer();
 
