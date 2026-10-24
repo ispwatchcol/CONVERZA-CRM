@@ -240,7 +240,11 @@ calcula topando lo cubierto de cada factura en su total.
 
 Por cuenta, desde **Cobros → Cobro automático** en la ficha. Nace apagado.
 Lo corre `brain:billing-run` cada hora entre 8 a. m. y 8 p. m. de Colombia
-([`CobroAutomatico`](../app/Services/Brain/CobroAutomatico.php)):
+([`CobroAutomatico`](../app/Services/Brain/CobroAutomatico.php)). Hasta el
+24/10/2026 corrió de 3 a. m. a 3 p. m.: en `routes/console.php` el
+`->timezone()` iba después del `->between()`, que arma la ventana con la zona
+que tiene en ese momento (UTC). Los avisos de esos días tienen hora de madrugada
+por eso ([`HorarioDelCobroTest`](../tests/Unit/HorarioDelCobroTest.php)):
 
 1. **Aplica la plata libre** (arriba).
 2. **Factura el período vigente** si no tiene factura: una por moneda, con los
