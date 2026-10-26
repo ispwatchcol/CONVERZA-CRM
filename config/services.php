@@ -35,6 +35,18 @@ return [
         ],
     ],
 
+    // API de ispwatch para lo que Converza NO puede hacer por la base, que es de
+    // solo lectura: hoy, registrar un pago leído de un comprobante (contrato en
+    // docs/agente-ia.md §7). La credencial es por empresa
+    // (tenants.ispwatch_api_token) y la emite ispwatch; sin URL o sin
+    // credencial, los pagos quedan para registrarlos a mano.
+    'ispwatch_api' => [
+        'url'     => env('ISPWATCH_API_URL'),
+        // Generoso a propósito: ispwatch reconecta al cliente en el router
+        // dentro de la misma petición, y eso puede tardar.
+        'timeout' => (int) env('ISPWATCH_API_TIMEOUT', 60),
+    ],
+
     'whatsapp' => [
         'url' => env('WHATSAPP_API_URL', ''),
         'token' => env('WHATSAPP_API_TOKEN', ''),

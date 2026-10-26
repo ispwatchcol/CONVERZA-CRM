@@ -54,25 +54,30 @@ class IspwatchRepository
                 return null;
             }
 
-            $user = $this->pickBestMatch($candidates, $contactName);
-            $cp = $user->customerProfile;
-
-            return [
-                'user_id'         => (int) $user->id,
-                'tenant_id'       => (int) $user->tenant_id,
-                'name'            => trim(($cp->name ?: $user->name) . ' ' . ($cp->last_name ?? '')),
-                'email'           => $user->email,
-                'tel'             => $user->tel,
-                'cedula'          => $cp->cedula,
-                'document_number' => $cp->document_number,
-                'pppoe_username'  => $cp->pppoe_username,
-                'service_status'  => $cp->service_status,
-                'credit_balance'  => $cp->credit_balance,
-                'ip_user'         => $cp->ip_user,
-                'address'         => $cp->address,
-                'ambiguous'       => $candidates->count() > 1,
-            ];
+            return $this->customerShape($this->pickBestMatch($candidates, $contactName), $candidates->count() > 1);
         });
+    }
+
+    /** @return array<string, mixed> La forma que devuelven customerByPhone() y customerById(). */
+    private function customerShape(IspwatchUser $user, bool $ambiguous): array
+    {
+        $cp = $user->customerProfile;
+
+        return [
+            'user_id'         => (int) $user->id,
+            'tenant_id'       => (int) $user->tenant_id,
+            'name'            => trim(($cp->name ?: $user->name) . ' ' . ($cp->last_name ?? '')),
+            'email'           => $user->email,
+            'tel'             => $user->tel,
+            'cedula'          => $cp->cedula,
+            'document_number' => $cp->document_number,
+            'pppoe_username'  => $cp->pppoe_username,
+            'service_status'  => $cp->service_status,
+            'credit_balance'  => $cp->credit_balance,
+            'ip_user'         => $cp->ip_user,
+            'address'         => $cp->address,
+            'ambiguous'       => $ambiguous,
+        ];
     }
 
     /**
@@ -1106,6 +1111,121 @@ class IspwatchRepository
             'phone'            => $r->phone,
             'customer_name'    => trim(($r->cp_name ?: $r->user_name) . ' ' . ($r->cp_last_name ?? '')) ?: 'Cliente',
         ], $rows);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    //  COMPROBANTES DE PAGO (docs/agente-ia.md). Todo de solo lectura: el pago
+    //  lo registra ispwatch por su propia API, nunca Converza por la base.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Catálogo de formas de pago del tenant (payment_methods): Efectivo,
+     * Transacción, Corresponsal… Solo tienen nombre y descripción; el número de
+     * cuenta lo agrega Converza en sus medios de pago (payment_channels).
+     *
+     * @return list<array{id: int, name: string, description: ?string, is_active: bool}>
+     */
+    public function paymentMethodsForTenant(int $ispwatchTenantId): array
+    {
+        $cacheKey = "ispwatch:payment_methods:t{$ispwatchTenantId}";
+
+        return Cache::remember($cacheKey, self::CACHE_TTL_SECONDS, function () use ($ispwatchTenantId) {
+            return \DB::connection('ispwatch')
+                ->table('payment_methods')
+                ->where('tenant_id', $ispwatchTenantId)
+                ->orderBy('name')
+                ->get(['id', 'name', 'description', 'is_active'])
+                ->map(fn ($m) => [
+                    'id'          => (int) $m->id,
+                    'name'        => (string) $m->name,
+                    'description' => $m->description,
+                    'is_active'   => (bool) $m->is_active,
+                ])
+                ->all();
+        });
+    }
+
+    /**
+     * El pago de ispwatch que ya trae esta referencia, si hay uno. Atrapa el
+     * comprobante que la cajera registró a mano antes de que el cliente lo
+     * reportara por WhatsApp. Sin caché: se pregunta justo antes de decidir.
+     *
+     * @param string $referenceKey PaymentReport::referenceKey(): mayúsculas, solo letras y números.
+     * @return array{id: int, customer_id: ?int}|null
+     */
+    public function paymentWithReference(int $ispwatchTenantId, string $referenceKey): ?array
+    {
+        $row = \DB::connection('ispwatch')->selectOne(
+            "select id, customer_id from payments
+              where tenant_id = ?
+                and status = 'completed'
+                and upper(regexp_replace(coalesce(reference, ''), '[^A-Za-z0-9]', '', 'g')) = ?
+              order by id desc
+              limit 1",
+            [$ispwatchTenantId, $referenceKey],
+        );
+
+        return $row ? [
+            'id'          => (int) $row->id,
+            'customer_id' => $row->customer_id !== null ? (int) $row->customer_id : null,
+        ] : null;
+    }
+
+    /** Un cliente por su id de ispwatch, con la misma forma que customerByPhone(). */
+    public function customerById(int $ispwatchTenantId, int $userId): ?array
+    {
+        $user = IspwatchUser::query()
+            ->with('customerProfile')
+            ->where('tenant_id', $ispwatchTenantId)
+            ->whereHas('customerProfile')
+            ->find($userId);
+
+        return $user ? $this->customerShape($user, false) : null;
+    }
+
+    /**
+     * Clientes del tenant por nombre, cédula o teléfono. Es para que el equipo
+     * le asigne un comprobante a su dueño cuando el teléfono del chat no cruzó
+     * con ninguno. Sin caché: es una búsqueda puntual de una persona.
+     *
+     * @return list<array{user_id: int, name: string, cedula: ?string, tel: ?string, service_status: ?string}>
+     */
+    public function searchCustomers(int $ispwatchTenantId, string $term, int $limit = 8): array
+    {
+        $term = trim($term);
+        if (mb_strlen($term) < 3) {
+            return [];
+        }
+
+        $like   = '%' . addcslashes(mb_strtolower($term), '%_\\') . '%';
+        $digits = preg_replace('/\D/', '', $term) ?? '';
+
+        $rows = \DB::connection('ispwatch')
+            ->table('users as u')
+            ->join('customer_profile as cp', 'cp.user_id', '=', 'u.id')
+            ->where('u.tenant_id', $ispwatchTenantId)
+            ->where(function ($q) use ($like, $digits) {
+                $q->whereRaw("lower(coalesce(cp.name, '') || ' ' || coalesce(cp.last_name, '')) like ?", [$like])
+                    ->orWhereRaw("lower(coalesce(u.name, '')) like ?", [$like]);
+
+                // Con 5 dígitos o más, el término también puede ser cédula o teléfono.
+                if (strlen($digits) >= 5) {
+                    $q->orWhereRaw("regexp_replace(coalesce(cp.cedula, ''), '\\D', '', 'g') = ?", [$digits])
+                        ->orWhereRaw("regexp_replace(coalesce(cp.document_number, ''), '\\D', '', 'g') = ?", [$digits])
+                        ->orWhereRaw("regexp_replace(coalesce(u.tel, ''), '\\D', '', 'g') like ?", ['%' . $digits . '%']);
+                }
+            })
+            ->orderBy('cp.name')
+            ->limit(max(1, min(20, $limit)))
+            ->get(['u.id', 'u.name as user_name', 'u.tel', 'cp.name as cp_name', 'cp.last_name', 'cp.cedula', 'cp.document_number', 'cp.service_status']);
+
+        return $rows->map(fn ($r) => [
+            'user_id'        => (int) $r->id,
+            'name'           => trim(($r->cp_name ?: $r->user_name) . ' ' . ($r->last_name ?? '')) ?: 'Cliente',
+            'cedula'         => $r->cedula ?: $r->document_number,
+            'tel'            => $r->tel,
+            'service_status' => $r->service_status,
+        ])->values()->all();
     }
 
     /**

@@ -76,10 +76,15 @@ Un workspace = un ISP cliente del SaaS.
 | `billing_notify_enabled` | bool | Interruptor de avisos por tenant |
 | `auto_assign_enabled` | bool | Auto-asignación al agente menos ocupado |
 | `is_active` | bool | Un tenant inactivo no resuelve en `ResolveTenant` ni en el webhook |
+| `ai_enabled` | bool, `false` | La empresa encendió la lectura de comprobantes con IA (opt-in: la foto sale a un proveedor externo) |
+| `ai_monthly_budget_usd` | decimal(8,2), nullable | Tope de gasto de IA por mes. `null` = `config('ai.default_monthly_budget_usd')`. Lo fija el superadmin |
+| `receipts_auto_max_amount` | decimal(14,2), nullable | Tope por comprobante para registrar sin revisión. `null` = config |
+| `ispwatch_api_token` | text, nullable | **Cifrado**. Credencial que emite ispwatch para que Converza registre pagos de ESTA empresa. Nunca viaja al navegador |
 
 > `hasWhatsAppConfigured()` usa `getRawOriginal('wa_access_token')` a propósito:
 > si el valor en base no es un payload cifrado válido (texto plano legado o
-> `APP_KEY` rotada), el cast lanzaría excepción.
+> `APP_KEY` rotada), el cast lanzaría excepción. `canRegisterPayments()` hace lo
+> mismo con `ispwatch_api_token`.
 
 ### `users`
 Extiende el `users` estándar de Laravel con:
@@ -287,11 +292,11 @@ Los flujos del bot que arma cada ISP. Arquitectura y reglas en
 |---|---|
 | `bot_flow_version_id` | La versión con la que arrancó: termina con ella aunque se publique otra |
 | `live_conversation_id` | Igual a `conversation_id` mientras la ejecución vive, NULL al terminar. **Índice único**: una sola ejecución viva por conversación sin índices parciales |
-| `status` | Vivas: `pending` (creada, el job no la arrancó), `waiting_input`, `waiting_timer`. Terminadas: `completed`, `handed_off`, `cancelled`, `failed` |
+| `status` | Vivas: `pending` (creada, el job no la arrancó), `waiting_input`, `waiting_timer`, `waiting_task` (esperando un trabajo de otra cola, p. ej. la lectura de un comprobante). Terminadas: `completed`, `handed_off`, `cancelled`, `failed` |
 | `current_node` | Id del bloque donde está |
-| `variables` / `state` | Lo que recogió (JSON) y los reintentos por bloque |
+| `variables` / `state` | Lo que recogió (JSON) y el estado interno de los bloques: reintentos, y el reporte de pago que espera un *Comprobante de pago* con su plazo |
 | `trigger_message_id` / `last_message_id` | El mensaje que la arrancó y el último entrante ya leído. El motor lee la bandeja en orden desde aquí |
-| `resume_at` / `resume_dispatched_at` | La Espera en curso y cuándo `flows:tick` encoló su reanudación |
+| `resume_at` / `resume_dispatched_at` | Cuándo despertarla (fin de la Espera, o plazo de la tarea en `waiting_task`) y cuándo `flows:tick` encoló ese despertar |
 | `steps_count` | Bloques ejecutados (tope en `flows.max_steps_per_run`) |
 | `ended_reason` | `completed`, `handoff`, `assigned`, `human_replied`, `flow_deactivated`, `input_timeout`, `window_closed`, `send_failed`, `step_limit`, `dead_end`, `error`, `stalled`… |
 
@@ -304,6 +309,46 @@ motor (tope de pasos, salida sin conectar). Solo `created_at`.
 > El grafo vive como JSON y no en tablas de nodos y conexiones: una versión es una
 > fila inmutable y restaurarla es copiar un JSON. El formato es el del lienzo
 > (Vue Flow): `nodes[{id, type, position, data}]`, `edges[{id, source, sourceHandle, target}]`.
+
+### Comprobantes de pago e IA: `payment_reports`, `payment_channels`, `ai_usage_logs`
+
+Arquitectura y reglas en [agente-ia.md](agente-ia.md).
+
+**`payment_reports`** — un comprobante que mandó un cliente, de la lectura al
+registro. Es la evidencia: qué decía la imagen, qué se verificó, quién decidió y
+qué contestó ispwatch.
+
+| Columna | Notas |
+|---|---|
+| `message_id` | La imagen. **Único**: leerla dos veces devuelve el mismo reporte |
+| `conversation_id`, `contact_id`, `message_id`, `bot_flow_run_id` | Todos `nullOnDelete`, no cascada: si se borra el chat, el rastro del pago (y su id en ispwatch) sobrevive |
+| `source` | `flow` (bloque *Comprobante de pago*) o `chat` (botón «Leer comprobante») |
+| `status` | `reading` → `not_receipt` · `pending_review` · `registering` → `registered`; `rejected` (lo descartó una persona); `duplicate` |
+| `reason` | Por qué quedó donde quedó, en código estable (`sin_auto`, `verificacion`, `ia_apagada`, `presupuesto_agotado`, `ia_sin_respuesta`, `ispwatch_rechazo`, `ya_registrado`…). Etiquetas en `PaymentReport::REASONS` |
+| `auto_requested` | El bloque pidió registrar sin revisión si pasa todo |
+| `amount`, `currency`, `paid_on`, `reference`, `channel`, `destination_account`, `destination_holder`, `payer_name`, `ai_confidence` | Lo transcrito, ya saneado |
+| `reference_key` | La referencia normalizada (mayúsculas, solo letras y números): **llave anti-duplicados** junto con `image_hash` (sha256 de la imagen) |
+| `extraction` / `checks` | La salida cruda de la IA y el resultado de cada verificación (`[{code, ok, detail}]`) |
+| `ispwatch_customer_id`, `customer_name`, `customer_match` | A quién se le abona: `telefono`, `telefono_ambiguo` o `manual` |
+| `payment_channel_id` | El medio de pago al que se pagó (por la cuenta destino) |
+| `ispwatch_payment_id`, `registration` | El pago en ispwatch y su respuesta (facturas abonadas, reconexión) |
+| `registered_by` / `registered_manually` | `null` + `false` = lo registró el bot; un usuario = desde «Pagos reportados»; `true` = se registró fuera de Converza (o ispwatch ya lo tenía) |
+| `reviewed_by`, `reviewed_at`, `review_note`, `attempts`, `last_error` | Revisión humana y diagnóstico |
+
+La llave de idempotencia con que se le pide el registro a ispwatch es
+`converza-payment-report-{id}`: la misma en cada reintento.
+
+**`payment_channels`** — dónde le pagan los clientes a la empresa: `name`,
+`account_number`, `account_holder`, `instructions`, `show_in_bot`, `is_active`,
+`sort_order`, y `ispwatch_payment_method_id` (la forma de pago de ispwatch con
+que se registra el pago allá; **sin FK**, es otra base).
+
+**`ai_usage_logs`** — cada llamada al proveedor de IA: `purpose`, `provider`,
+`model`, `status` (`ok`/`error`), tokens (entrada, salida, razonamiento, caché),
+`cost_usd` (el que informa el proveedor; `cost_estimated = true` si se calculó con
+los precios de config), `latency_ms`, `error`, y a qué se le cargó
+(`subject_type`/`subject_id`). **Sin el contenido**: son datos personales. De aquí
+sale el gasto del mes contra el tope. Solo `created_at`.
 
 ---
 

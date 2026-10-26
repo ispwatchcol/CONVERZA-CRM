@@ -5,6 +5,7 @@ import LinkedText from '@/Components/LinkedText.vue';
 import MessageStatus from '@/Components/MessageStatus.vue';
 import { useForm, router, Link, Head, usePage } from '@inertiajs/vue3';
 import { ref, onMounted, onUnmounted, nextTick, watch, computed } from 'vue';
+import axios from 'axios';
 
 const props = defineProps({
     conversations: { type: Array, default: () => [] },
@@ -35,7 +36,46 @@ const props = defineProps({
     newChatName: { type: String, default: null },
     serviceWindowExpiresAt: { type: String, default: null }, // fin de la ventana de 24h; null = cerrada
     templates: { type: Array, default: () => [] },           // plantillas aprobadas del tenant
+    aiReceipts: { type: Boolean, default: false },           // la empresa lee comprobantes con IA
 });
+
+// ── Comprobantes de pago (IA) ────────────────────────────────────────────────
+// «Leer comprobante» en una imagen o PDF del cliente: la IA la lee en segundo
+// plano y el resultado llega como nota interna en este mismo chat (y a «Pagos
+// reportados»). Desde aquí nunca se registra un pago solo.
+const RECEIPT_STATUS = {
+    reading: 'leyendo…',
+    pending_review: 'por revisar',
+    registering: 'registrando…',
+    registered: 'registrado ✓',
+    rejected: 'descartado',
+    duplicate: 'repetido',
+    not_receipt: 'no es comprobante',
+};
+const readingReceipt = ref({});
+const receiptNotice = ref(null);
+
+function canReadReceipt(msg) {
+    return props.aiReceipts && canWrite.value && !isOutgoing(msg) && msg.media_url
+        && (msg.type === 'image' || (msg.type === 'document' && msg.media_mime === 'application/pdf'));
+}
+
+async function readReceipt(msg) {
+    if (readingReceipt.value[msg.id]) return;
+    readingReceipt.value[msg.id] = true;
+    receiptNotice.value = null;
+
+    try {
+        const { data } = await axios.post(route('chat.messages.receipt', msg.id));
+        receiptNotice.value = { ok: true, text: data.message };
+        router.reload({ only: ['activeChat'], preserveScroll: true });
+    } catch (e) {
+        receiptNotice.value = { ok: false, text: e.response?.data?.message ?? 'No se pudo leer el comprobante.' };
+    } finally {
+        readingReceipt.value[msg.id] = false;
+        setTimeout(() => { receiptNotice.value = null; }, 6000);
+    }
+}
 
 // ── Ventana de servicio de 24 h ──────────────────────────────────────────────
 // WhatsApp solo acepta texto libre dentro de las 24 h siguientes al último
@@ -1941,6 +1981,17 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
                                     <span class="text-[10px] text-gray-500">{{ formatTime(msg.created_at) }}</span>
                                     <MessageStatus v-if="isOutgoing(msg)" :status="msg.status" :reason="msg.status_reason" />
                                 </div>
+                                <!-- Comprobante de pago: leerlo con IA, o en qué va -->
+                                <div v-if="msg.receipt || canReadReceipt(msg)" class="px-3 pb-2">
+                                    <component :is="isAdmin ? Link : 'span'" v-if="msg.receipt" :href="isAdmin ? route('payments.index') : undefined"
+                                               class="inline-flex items-center gap-1 rounded-full bg-fuchsia-50 px-2 py-0.5 text-[11px] font-medium text-fuchsia-700">
+                                        🧾 Comprobante #{{ msg.receipt.id }} · {{ RECEIPT_STATUS[msg.receipt.status] ?? msg.receipt.status }}
+                                    </component>
+                                    <button v-else type="button" :disabled="readingReceipt[msg.id]" @click="readReceipt(msg)"
+                                            class="inline-flex items-center gap-1 rounded-full border border-fuchsia-200 px-2.5 py-0.5 text-[11px] font-medium text-fuchsia-700 hover:bg-fuchsia-50 disabled:opacity-50">
+                                        🧾 {{ readingReceipt[msg.id] ? 'Enviando…' : 'Leer comprobante' }}
+                                    </button>
+                                </div>
                             </div>
 
                             <!-- ─── Video ──────────────────────────────────────────── -->
@@ -2128,6 +2179,15 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
                                         <p class="text-sm text-gray-400 italic">Documento no disponible</p>
                                     </div>
                                     <p v-if="msg.caption" class="px-3 pb-1 text-sm text-gray-900 whitespace-pre-wrap break-words"><LinkedText :text="msg.caption" /></p>
+                                    <div v-if="msg.receipt || canReadReceipt(msg)" class="px-3 pb-1.5">
+                                        <span v-if="msg.receipt" class="inline-flex items-center gap-1 rounded-full bg-fuchsia-50 px-2 py-0.5 text-[11px] font-medium text-fuchsia-700">
+                                            🧾 Comprobante #{{ msg.receipt.id }} · {{ RECEIPT_STATUS[msg.receipt.status] ?? msg.receipt.status }}
+                                        </span>
+                                        <button v-else type="button" :disabled="readingReceipt[msg.id]" @click="readReceipt(msg)"
+                                                class="inline-flex items-center gap-1 rounded-full border border-fuchsia-200 px-2.5 py-0.5 text-[11px] font-medium text-fuchsia-700 hover:bg-fuchsia-50 disabled:opacity-50">
+                                            🧾 {{ readingReceipt[msg.id] ? 'Enviando…' : 'Mandar a pagos reportados' }}
+                                        </button>
+                                    </div>
                                 </template>
 
                                 <template v-else>
@@ -2973,6 +3033,14 @@ onUnmounted(() => document.removeEventListener('mousedown', handleLabelsOutsideC
                         </form>
                     </div>
                 </div>
+            </div>
+        </Teleport>
+
+        <!-- Resultado de «Leer comprobante» -->
+        <Teleport to="body">
+            <div v-if="receiptNotice" class="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 max-w-sm w-[calc(100%-2rem)] rounded-xl px-4 py-3 text-sm shadow-lg"
+                 :class="receiptNotice.ok ? 'bg-gray-900 text-white' : 'bg-red-600 text-white'">
+                {{ receiptNotice.text }}
             </div>
         </Teleport>
 

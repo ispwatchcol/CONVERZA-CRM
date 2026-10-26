@@ -8,6 +8,7 @@ use App\Models\BotFlowStep;
 use App\Models\BotFlowVersion;
 use App\Models\BotSetting;
 use App\Models\Label;
+use App\Models\PaymentChannel;
 use App\Models\Team;
 use App\Services\Flows\Execution;
 use App\Services\Flows\FlowGraph;
@@ -15,7 +16,9 @@ use App\Services\Flows\FlowPublisher;
 use App\Services\Flows\FlowSimulator;
 use App\Services\Flows\FlowTemplates;
 use App\Services\Flows\FlowValidator;
+use App\Services\Flows\IO\SimulatedFlowIO;
 use App\Services\Flows\Nodes\CustomerLookupNode;
+use App\Services\Flows\Nodes\ReceiptNode;
 use App\Services\Flows\Nodes\StartNode;
 use App\Services\Flows\Validation\ValidationContext;
 use Illuminate\Http\JsonResponse;
@@ -141,6 +144,7 @@ class FlowController extends Controller
                 'variables'      => array_merge(
                     collect(Execution::BUILTINS)->map(fn ($d, $k) => ['name' => $k, 'description' => $d, 'group' => 'Siempre disponibles'])->values()->all(),
                     collect(CustomerLookupNode::VARIABLES)->map(fn ($d, $k) => ['name' => $k, 'description' => $d, 'group' => 'Después de «Datos del cliente»'])->values()->all(),
+                    collect(ReceiptNode::VARIABLES)->map(fn ($d, $k) => ['name' => $k, 'description' => $d, 'group' => 'Después de «Comprobante de pago»'])->values()->all(),
                 ),
                 'limits'         => [
                     'max_wait_minutes' => (int) config('flows.max_wait_minutes'),
@@ -149,6 +153,13 @@ class FlowController extends Controller
                 ],
                 'ispwatchLinked' => (bool) $tenant->ispwatch_tenant_id,
                 'autoAssign'     => (bool) $tenant->auto_assign_enabled,
+                // Lo que mira el bloque «Comprobante de pago» para avisar en el panel.
+                'payments'       => [
+                    'aiEnabled'           => (bool) config('ai.enabled') && (bool) $tenant->ai_enabled,
+                    'canRegister'         => $tenant->canRegisterPayments(),
+                    'channelsShownInBot'  => PaymentChannel::where('tenant_id', $tenant->id)->where('is_active', true)->where('show_in_bot', true)->count(),
+                    'channelsWithAccount' => PaymentChannel::where('tenant_id', $tenant->id)->where('is_active', true)->whereNotNull('account_number')->count(),
+                ],
             ],
         ]);
     }
@@ -309,6 +320,7 @@ class FlowController extends Controller
             'window_open' => ['nullable', 'boolean'],
             'labels'      => ['nullable', 'array', 'max:50'],
             'labels.*'    => ['integer'],
+            'receipt'     => ['nullable', 'string', Rule::in(SimulatedFlowIO::RECEIPT_OUTCOMES)],
         ]);
 
         if (strlen((string) json_encode($data['state'] ?? [])) > 64 * 1024) {

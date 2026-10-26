@@ -6,12 +6,16 @@ use App\Models\Contact;
 use App\Models\Conversation;
 use App\Models\Label;
 use App\Models\Message;
+use App\Models\PaymentReport;
 use App\Models\Team;
 use App\Models\Tenant;
 use App\Services\Assignment\ConversationAssigner;
 use App\Services\Flows\CustomerLookup;
+use App\Services\Flows\ReceiptOutcome;
 use App\Services\Flows\SendResult;
 use App\Services\Ispwatch\IspwatchRepository;
+use App\Services\Payments\PaymentChannels;
+use App\Services\Payments\PaymentReportProcessor;
 use App\Services\WhatsAppService;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Log;
@@ -28,6 +32,11 @@ use Illuminate\Support\Facades\Log;
  */
 final class LiveFlowIO implements FlowIO
 {
+    /**
+     * @param int|null $runId La ejecución que usa este IO: un comprobante que se
+     *                        lee para un flujo queda atado a ella, y al terminar
+     *                        la lectura la despierta.
+     */
     public function __construct(
         private readonly WhatsAppService $whatsapp,
         private readonly Tenant $tenant,
@@ -35,6 +44,7 @@ final class LiveFlowIO implements FlowIO
         private readonly Contact $contact,
         private readonly IspwatchRepository $ispwatch,
         private readonly ConversationAssigner $assigner,
+        private readonly ?int $runId = null,
     ) {}
 
     public function sendText(string $text): SendResult
@@ -169,6 +179,76 @@ final class LiveFlowIO implements FlowIO
 
             return CustomerLookup::unavailable('error');
         }
+    }
+
+    public function paymentMethodsText(): string
+    {
+        try {
+            return app(PaymentChannels::class)->textFor($this->tenant);
+        } catch (\Throwable $e) {
+            report($e);
+
+            return '';
+        }
+    }
+
+    public function recentReceiptImage(): ?int
+    {
+        $since = now()->subMinutes((int) config('ai.receipts.recent_image_minutes', 30));
+
+        $id = Message::withoutGlobalScopes()
+            ->where('tenant_id', $this->tenant->id)
+            ->where('conversation_id', $this->conversation->id)
+            ->where('status', 'received')
+            ->where('created_at', '>=', $since)
+            ->where(fn ($q) => $q->where('type', 'image')
+                ->orWhere(fn ($q) => $q->where('type', 'document')->where('media_mime', 'application/pdf')))
+            // Una imagen ya leída no se vuelve a usar: si el flujo pasa otra vez
+            // por el bloque, pide un comprobante nuevo.
+            ->whereNotIn('id', PaymentReport::withoutGlobalScopes()
+                ->select('message_id')
+                ->where('tenant_id', $this->tenant->id)
+                ->where('conversation_id', $this->conversation->id)
+                ->whereNotNull('message_id'))
+            ->orderByDesc('id')
+            ->value('id');
+
+        return $id !== null ? (int) $id : null;
+    }
+
+    public function startReceipt(int $messageId, bool $autoRegister): ReceiptOutcome
+    {
+        $message = Message::withoutGlobalScopes()
+            ->where('tenant_id', $this->tenant->id)
+            ->where('conversation_id', $this->conversation->id)
+            ->findOrFail($messageId);
+
+        $report = app(PaymentReportProcessor::class)->start(
+            $this->tenant,
+            $message,
+            PaymentReport::SOURCE_FLOW,
+            $this->runId,
+            $autoRegister,
+        );
+
+        return ReceiptOutcome::fromReport($report);
+    }
+
+    public function receipt(int $reportId, bool $giveUp = false): ?ReceiptOutcome
+    {
+        $report = PaymentReport::withoutGlobalScopes()
+            ->where('tenant_id', $this->tenant->id)
+            ->find($reportId);
+
+        if (! $report) {
+            return null;
+        }
+
+        if ($giveUp) {
+            app(PaymentReportProcessor::class)->expire($report);
+        }
+
+        return ReceiptOutcome::fromReport($report);
     }
 
     public function handoff(?int $teamId, bool $assign, ?string $note): array

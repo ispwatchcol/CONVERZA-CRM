@@ -443,9 +443,12 @@ Sin priorizar; van aquí para no perderlas.
 
 - **Bot con IA** en lugar de palabras clave (CON-25). La rigidez de
   `IntentDetector` ya la resolvió el Workspace de flujos (cada ISP define sus
-  opciones y palabras clave sin deploy, ver [workflows-bot.md](workflows-bot.md));
-  lo que queda es la clasificación con un LLM, que entra como variante del bloque
-  Menú.
+  opciones y palabras clave sin deploy, ver [workflows-bot.md](workflows-bot.md)).
+  La infraestructura de IA ya existe desde el 25/10/2026 (comprobantes de pago,
+  [agente-ia.md](agente-ia.md)); lo que queda es el **agente conversacional**,
+  diseñado como bloque «Agente IA» con herramientas de solo lectura
+  ([agente-ia.md §11, Fase 3](agente-ia.md#11-lo-que-sigue)). La clasificación del
+  Menú con un LLM pasa a ser un caso particular de ese bloque.
 - **Plantillas de cierre configurables** por tenant, para estandarizar las
   métricas de cierre.
 - **Programar mensajes individuales**, no solo campañas.
@@ -458,4 +461,7 @@ Sin priorizar; van aquí para no perderlas.
   el corte automáticos ya existen ([core-brain.md §8](core-brain.md)); el pago
   sigue llegando por transferencia y alguien lo registra a mano. Una pasarela
   (Wompi, Bold, Mercado Pago) con su webhook registraría el pago sola y cerraría
-  el ciclo.
+  el ciclo. Lo mismo vale para los clientes de los ISPs: los comprobantes con IA
+  ([agente-ia.md](agente-ia.md)) automatizan la transcripción, pero solo una
+  pasarela o la conciliación con el extracto atajan el comprobante falsificado
+  con cuidado (§4 de ese documento).

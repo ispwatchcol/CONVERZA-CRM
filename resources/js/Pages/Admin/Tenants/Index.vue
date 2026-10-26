@@ -68,7 +68,10 @@ function submitCreate() {
 // ── Modal: editar ────────────────────────────────────────────────────────────
 const showEditModal = ref(false);
 const editing = ref(null);
-const editForm = useForm({ name: '', slug: '', is_active: true, ispwatch_tenant_id: '' });
+const editForm = useForm({
+    name: '', slug: '', is_active: true, ispwatch_tenant_id: '',
+    ispwatch_api_token: '', ispwatch_api_token_clear: false, ai_monthly_budget_usd: '',
+});
 
 function openEdit(t) {
     editing.value = t;
@@ -76,6 +79,10 @@ function openEdit(t) {
     editForm.slug = t.slug;
     editForm.is_active = t.is_active;
     editForm.ispwatch_tenant_id = t.ispwatch_tenant_id || '';
+    // La credencial nunca se recibe: en blanco = conservar la guardada.
+    editForm.ispwatch_api_token = '';
+    editForm.ispwatch_api_token_clear = false;
+    editForm.ai_monthly_budget_usd = t.ai_monthly_budget_usd ?? '';
     showEditModal.value = true;
 }
 
@@ -430,6 +437,39 @@ function formatDate(iso) {
                                    :class="editForm.errors.ispwatch_tenant_id ? 'border-red-400' : 'border-gray-200'">
                             <p v-if="editForm.errors.ispwatch_tenant_id" class="text-red-500 text-[11px] mt-1">{{ editForm.errors.ispwatch_tenant_id }}</p>
                             <p v-else class="text-[10px] text-gray-400 mt-1">Se valida en vivo si lo cambias</p>
+                        </div>
+
+                        <!-- Pagos por WhatsApp: credencial de ispwatch + presupuesto de IA -->
+                        <div class="border border-gray-100 rounded-lg p-3 space-y-3">
+                            <p class="text-xs font-semibold text-gray-700">Pagos por WhatsApp (IA)</p>
+                            <div>
+                                <label class="block text-xs font-medium text-gray-700 mb-1">
+                                    Credencial de ispwatch para registrar pagos
+                                    <span class="ml-1 text-[10px] font-semibold" :class="editing?.has_payments_token ? 'text-emerald-600' : 'text-gray-400'">
+                                        {{ editing?.has_payments_token ? '● guardada' : '○ sin credencial' }}
+                                    </span>
+                                </label>
+                                <input v-model="editForm.ispwatch_api_token" type="password" autocomplete="off"
+                                       :placeholder="editing?.has_payments_token ? '•••••••• (en blanco = conservar)' : 'La emite ispwatch para este tenant'"
+                                       :disabled="editForm.ispwatch_api_token_clear"
+                                       class="w-full px-3 py-2 border rounded-lg text-sm font-mono focus:ring-2 focus:ring-accent/30 focus:border-accent transition disabled:bg-gray-50"
+                                       :class="editForm.errors.ispwatch_api_token ? 'border-red-400' : 'border-gray-200'">
+                                <label v-if="editing?.has_payments_token" class="flex items-center gap-2 mt-1.5 text-[11px] text-gray-600">
+                                    <input v-model="editForm.ispwatch_api_token_clear" type="checkbox" class="rounded border-gray-300 text-red-500 focus:ring-red-400">
+                                    Quitar la credencial (el bot deja de registrar pagos)
+                                </label>
+                                <p class="text-[10px] text-gray-400 mt-1">Sirve solo para el tenant de ispwatch al que se emitió. Se guarda cifrada.</p>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-gray-700 mb-1">
+                                    Tope mensual de IA (USD)
+                                    <span class="text-gray-400 font-normal ml-1">vacío = el general</span>
+                                </label>
+                                <input v-model="editForm.ai_monthly_budget_usd" type="number" min="0" max="1000" step="0.5" placeholder="5"
+                                       class="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-accent/30 focus:border-accent transition"
+                                       :class="editForm.errors.ai_monthly_budget_usd ? 'border-red-400' : 'border-gray-200'">
+                                <p v-if="editForm.errors.ai_monthly_budget_usd" class="text-red-500 text-[11px] mt-1">{{ editForm.errors.ai_monthly_budget_usd }}</p>
+                            </div>
                         </div>
 
                         <!-- Toggle activo destacado -->

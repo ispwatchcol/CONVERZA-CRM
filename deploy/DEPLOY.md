@@ -36,10 +36,15 @@ sudo visudo -f /etc/sudoers.d/converza-deploy
 
 Pegá (reemplazá `deploy-user` por tu `SSH_USER` real):
 ```
-deploy-user ALL=(ALL) NOPASSWD: /usr/bin/supervisorctl restart converza-worker\:*, /bin/systemctl reload php8.2-fpm
+deploy-user ALL=(ALL) NOPASSWD: /usr/bin/supervisorctl restart converza-worker\:*, /usr/bin/supervisorctl restart converza-ai\:*, /bin/systemctl reload php8.2-fpm
 ```
 
 Guardá y cerrá.
+
+> `converza-ai` es el worker de la cola de IA (paso 4 bis). Si un droplet ya
+> configurado no tiene esa parte de la línea, el deploy sigue funcionando: avisa
+> `WARNING: converza-ai not configured yet` y ese worker toma el código nuevo
+> recién en su reinicio de cada hora (`--max-time=3600`).
 
 ### 4. Copiá el config del worker y arrancalo
 
@@ -63,6 +68,25 @@ converza-worker:converza-worker_02   RUNNING   pid 12347, uptime 0:00:05
 converza-worker:converza-worker_03   RUNNING   pid 12348, uptime 0:00:05
 ```
 
+### 4 bis. El worker de la cola de IA (comprobantes de pago)
+
+El mismo archivo trae un segundo programa, `converza-ai`, que atiende la cola
+`ai` (lectura de comprobantes con IA y registro de pagos en ispwatch, ver
+[docs/agente-ia.md](../docs/agente-ia.md)). Va aparte para que una ráfaga de
+comprobantes no deje esperando a la ingesta de mensajes.
+
+```bash
+sudo cp /var/www/converza-crm/deploy/supervisor/converza-worker.conf /etc/supervisor/conf.d/
+sudo supervisorctl reread
+sudo supervisorctl update          # arranca converza-ai sin tocar converza-worker
+sudo supervisorctl status converza-ai:*
+# converza-ai:converza-ai_00   RUNNING   pid 23456, uptime 0:00:04
+```
+
+Es un solo proceso (~50 MB): cada lectura es una llamada HTTP, no CPU. Sin él
+nada se lee: los flujos esperan 5 minutos y mandan el comprobante a revisión
+humana. Con `AI_ENABLED=false` (el valor por defecto) ni siquiera se encola.
+
 ### 5. Confirmá el `.env` de producción
 
 ```bash
@@ -74,9 +98,22 @@ Asegurate que tenga:
 APP_ENV=production
 APP_DEBUG=false
 APP_URL=https://tu-dominio.com
-QUEUE_CONNECTION=database
+QUEUE_CONNECTION=redis
 LOG_LEVEL=warning
+
+# IA (comprobantes de pago). Apagada hasta que el worker converza-ai corra.
+AI_ENABLED=true
+XAI_API_KEY=xai-...
+# URL de ispwatch para registrar pagos (la credencial va por empresa, en Admin → Tenants)
+ISPWATCH_API_URL=https://ispwatch-crm.app
 ```
+
+> Este paso decía `QUEUE_CONNECTION=database`. No es lo que corre: producción usa
+> **Redis** (por eso `DB::table('jobs')->count()` siempre da 0, ver Monitoreo).
+
+Después de tocar el `.env`: `php artisan config:cache` **y**
+`sudo -n /bin/systemctl reload php8.2-fpm` (sin el reload, PHP-FPM sigue con la
+config vieja en opcache).
 
 ### 6. Permisos de `storage` para www-data (¡o el chat tira 500 al enviar medios!)
 

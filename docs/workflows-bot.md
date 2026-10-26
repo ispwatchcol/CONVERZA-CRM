@@ -120,6 +120,7 @@ con sus textos y switches — el flujo semilla de CON-51) y "Empezar casi de cer
 | **Menú** | Opciones numeradas, botones (≤ 3) o lista (≤ 10); reintento si no entiende | una por opción · No entendió |
 | **Condición** | Reglas sobre variables, etiquetas del contacto u horario; todas o al menos una | Sí · No |
 | **Datos del cliente** | Busca al contacto en ispwatch por teléfono (solo lectura) y llena `{{cliente.*}}` | Encontrado · No encontrado |
+| **Comprobante de pago** | Pide la foto del comprobante (o usa la que el cliente ya mandó), la hace leer con IA en la cola `ai` y llena `{{pago.*}}`. Con «registrar sin revisión», si pasa todas las verificaciones ispwatch lo registra. Ver [agente-ia.md](agente-ia.md) | Pago registrado (solo con registro automático) · Para revisión del equipo · No mandó un comprobante |
 | **Etiquetar** | Pone o quita una etiqueta | Siguiente |
 | **Espera** | Pausa N minutos (máx. 23 h) | Siguiente |
 | **Pasar a un asesor** | Mensaje opcional, equipo opcional, auto-asignación y nota interna con lo que respondió el cliente | — |
@@ -132,12 +133,15 @@ palabras se comparan sin tildes ni mayúsculas y **como palabra completa** — e
 cableado usa `str_contains` y por eso "ver" caía en "verificar".
 
 **Variables** (`{{nombre}}`): siempre existen `contacto.*`, `empresa.nombre`,
+`empresa.medios_pago` (los medios de pago de Configuración, uno por línea),
 `saludo`, `fecha.*`, `mensaje_inicial`, `respuesta` y `opcion`; las de una
 Pregunta existen con el nombre que se les dé; las `cliente.*`, solo si el flujo
-tiene un bloque *Datos del cliente*. El validador rechaza una variable que no
-existe en ningún lado (casi siempre es un error de tipeo).
+tiene un bloque *Datos del cliente*; las `pago.*`, solo si tiene un bloque
+*Comprobante de pago*. El validador rechaza una variable que no existe en ningún
+lado (casi siempre es un error de tipeo).
 
-**La clasificación con IA** (CON-25) entra como variante del bloque Menú.
+**La IA en el bot** ya tiene su primer bloque (*Comprobante de pago*). El agente
+conversacional entra como un bloque más ([agente-ia.md §11](agente-ia.md#11-lo-que-sigue)).
 
 ### El simulador
 
@@ -213,8 +217,30 @@ columnas en [modelo-de-datos.md](modelo-de-datos.md).
 | `BotDispatcher` | El enrutador de §5 |
 | `FlowValidator` | La compuerta de publicación (§3 y §7) |
 | `FlowPublisher` | Publicar, encender/apagar, restaurar |
-| `RunBotFlow` (job) | Despierta al runner: arranque, mensaje o fin de espera |
-| `flows:tick` | Cada minuto: reanuda Esperas y cierra ejecuciones abandonadas |
+| `RunBotFlow` (job) | Despierta al runner: arranque, mensaje, fin de espera o fin de una tarea |
+| `flows:tick` | Cada minuto: reanuda Esperas, despierta las tareas vencidas y cierra ejecuciones abandonadas |
+
+### Tareas: lo lento va a otra cola
+
+Un bloque que necesita algo lento y de un tercero (hoy: leer un comprobante con
+IA) **no** lo hace dentro del job del flujo, que tiene el lock de la
+conversación y no se reintenta. Devuelve `Step::waitTask(tipo, id, plazo)`:
+
+1. El motor deja la ejecución en **`waiting_task`** (un estado vivo más) con
+   `resume_at` = el plazo, y anota la tarea.
+2. `FlowRunner` encola la tarea **después de soltar el lock** (`queueTask()`, el
+   punto donde se registra cada tipo de tarea). Si la encolara antes, el aviso de
+   "terminé" podría llegar con el lock tomado o con el estado sin guardar.
+3. La tarea, al terminar, despierta a la ejecución con `RunBotFlow(task)` y el
+   bloque sigue por su `resume()`.
+4. Si la tarea no avisa antes del plazo, `flows:tick` la despierta igual y el
+   bloque decide sin el resultado (el comprobante pasa a revisión). Un aviso viejo
+   que llega antes de tiempo no hace nada: el bloque vuelve a esperar **sin**
+   encolar la tarea de nuevo.
+
+Lo que el cliente escribe mientras tanto queda en el chat, pero el flujo no lo
+lee (igual que en una Espera). El simulador no tiene colas: las tareas simuladas
+terminan al instante.
 
 ### Las cotas
 
@@ -244,10 +270,12 @@ columnas en [modelo-de-datos.md](modelo-de-datos.md).
 ### La cola
 
 El job corre en `config('flows.queue')`, que arranca en **`default`**. Ningún
-bloque de la v1 llama a terceros —todo es base propia, ispwatch cacheado o
-`WhatsAppService`, lo mismo que hacía el bot cableado en esa cola—. La cola
-propia la exige el nodo HTTP (CON-50): pasar `FLOWS_QUEUE=flows` **sin** agregar el
-programa de Supervisor que la escuche deja a todos los flujos mudos.
+bloque llama a terceros dentro de ese job —todo es base propia, ispwatch
+cacheado o `WhatsAppService`, lo mismo que hacía el bot cableado en esa cola—:
+lo que sí llama a un tercero (la IA del bloque *Comprobante de pago*) va como
+tarea a la cola `ai`, con su propio programa de Supervisor. La cola propia de los
+flujos la exige el nodo HTTP (CON-50): pasar `FLOWS_QUEUE=flows` **sin** agregar
+el programa de Supervisor que la escuche deja a todos los flujos mudos.
 
 ### El nodo HTTP (CON-50), cuando llegue
 
@@ -309,7 +337,9 @@ acotada y rama de error obligatoria.
 
 - **No es n8n.** Un ISP que necesite una integración exótica la llama por el nodo
   HTTP (CON-50).
-- **No es un bot con IA.** La IA entra como variante del Menú (CON-25).
+- **No es un bot conversacional con IA… todavía.** La IA entró por un bloque
+  acotado (*Comprobante de pago*: transcribe, no decide). El agente que conversa
+  está diseñado en [agente-ia.md §11](agente-ia.md#11-lo-que-sigue).
 - **No reemplaza a Campañas.** Los flujos reaccionan a lo que escribe el cliente;
   el contacto masivo saliente tiene su herramienta, con audiencia, pacing y opt-out.
 

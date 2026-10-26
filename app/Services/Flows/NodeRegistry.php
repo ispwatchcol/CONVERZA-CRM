@@ -10,13 +10,14 @@ use App\Services\Flows\Nodes\MenuNode;
 use App\Services\Flows\Nodes\MessageNode;
 use App\Services\Flows\Nodes\NodeType;
 use App\Services\Flows\Nodes\QuestionNode;
+use App\Services\Flows\Nodes\ReceiptNode;
 use App\Services\Flows\Nodes\StartNode;
 use App\Services\Flows\Nodes\TagNode;
 use App\Services\Flows\Nodes\WaitNode;
 
 /**
- * Los bloques de la librería v1 (CON-49). Un bloque que no está aquí no se
- * puede publicar ni ejecutar.
+ * Los bloques de la librería v1 (CON-49) más «Comprobante de pago» (agente IA,
+ * fase 1). Un bloque que no está aquí no se puede publicar ni ejecutar.
  */
 final class NodeRegistry
 {
@@ -32,6 +33,7 @@ final class NodeRegistry
             new MenuNode(),
             new ConditionNode(),
             new CustomerLookupNode(),
+            new ReceiptNode(),
             new TagNode(),
             new WaitNode(),
             new HandoffNode(),

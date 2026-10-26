@@ -376,9 +376,11 @@ final class FlowValidator
                     continue;
                 }
 
-                $issues[] = Issue::error(str_starts_with($name, 'cliente.')
-                    ? "{$handler->label()}: {{{$name}}} solo existe después de un bloque «Datos del cliente». Agrégalo antes de este mensaje."
-                    : "{$handler->label()}: la variable {{{$name}}} no existe. Revisa cómo está escrita.", $node['id']);
+                $issues[] = Issue::error(match (true) {
+                    str_starts_with($name, 'cliente.') => "{$handler->label()}: {{{$name}}} solo existe después de un bloque «Datos del cliente». Agrégalo antes de este mensaje.",
+                    str_starts_with($name, 'pago.')    => "{$handler->label()}: {{{$name}}} solo existe después de un bloque «Comprobante de pago». Agrégalo antes de este mensaje.",
+                    default                            => "{$handler->label()}: la variable {{{$name}}} no existe. Revisa cómo está escrita.",
+                }, $node['id']);
             }
         }
 

@@ -2,10 +2,15 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\AiUsageLog;
 use App\Models\BotFlow;
 use App\Models\BotSetting;
+use App\Models\PaymentChannel;
+use App\Models\PaymentReport;
 use App\Models\Template;
+use App\Models\Tenant;
 use App\Models\TenantNotificationRoute;
+use App\Services\Ai\AiGateway;
 use App\Services\Ispwatch\IspwatchRepository;
 use App\Services\Notifications\EventCatalog;
 use App\Services\WhatsAppService;
@@ -32,7 +37,75 @@ class SettingsController extends Controller
             'approvedTemplates'    => $this->approvedTemplates($tenant->id),
             'notificationRoutes'   => $this->notificationRoutesFor($tenant->id),
             'bot'                  => $this->botCard($tenant->id),
+            'ai'                   => $this->aiCard($tenant),
+            'paymentChannels'      => PaymentChannel::where('tenant_id', $tenant->id)
+                ->orderBy('sort_order')->orderBy('id')
+                ->get(['id', 'name', 'ispwatch_payment_method_id', 'account_number', 'account_holder', 'instructions', 'show_in_bot', 'is_active']),
+            'ispwatchPaymentMethods' => fn () => $this->ispwatchPaymentMethods($tenant),
         ]);
+    }
+
+    /**
+     * Estado de la IA para la tarjeta de Configuración: si está encendida (la
+     * empresa y Converza), cuánto lleva gastado en el mes y si el bot puede
+     * registrar pagos en ispwatch.
+     */
+    private function aiCard(Tenant $tenant): array
+    {
+        $ai = app(AiGateway::class);
+
+        $since = now()->setTimezone((string) config('flows.default_timezone', 'America/Bogota'))->startOfMonth()->utc();
+        $reads = AiUsageLog::where('tenant_id', $tenant->id)->where('created_at', '>=', $since)->count();
+
+        return [
+            'enabled'         => (bool) $tenant->ai_enabled,
+            'unavailable'     => $ai->unavailableReason($tenant),
+            'reasons'         => PaymentReport::REASONS,
+            'spent_usd'       => round($ai->spentThisMonth($tenant), 2),
+            'budget_usd'      => $ai->monthlyBudget($tenant),
+            'requests_month'  => $reads,
+            'auto_max_amount' => (float) ($tenant->receipts_auto_max_amount ?? config('ai.receipts.default_auto_max_amount', 300000)),
+            'can_register'    => $tenant->canRegisterPayments(),
+            'ispwatch_linked' => (bool) $tenant->ispwatch_tenant_id,
+            'pending_reports' => PaymentReport::where('tenant_id', $tenant->id)->where('status', PaymentReport::STATUS_PENDING_REVIEW)->count(),
+        ];
+    }
+
+    /** Formas de pago del catálogo de ispwatch, para enlazar los medios de pago. */
+    private function ispwatchPaymentMethods(Tenant $tenant): array
+    {
+        if (! $tenant->ispwatch_tenant_id) {
+            return [];
+        }
+
+        try {
+            return $this->ispwatch->paymentMethodsForTenant((int) $tenant->ispwatch_tenant_id);
+        } catch (\Throwable $e) {
+            report($e);
+
+            return [];
+        }
+    }
+
+    /**
+     * Inteligencia artificial: encenderla (es opt-in, los comprobantes salen a
+     * un proveedor externo) y el tope por comprobante para registrar sin
+     * revisión. El presupuesto mensual lo fija el superadmin.
+     */
+    public function updateAi(Request $request)
+    {
+        $tenant = app('tenant');
+
+        $data = $request->validate([
+            'ai_enabled'               => ['required', 'boolean'],
+            'receipts_auto_max_amount' => ['nullable', 'numeric', 'min:1000', 'max:100000000'],
+        ]);
+
+        $tenant->fill($data)->save();
+
+        return back()->with('success', $data['ai_enabled']
+            ? 'Inteligencia artificial encendida.'
+            : 'Inteligencia artificial apagada: los comprobantes quedarán para revisión manual.');
     }
 
     /**

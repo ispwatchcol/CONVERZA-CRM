@@ -134,6 +134,8 @@ Es **solo lectura** — las escrituras siguen bloqueadas en sus propios endpoint
 |---|---|---|
 | `wa_access_token` | `tenants` | Cast `encrypted` (APP_KEY) + `$hidden` |
 | `wa_app_secret` | `tenants` | Ídem |
+| `ispwatch_api_token` | `tenants` | Ídem. Credencial de ispwatch para registrar pagos de **una** empresa; solo la carga el superadmin (Admin → Tenants) y el navegador solo sabe si existe |
+| `XAI_API_KEY` | `.env` | Llave del proveedor de IA. Una sola para todas las empresas; el gasto se reparte y se topa por empresa en `ai_usage_logs` |
 | `APP_KEY` | `.env` | Nunca en git |
 | Credenciales de base | `.env` | Ídem |
 | Llave SSH de deploy | GitHub Secrets | Par dedicado, solo para el droplet |
@@ -163,6 +165,13 @@ Tres barreras:
 
 La tercera es la única que de verdad garantiza el resto. **Verifica que esté
 aplicada en producción.**
+
+Lo que hay que **escribir** en ispwatch se le pide a ispwatch por su API, nunca
+por la base: hoy solo el registro de un pago de un comprobante
+([agente-ia.md §7](agente-ia.md#7-contrato-con-ispwatch-el-endpoint-de-registro-pendiente-repo-ispwatch)).
+La credencial es por empresa (el tenant sale de la credencial, no del cuerpo), con
+una sola ability (`write:payments`), allowlist de IP del droplet y revocable desde
+ispwatch. Así una credencial filtrada no sirve para otra empresa ni para otra cosa.
 
 ---
 
@@ -217,6 +226,25 @@ conversaciones**, más los medios que los clientes envían.
 
 Si el proyecto necesita cumplir con una normativa de datos personales, esta tabla
 es el punto de partida del análisis de brechas.
+
+### La IA (comprobantes de pago)
+
+Con la IA encendida, la **imagen de un comprobante** sale a un proveedor externo
+(xAI) para transcribirla. Reglas:
+
+- **Opt-in por empresa** (`tenants.ai_enabled`, apagado por defecto) y un
+  interruptor general (`AI_ENABLED`). El ISP es el responsable del tratamiento de
+  los datos de sus clientes (Ley 1581 de 2012); Converza su encargado y xAI un
+  subencargado en el exterior: el ISP la enciende si su política lo cubre.
+- **Sin retención en el proveedor**: cada llamada va con `store: false`.
+- Solo sale la imagen del comprobante, y solo cuando el bloque del flujo o un
+  asesor lo pide: las demás imágenes del chat nunca salen.
+- **Bitácora sin contenido**: `ai_usage_logs` guarda tokens, costo, latencia y
+  error, nunca la imagen ni lo transcrito (eso queda en `payment_reports`, en la
+  base de Converza, como el resto del chat).
+- La IA no decide nada: un texto dentro de la imagen ("registre este pago") no
+  tiene efecto, porque lo único que controla es un JSON que se verifica con reglas
+  fijas ([agente-ia.md §2.1 y §9](agente-ia.md#9-seguridad)).
 
 ---
 

@@ -75,6 +75,10 @@ class TenantsController extends Controller
                 'ispwatch_status'     => $ispwatchStatus,
                 'has_whatsapp'        => $t->hasWhatsAppConfigured(),
                 'wa_status'           => $t->wa_status,
+                // La credencial nunca viaja al navegador: solo si existe.
+                'has_payments_token'  => filled($t->getRawOriginal('ispwatch_api_token')),
+                'ai_enabled'          => (bool) $t->ai_enabled,
+                'ai_monthly_budget_usd' => $t->ai_monthly_budget_usd,
                 'users_count'         => (int) $t->users_count,
                 'contacts_count'      => (int) $t->contacts_count,
                 'conversations_count' => (int) $t->conversations_count,
@@ -155,7 +159,19 @@ class TenantsController extends Controller
             'slug'               => ['required', 'string', 'max:60', 'regex:/^[a-z0-9-]+$/', Rule::unique('tenants', 'slug')->ignore($tenant->id)],
             'is_active'          => ['required', 'boolean'],
             'ispwatch_tenant_id' => ['nullable', 'integer', 'min:1'],
+            // Credencial de ispwatch para registrar pagos. En blanco = no tocar
+            // la guardada (el navegador nunca la recibe); para quitarla, el flag.
+            'ispwatch_api_token'       => ['nullable', 'string', 'max:500'],
+            'ispwatch_api_token_clear' => ['nullable', 'boolean'],
+            'ai_monthly_budget_usd'    => ['nullable', 'numeric', 'min:0', 'max:1000'],
         ]);
+
+        if (! empty($validated['ispwatch_api_token_clear'])) {
+            $validated['ispwatch_api_token'] = null;
+        } elseif (blank($validated['ispwatch_api_token'] ?? null)) {
+            unset($validated['ispwatch_api_token']);
+        }
+        unset($validated['ispwatch_api_token_clear']);
 
         if (! empty($validated['ispwatch_tenant_id'])
             && $validated['ispwatch_tenant_id'] != $tenant->ispwatch_tenant_id

@@ -1,6 +1,6 @@
 <script setup>
 import AppLayout from '@/Layouts/AppLayout.vue';
-import { useForm, Head, Link, usePage } from '@inertiajs/vue3';
+import { useForm, Head, Link, usePage, router } from '@inertiajs/vue3';
 import { ref, computed, onMounted, watch } from 'vue';
 import axios from 'axios';
 import QRCode from 'qrcode';
@@ -17,6 +17,11 @@ const props = defineProps({
     notificationRoutes: { type: Object, default: () => ({}) },
     // Bot: { enabled, state: 'off'|'active'|'out_of_schedule', schedule_summary }
     bot: { type: Object, default: () => ({ enabled: false, state: 'off', schedule_summary: null, active_flows: 0 }) },
+    // IA: { enabled, unavailable, reasons, spent_usd, budget_usd, requests_month, auto_max_amount, can_register, ispwatch_linked, pending_reports }
+    ai: { type: Object, default: () => ({}) },
+    // Medios de pago de la empresa y el catálogo de formas de pago de ispwatch.
+    paymentChannels: { type: Array, default: () => [] },
+    ispwatchPaymentMethods: { type: Array, default: () => [] },
 });
 
 // ── Forms (uno por sección) ──────────────────────────────────────────────────
@@ -85,6 +90,94 @@ const botStateLabel = computed(() => ({
 
 // Solo el admin del tenant configura la asignación automática.
 const isAdmin = computed(() => usePage().props.auth?.user?.role === 'admin');
+
+// ── Inteligencia artificial (comprobantes de pago) ───────────────────────────
+const aiForm = useForm({
+    ai_enabled: props.ai?.enabled ?? false,
+    receipts_auto_max_amount: props.ai?.auto_max_amount ?? 300000,
+});
+function saveAi() {
+    aiForm
+        .transform((data) => ({
+            ai_enabled: !!data.ai_enabled,
+            receipts_auto_max_amount: data.receipts_auto_max_amount === '' || data.receipts_auto_max_amount == null
+                ? null
+                : Number(data.receipts_auto_max_amount),
+        }))
+        .put(route('settings.ai.update'), { preserveScroll: true });
+}
+const aiUsagePercent = computed(() => {
+    const budget = Number(props.ai?.budget_usd) || 0;
+    return budget > 0 ? Math.min(100, Math.round((Number(props.ai?.spent_usd) || 0) / budget * 100)) : 0;
+});
+
+// ── Medios de pago ───────────────────────────────────────────────────────────
+const channelForm = useForm({
+    id: null,
+    name: '',
+    ispwatch_payment_method_id: null,
+    account_number: '',
+    account_holder: '',
+    instructions: '',
+    show_in_bot: true,
+    is_active: true,
+});
+const editingChannel = ref(false);
+
+function newChannel() {
+    channelForm.reset();
+    channelForm.clearErrors();
+    editingChannel.value = true;
+}
+
+function editChannel(channel) {
+    channelForm.clearErrors();
+    channelForm.id = channel.id;
+    channelForm.name = channel.name;
+    channelForm.ispwatch_payment_method_id = channel.ispwatch_payment_method_id;
+    channelForm.account_number = channel.account_number ?? '';
+    channelForm.account_holder = channel.account_holder ?? '';
+    channelForm.instructions = channel.instructions ?? '';
+    channelForm.show_in_bot = channel.show_in_bot;
+    channelForm.is_active = channel.is_active;
+    editingChannel.value = true;
+}
+
+function saveChannel() {
+    const options = { preserveScroll: true, onSuccess: () => { editingChannel.value = false; channelForm.reset(); } };
+    const id = channelForm.id;
+    channelForm.transform(({ id: _id, ...rest }) => ({ ...rest, show_in_bot: !!rest.show_in_bot, is_active: !!rest.is_active }));
+
+    if (id) {
+        channelForm.put(route('settings.payment-channels.update', id), options);
+    } else {
+        channelForm.post(route('settings.payment-channels.store'), options);
+    }
+}
+
+function deleteChannel(channel) {
+    if (!confirm(`¿Eliminar «${channel.name}»? El bot deja de mostrarlo y los comprobantes a esa cuenta dejan de reconocerse.`)) return;
+    router.delete(route('settings.payment-channels.destroy', channel.id), { preserveScroll: true });
+}
+
+function importChannels() {
+    router.post(route('settings.payment-channels.import'), {}, { preserveScroll: true });
+}
+
+const methodName = (id) => props.ispwatchPaymentMethods.find((m) => m.id === id)?.name ?? null;
+
+// Lo que ve el cliente cuando un flujo usa {{empresa.medios_pago}} (mismo armado que el servidor).
+const paymentPreview = computed(() => props.paymentChannels
+    .filter((c) => c.is_active && c.show_in_bot)
+    .map((c) => {
+        let line = `• ${c.name}`;
+        if (c.account_number) line += `: ${c.account_number}`;
+        if (c.account_holder) line += ` a nombre de ${c.account_holder}`;
+        if (c.instructions) line += `\n  ${c.instructions}`;
+        return line;
+    })
+    .join('\n'));
+const paymentVariable = '{' + '{empresa.medios_pago}' + '}';
 
 // ── Avisos automáticos (evento → plantilla) ──────────────────────────────────
 const routesForm = useForm({
@@ -769,6 +862,181 @@ const waBadge = computed(() => {
                             </button>
                         </div>
                     </form>
+                </section>
+
+                <!-- ═══════════════ INTELIGENCIA ARTIFICIAL ═══════════════ -->
+                <section v-if="isAdmin" class="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+                    <div class="flex items-center mb-4">
+                        <div class="w-9 h-9 rounded-xl bg-fuchsia-50 flex items-center justify-center mr-3">
+                            <svg class="w-5 h-5 text-fuchsia-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456z"/></svg>
+                        </div>
+                        <div>
+                            <h3 class="text-base font-semibold text-gray-900">Inteligencia artificial</h3>
+                            <p class="text-xs text-gray-500">Lee los comprobantes de pago que mandan tus clientes por WhatsApp.</p>
+                        </div>
+                    </div>
+
+                    <form @submit.prevent="saveAi" class="space-y-3">
+                        <div class="rounded-xl border p-4 flex items-center justify-between gap-3 transition-colors"
+                             :class="aiForm.ai_enabled ? 'bg-fuchsia-50 border-fuchsia-100' : 'bg-gray-50 border-gray-200'">
+                            <div class="min-w-0">
+                                <p class="text-sm font-semibold flex items-center gap-2" :class="aiForm.ai_enabled ? 'text-fuchsia-900' : 'text-gray-700'">
+                                    <span class="w-2 h-2 rounded-full" :class="aiForm.ai_enabled ? 'bg-fuchsia-500' : 'bg-gray-400'"></span>
+                                    {{ aiForm.ai_enabled ? 'Lectura de comprobantes ACTIVADA' : 'Lectura de comprobantes DESACTIVADA' }}
+                                </p>
+                                <p class="text-xs mt-1" :class="aiForm.ai_enabled ? 'text-fuchsia-700' : 'text-gray-500'">
+                                    La foto del comprobante se envía a un proveedor de IA (xAI · Grok) solo para leerla: valor, fecha, referencia y a qué cuenta se pagó.
+                                    No queda guardada allá. Actívala si tu política de tratamiento de datos lo permite. Apagada, los comprobantes igual llegan a
+                                    «Pagos reportados», sin leer.
+                                </p>
+                            </div>
+                            <button type="button" @click="aiForm.ai_enabled = !aiForm.ai_enabled"
+                                    class="relative inline-flex h-6 w-11 shrink-0 rounded-full transition-colors"
+                                    :class="aiForm.ai_enabled ? 'bg-fuchsia-500' : 'bg-gray-300'"
+                                    :aria-pressed="aiForm.ai_enabled">
+                                <span class="absolute top-0.5 h-5 w-5 bg-white rounded-full shadow transition-all"
+                                      :class="aiForm.ai_enabled ? 'left-5' : 'left-0.5'"></span>
+                            </button>
+                        </div>
+
+                        <p v-if="ai.enabled && ai.unavailable && ai.unavailable !== 'ia_apagada'" class="text-xs text-amber-800 bg-amber-50 rounded-lg px-3 py-2">
+                            Ahora mismo no se está leyendo nada: {{ (ai.reasons ?? {})[ai.unavailable] ?? ai.unavailable }}.
+                        </p>
+
+                        <div class="grid md:grid-cols-2 gap-3">
+                            <div class="rounded-xl border border-gray-100 p-4">
+                                <p class="text-sm font-medium text-gray-800">Uso de este mes</p>
+                                <p class="text-xs text-gray-500 mt-0.5">{{ ai.requests_month ?? 0 }} lecturas · US$ {{ Number(ai.spent_usd ?? 0).toFixed(2) }} de US$ {{ Number(ai.budget_usd ?? 0).toFixed(2) }}</p>
+                                <div class="mt-2 h-1.5 rounded-full bg-gray-100 overflow-hidden">
+                                    <div class="h-full rounded-full" :class="aiUsagePercent >= 90 ? 'bg-red-500' : 'bg-fuchsia-500'" :style="{ width: aiUsagePercent + '%' }"></div>
+                                </div>
+                                <p class="text-[11px] text-gray-400 mt-1">Al llegar al tope, los comprobantes quedan para revisión manual hasta el mes siguiente.</p>
+                            </div>
+                            <div class="rounded-xl border border-gray-100 p-4">
+                                <label class="text-sm font-medium text-gray-800">Tope para registrar sin revisión</label>
+                                <p class="text-xs text-gray-500 mt-0.5">Un comprobante por encima de este valor siempre lo revisa una persona.</p>
+                                <input v-model="aiForm.receipts_auto_max_amount" type="number" min="1000" step="1000"
+                                       class="mt-2 w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-accent/30 focus:border-accent transition">
+                                <p v-if="aiForm.errors.receipts_auto_max_amount" class="text-[11px] text-red-600 mt-1">{{ aiForm.errors.receipts_auto_max_amount }}</p>
+                            </div>
+                        </div>
+
+                        <div class="rounded-xl border p-4 text-xs" :class="ai.can_register ? 'border-emerald-100 bg-emerald-50 text-emerald-800' : 'border-gray-100 bg-gray-50 text-gray-600'">
+                            <p class="font-semibold">{{ ai.can_register ? 'Conexión de pagos con ispwatch: activa' : 'Conexión de pagos con ispwatch: sin configurar' }}</p>
+                            <p class="mt-0.5">
+                                <template v-if="ai.can_register">El bot puede registrar en ispwatch los pagos que pasan todas las verificaciones (si lo activas en el bloque «Comprobante de pago» de un flujo).</template>
+                                <template v-else>Sin ella, ningún pago se registra solo: quedan en «Pagos reportados» para registrarlos en ispwatch y marcarlos. Pídela por Soporte.</template>
+                            </p>
+                        </div>
+
+                        <div class="flex items-center justify-between gap-3">
+                            <Link :href="route('payments.index')" class="text-sm font-medium text-accent hover:underline">
+                                Pagos reportados<span v-if="ai.pending_reports"> ({{ ai.pending_reports }} por revisar)</span> →
+                            </Link>
+                            <button type="submit" :disabled="aiForm.processing"
+                                    class="px-5 py-2.5 bg-accent text-white rounded-xl text-sm font-medium hover:bg-accent-hover transition disabled:opacity-50">
+                                {{ aiForm.processing ? 'Guardando…' : 'Guardar' }}
+                            </button>
+                        </div>
+                    </form>
+                </section>
+
+                <!-- ═══════════════ MEDIOS DE PAGO ═══════════════ -->
+                <section v-if="isAdmin" class="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+                    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
+                        <div class="flex items-center">
+                            <div class="w-9 h-9 rounded-xl bg-emerald-50 flex items-center justify-center mr-3">
+                                <svg class="w-5 h-5 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 8.25h19.5M2.25 9h19.5m-16.5 5.25h6m-6 2.25h3m-3.75 3h15a2.25 2.25 0 002.25-2.25V6.75A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25v10.5A2.25 2.25 0 004.5 19.5z"/></svg>
+                            </div>
+                            <div>
+                                <h3 class="text-base font-semibold text-gray-900">Medios de pago</h3>
+                                <p class="text-xs text-gray-500">Dónde te pagan tus clientes. El bot los dice con <code class="text-accent">{{ paymentVariable }}</code> y con el número de cuenta comprueba a dónde se pagó cada comprobante.</p>
+                            </div>
+                        </div>
+                        <div class="flex gap-2 shrink-0">
+                            <button v-if="ai.ispwatch_linked" type="button" @click="importChannels"
+                                    class="px-3 py-2 border border-gray-200 rounded-xl text-xs font-medium text-gray-700 hover:bg-gray-50 transition">
+                                Traer de ispwatch
+                            </button>
+                            <button type="button" @click="newChannel"
+                                    class="px-3 py-2 bg-accent text-white rounded-xl text-xs font-medium hover:bg-accent-hover transition">
+                                + Agregar
+                            </button>
+                        </div>
+                    </div>
+
+                    <ul v-if="paymentChannels.length" class="divide-y divide-gray-50 border border-gray-100 rounded-xl mb-3">
+                        <li v-for="c in paymentChannels" :key="c.id" class="px-4 py-3 flex items-start justify-between gap-3" :class="!c.is_active && 'opacity-60'">
+                            <div class="min-w-0">
+                                <p class="text-sm font-semibold text-gray-900">
+                                    {{ c.name }}
+                                    <span v-if="!c.is_active" class="ml-1 text-[10px] font-semibold text-gray-500">INACTIVO</span>
+                                    <span v-else-if="c.show_in_bot" class="ml-1 text-[10px] font-semibold text-emerald-600">EN EL BOT</span>
+                                    <span v-else class="ml-1 text-[10px] font-semibold text-gray-400">OCULTO</span>
+                                </p>
+                                <p class="text-xs text-gray-600">
+                                    {{ c.account_number || 'Sin número de cuenta' }}<span v-if="c.account_holder"> · a nombre de {{ c.account_holder }}</span>
+                                </p>
+                                <p v-if="c.instructions" class="text-[11px] text-gray-500 truncate">{{ c.instructions }}</p>
+                                <p class="text-[11px] text-gray-400">
+                                    En ispwatch se registra como: {{ methodName(c.ispwatch_payment_method_id) ?? (c.ispwatch_payment_method_id ? `forma #${c.ispwatch_payment_method_id}` : 'sin enlazar') }}
+                                </p>
+                            </div>
+                            <div class="flex gap-1 shrink-0">
+                                <button type="button" class="px-2 py-1 text-xs text-gray-500 hover:text-gray-800" @click="editChannel(c)">Editar</button>
+                                <button type="button" class="px-2 py-1 text-xs text-red-500 hover:text-red-700" @click="deleteChannel(c)">Eliminar</button>
+                            </div>
+                        </li>
+                    </ul>
+                    <p v-else-if="!editingChannel" class="text-xs text-gray-500 bg-gray-50 rounded-xl px-4 py-3 mb-3">
+                        Todavía no tienes medios de pago. Agrégalos (Nequi, cuentas de banco, convenios) o tráelos del catálogo de ispwatch y complétales el número de cuenta.
+                    </p>
+
+                    <form v-if="editingChannel" @submit.prevent="saveChannel" class="rounded-xl border border-gray-200 p-4 space-y-3 mb-3">
+                        <p class="text-sm font-semibold text-gray-800">{{ channelForm.id ? 'Editar medio de pago' : 'Nuevo medio de pago' }}</p>
+                        <div class="grid md:grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-xs font-medium text-gray-700 mb-1">Nombre <span class="text-red-500">*</span></label>
+                                <input v-model="channelForm.name" type="text" maxlength="80" placeholder="Nequi, Bancolombia ahorros…" class="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm">
+                                <p v-if="channelForm.errors.name" class="text-[11px] text-red-600 mt-1">{{ channelForm.errors.name }}</p>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-gray-700 mb-1">Se registra en ispwatch como</label>
+                                <select v-model="channelForm.ispwatch_payment_method_id" class="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm">
+                                    <option :value="null">—</option>
+                                    <option v-for="m in ispwatchPaymentMethods.filter((m) => m.is_active)" :key="m.id" :value="m.id">{{ m.name }}</option>
+                                </select>
+                                <p v-if="channelForm.errors.ispwatch_payment_method_id" class="text-[11px] text-red-600 mt-1">{{ channelForm.errors.ispwatch_payment_method_id }}</p>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-gray-700 mb-1">Número de cuenta, celular o convenio</label>
+                                <input v-model="channelForm.account_number" type="text" maxlength="60" placeholder="300 123 4567" class="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-gray-700 mb-1">A nombre de</label>
+                                <input v-model="channelForm.account_holder" type="text" maxlength="120" class="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm">
+                            </div>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium text-gray-700 mb-1">Indicación para el cliente <span class="text-gray-400">(opcional)</span></label>
+                            <input v-model="channelForm.instructions" type="text" maxlength="500" placeholder="Cuenta de ahorros. Envía el comprobante por este chat." class="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm">
+                        </div>
+                        <div class="flex flex-wrap gap-4 text-xs text-gray-700">
+                            <label class="flex items-center gap-2"><input v-model="channelForm.show_in_bot" type="checkbox" class="rounded border-gray-300 text-accent focus:ring-accent"> Mostrarlo en el bot</label>
+                            <label class="flex items-center gap-2"><input v-model="channelForm.is_active" type="checkbox" class="rounded border-gray-300 text-accent focus:ring-accent"> Activo (cuenta para verificar comprobantes)</label>
+                        </div>
+                        <div class="flex justify-end gap-2">
+                            <button type="button" @click="editingChannel = false" class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-xl">Cancelar</button>
+                            <button type="submit" :disabled="channelForm.processing" class="px-5 py-2 bg-accent text-white rounded-xl text-sm font-medium hover:bg-accent-hover transition disabled:opacity-50">
+                                {{ channelForm.processing ? 'Guardando…' : 'Guardar' }}
+                            </button>
+                        </div>
+                    </form>
+
+                    <div v-if="paymentPreview" class="rounded-xl bg-gray-50 border border-gray-100 p-3">
+                        <p class="text-[11px] font-semibold text-gray-500 mb-1">Así lo ve el cliente cuando el bot usa <code>{{ paymentVariable }}</code>:</p>
+                        <p class="text-xs text-gray-700 whitespace-pre-line">{{ paymentPreview }}</p>
+                    </div>
                 </section>
 
                 <!-- ═══════════════ AVISOS AUTOMÁTICOS ═══════════════ -->

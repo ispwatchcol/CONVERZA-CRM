@@ -12,7 +12,7 @@ defineProps({
 });
 
 /**
- * Las secciones van agrupadas porque son 20: una lista plana de 20 ítems
+ * Las secciones van agrupadas porque son más de 20: una lista plana de 20 ítems
  * en el sidebar es imposible de escanear. Los grupos reflejan cómo se usa
  * el producto (primero entenderlo, luego operarlo, luego automatizarlo),
  * no una categoría arbitraria.
@@ -46,6 +46,7 @@ const groups = [
             { id: 'avisos',     title: 'Avisos automáticos' },
             { id: 'bot',        title: 'Bot de atención' },
             { id: 'flujos',     title: 'Flujos del bot' },
+            { id: 'pagos',      title: 'Pagos con IA' },
         ],
     },
     {
@@ -300,6 +301,8 @@ onUnmounted(() => {
                                     <tr><td class="py-2 px-3">Gestionar Staff y Equipos</td><td class="py-2 px-3 text-center">Ver</td><td class="py-2 px-3 text-center">Ver</td><td class="py-2 px-3 text-center text-accent font-bold">Sí</td></tr>
                                     <tr><td class="py-2 px-3">Configurar el bot</td><td class="py-2 px-3 text-center">Ver</td><td class="py-2 px-3 text-center">Ver</td><td class="py-2 px-3 text-center text-accent font-bold">Sí</td></tr>
                                     <tr><td class="py-2 px-3">Flujos del bot (armar, probar, publicar, encender)</td><td class="py-2 px-3 text-center text-gray-400">—</td><td class="py-2 px-3 text-center text-gray-400">—</td><td class="py-2 px-3 text-center text-accent font-bold">Sí</td></tr>
+                                    <tr><td class="py-2 px-3">«Leer comprobante» en el chat</td><td class="py-2 px-3 text-center text-gray-400">—</td><td class="py-2 px-3 text-center text-accent font-bold">Sí</td><td class="py-2 px-3 text-center text-accent font-bold">Sí</td></tr>
+                                    <tr><td class="py-2 px-3">Pagos reportados (revisar, registrar en ispwatch, descartar) e IA / medios de pago</td><td class="py-2 px-3 text-center text-gray-400">—</td><td class="py-2 px-3 text-center text-gray-400">—</td><td class="py-2 px-3 text-center text-accent font-bold">Sí</td></tr>
                                     <tr><td class="py-2 px-3">Contactos, Etiquetas, Plantillas</td><td class="py-2 px-3 text-center text-accent font-bold">Sí</td><td class="py-2 px-3 text-center text-accent font-bold">Sí</td><td class="py-2 px-3 text-center text-accent font-bold">Sí</td></tr>
                                     <tr><td class="py-2 px-3">Soporte con Converza</td><td class="py-2 px-3 text-center text-gray-400">—</td><td class="py-2 px-3 text-center text-gray-400">—</td><td class="py-2 px-3 text-center text-accent font-bold">Sí</td></tr>
                                 </tbody>
@@ -888,6 +891,7 @@ vence el {{fecha_vencimiento}}.</pre>
                                     <tr><td class="py-2 pr-3 font-medium text-gray-800">Menú</td><td class="py-2">Opciones numeradas, botones (hasta 3) o lista (hasta 10). El cliente elige tocando, con el número, el nombre o una palabra clave. Si no entiende, reintenta y luego sale por «No entendió».</td></tr>
                                     <tr><td class="py-2 pr-3 font-medium text-gray-800">Condición</td><td class="py-2">Sí / No según lo que respondió el cliente, sus etiquetas o el horario (por ejemplo, fuera de horario dejar un mensaje).</td></tr>
                                     <tr><td class="py-2 pr-3 font-medium text-gray-800 whitespace-nowrap">Datos del cliente</td><td class="py-2">Busca al cliente en ispwatch por su teléfono: estado del servicio, facturas pendientes, cuánto debe y cuándo vence. Solo lee.</td></tr>
+                                    <tr><td class="py-2 pr-3 font-medium text-gray-800 whitespace-nowrap">Comprobante de pago</td><td class="py-2">Pide la foto del comprobante (o usa la que el cliente ya mandó), la lee con inteligencia artificial y, si lo activas y pasa todas las verificaciones, registra el pago en ispwatch. Ver <a href="#pagos" class="text-accent hover:underline">Pagos con IA</a>.</td></tr>
                                     <tr><td class="py-2 pr-3 font-medium text-gray-800">Etiquetar</td><td class="py-2">Pone o quita una etiqueta del contacto.</td></tr>
                                     <tr><td class="py-2 pr-3 font-medium text-gray-800">Espera</td><td class="py-2">Pausa unos minutos antes de seguir.</td></tr>
                                     <tr><td class="py-2 pr-3 font-medium text-gray-800 whitespace-nowrap">Pasar a un asesor</td><td class="py-2">Entrega la conversación a tu equipo (o a un equipo en particular), la asigna si tienes la auto-asignación activa y le deja al asesor una nota con todo lo que respondió el cliente.</td></tr>
@@ -901,6 +905,9 @@ vence el {{fecha_vencimiento}}.</pre>
                             En los textos puedes usar datos entre llaves, por ejemplo <code v-pre class="bg-gray-100 px-1.5 py-0.5 rounded text-xs">{{contacto.primer_nombre}}</code>,
                             <code v-pre class="bg-gray-100 px-1.5 py-0.5 rounded text-xs">{{saludo}}</code> (buenos días / tardes / noches) o
                             <code v-pre class="bg-gray-100 px-1.5 py-0.5 rounded text-xs">{{cliente.total_pendiente}}</code> después de un bloque «Datos del cliente».
+                            Con <code v-pre class="bg-gray-100 px-1.5 py-0.5 rounded text-xs">{{empresa.medios_pago}}</code> el bot dice tus medios de pago
+                            (los de <em>Configuración → Medios de pago</em>), y después de un «Comprobante de pago» tienes
+                            <code v-pre class="bg-gray-100 px-1.5 py-0.5 rounded text-xs">{{pago.valor}}</code> y compañía.
                             El botón <em>Insertar variable</em> de cada texto te las muestra todas.
                         </p>
 
@@ -922,6 +929,66 @@ vence el {{fecha_vencimiento}}.</pre>
                             (si ese número sube, agrega palabras clave). En <em>Actividad</em> ves cada conversación paso a paso:
                             qué escribió el cliente, qué le contestó el bot y si WhatsApp lo entregó.
                         </p>
+                    </section>
+
+                    <!-- ─────── Pagos con IA ─────── -->
+                    <section id="pagos" class="bg-white rounded-xl border border-gray-200 p-6 scroll-mt-4">
+                        <h2 class="text-xl font-bold text-gray-900 mb-3">Pagos con IA</h2>
+                        <p class="text-gray-600 mb-4">
+                            Tus clientes te mandan el pantallazo del pago por WhatsApp. Converza lo lee con inteligencia
+                            artificial (valor, fecha, referencia y a qué cuenta se pagó), lo verifica y te lo deja listo en
+                            <em>Pagos reportados</em>. Si lo activas en un flujo, el bot puede registrarlo en ispwatch solo cuando
+                            todo cuadra, y ispwatch reconecta al cliente si estaba cortado.
+                        </p>
+
+                        <h3 class="font-semibold text-gray-800 mt-4 mb-2">Para empezar (administrador)</h3>
+                        <ol class="space-y-2 text-sm text-gray-600 list-decimal list-inside">
+                            <li>En <em>Configuración → Inteligencia artificial</em>, enciende la lectura de comprobantes. La foto del comprobante se envía a un proveedor de IA (xAI) solo para leerla y no queda guardada allá; enciéndela si tu política de tratamiento de datos lo permite.</li>
+                            <li>En <em>Configuración → Medios de pago</em>, usa <em>Traer de ispwatch</em> y complétale a cada medio su <strong>número de cuenta</strong> y a nombre de quién. Con el número, Converza comprueba que el pago haya ido a una cuenta tuya; sin él, ningún pago se registra solo.</li>
+                            <li>Opcional: en un flujo, agrega el bloque <em>Comprobante de pago</em>. Antes, un <em>Mensaje</em> con <code v-pre class="bg-gray-100 px-1.5 py-0.5 rounded text-xs">{{empresa.medios_pago}}</code> le dice al cliente dónde pagar.</li>
+                        </ol>
+
+                        <h3 class="font-semibold text-gray-800 mt-5 mb-2">Desde el chat</h3>
+                        <p class="text-sm text-gray-600">
+                            En cada imagen que mande el cliente aparece <strong>🧾 Leer comprobante</strong>. Al tocarlo, el resultado
+                            llega en segundos como nota interna en el mismo chat, y la imagen queda marcada con su estado. Desde el
+                            chat nunca se registra un pago solo: queda en <em>Pagos reportados</em> para revisión.
+                        </p>
+
+                        <h3 class="font-semibold text-gray-800 mt-5 mb-2">Qué se verifica</h3>
+                        <p class="text-sm text-gray-600 mb-2">Para registrar un pago sin que lo mire nadie, tienen que cumplirse <strong>todas</strong>:</p>
+                        <ul class="space-y-1.5 text-sm text-gray-600 list-disc list-inside">
+                            <li>Es el comprobante de un pago <strong>exitoso</strong> y se leyó con seguridad.</li>
+                            <li>Es de los <strong>últimos 7 días</strong> y trae número de referencia.</li>
+                            <li><strong>No se había reportado</strong> antes (ni esa referencia ni esa imagen) y ispwatch no tiene ya un pago con esa referencia.</li>
+                            <li>Se pagó a <strong>una de tus cuentas</strong>.</li>
+                            <li>El teléfono del chat es de <strong>un</strong> cliente en ispwatch.</li>
+                            <li>El valor <strong>cubre al menos su factura más vieja</strong> y no supera lo que debe.</li>
+                            <li>No supera tu <strong>tope por comprobante</strong> ni los 2 pagos automáticos del día por cliente.</li>
+                            <li>La IA no vio señales de que la imagen fuera editada.</li>
+                        </ul>
+                        <p class="text-sm text-gray-600 mt-2">
+                            Si algo no cuadra, el comprobante queda para revisión y al cliente solo se le dice que tu equipo lo
+                            revisa: nunca qué verificación falló (eso le enseñaría a un estafador qué corregir).
+                        </p>
+
+                        <h3 class="font-semibold text-gray-800 mt-5 mb-2">Pagos reportados (administrador)</h3>
+                        <p class="text-sm text-gray-600 mb-2">
+                            En el menú <em>Pagos reportados</em> ves cada comprobante con su imagen al lado de lo que leyó la IA, cada
+                            verificación con ✓ o ✗, y el cliente con su deuda actual en ispwatch. Puedes:
+                        </p>
+                        <ul class="space-y-1.5 text-sm text-gray-600 list-disc list-inside">
+                            <li><strong>Registrar en ispwatch</strong>, corrigiendo valor, fecha, referencia o medio si hace falta.</li>
+                            <li><strong>Ya lo registré en ispwatch</strong>, si lo registraste allá directamente.</li>
+                            <li><strong>Descartar</strong>, con el motivo.</li>
+                            <li><strong>Cambiar el cliente</strong>, buscándolo en ispwatch por nombre, cédula o teléfono, cuando escribió desde un número que no es el registrado.</li>
+                        </ul>
+
+                        <div class="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-900">
+                            <strong>Lo que la IA no puede ver:</strong> un comprobante falsificado con cuidado (cuenta, valor y
+                            referencia creíbles) solo se detecta comparando con el extracto de tu banco. Los pagos que registra el
+                            bot quedan marcados en ispwatch como «Reportado por WhatsApp», para que los concilies.
+                        </div>
                     </section>
 
                     <!-- ─────── Staff y equipos ─────── -->
@@ -1019,10 +1086,18 @@ vence el {{fecha_vencimiento}}.</pre>
                             se cierran solos, y al cliente no le llega ningún mensaje.
                         </p>
 
+                        <h3 class="font-semibold text-gray-800 mt-5 mb-2">Inteligencia artificial y medios de pago</h3>
+                        <p class="text-sm text-gray-600">
+                            Solo admin. Encender la lectura de comprobantes con IA, ver el consumo del mes, fijar el tope por
+                            comprobante para registrar sin revisión, y cargar tus medios de pago con su número de cuenta. Ver
+                            <a href="#pagos" class="text-accent hover:underline">Pagos con IA</a>.
+                        </p>
+
                         <h3 class="font-semibold text-gray-800 mt-5 mb-2">Integración ispwatch</h3>
                         <p class="text-sm text-gray-600">
                             Informativa, no editable. Muestra si tu workspace está vinculado y el estado de la conexión
-                            (clientes, facturas, pagos). La vinculación la realiza el equipo de Converza.
+                            (clientes, facturas, pagos). La vinculación la realiza el equipo de Converza, y también la
+                            conexión de pagos con la que el bot registra pagos en ispwatch.
                         </p>
 
                         <div class="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-900">

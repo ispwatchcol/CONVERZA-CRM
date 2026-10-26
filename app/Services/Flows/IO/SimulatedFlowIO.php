@@ -2,10 +2,13 @@
 
 namespace App\Services\Flows\IO;
 
+use App\Models\PaymentReport;
 use App\Models\Tenant;
 use App\Services\Flows\CustomerLookup;
+use App\Services\Flows\ReceiptOutcome;
 use App\Services\Flows\SendResult;
 use App\Services\Ispwatch\IspwatchRepository;
+use App\Services\Payments\PaymentChannels;
 use Carbon\CarbonImmutable;
 
 /**
@@ -13,23 +16,33 @@ use Carbon\CarbonImmutable;
  * Anota lo que el bot habría mandado (`outbox`) y lo que habría hecho
  * (`effects`: etiquetas, traspasos, datos guardados en la ficha).
  *
- * Lo único real es la búsqueda en ispwatch, que es de solo lectura: con un
- * teléfono de prueba, el admin ve su flujo con los datos de un cliente de
- * verdad de SU empresa.
+ * Lo único real son las lecturas de solo lectura: la búsqueda en ispwatch (con
+ * un teléfono de prueba, el admin ve su flujo con los datos de un cliente de
+ * verdad de SU empresa) y los medios de pago de la empresa.
+ *
+ * Los comprobantes NO se leen con IA: el admin elige en el simulador qué
+ * resultado probar («válido», «con problemas», «no es un comprobante»). Leer
+ * una imagen de prueba costaría plata y no probaría el flujo mejor.
  */
 final class SimulatedFlowIO implements FlowIO
 {
+    public const RECEIPT_OUTCOMES = ['valid', 'review', 'not_receipt'];
+
     /** @var list<array<string, mixed>> */
     public array $outbox = [];
 
     /** @var list<array<string, mixed>> */
     public array $effects = [];
 
+    private ?ReceiptOutcome $lastReceipt = null;
+
     /**
      * @param array{name: ?string, phone: ?string} $contact
      * @param list<int>          $labels     Etiquetas que tiene el contacto simulado.
      * @param array<int, string> $labelNames Etiquetas del tenant (id => nombre).
      * @param array<int, string> $teamNames  Equipos del tenant (id => nombre).
+     * @param string|null        $receipt    Si el mensaje simulado es un comprobante, qué resultado
+     *                                       simular (uno de RECEIPT_OUTCOMES).
      */
     public function __construct(
         private readonly Tenant $tenant,
@@ -39,6 +52,7 @@ final class SimulatedFlowIO implements FlowIO
         private readonly array $labelNames,
         private readonly array $teamNames,
         private readonly IspwatchRepository $ispwatch,
+        private readonly ?string $receipt = null,
     ) {}
 
     public function sendText(string $text): SendResult
@@ -161,6 +175,57 @@ final class SimulatedFlowIO implements FlowIO
         } catch (\Throwable) {
             return CustomerLookup::unavailable('error');
         }
+    }
+
+    public function paymentMethodsText(): string
+    {
+        try {
+            return app(PaymentChannels::class)->textFor($this->tenant);
+        } catch (\Throwable) {
+            return '';
+        }
+    }
+
+    /** En el simulador, la "imagen previa" es el comprobante con que arrancó la prueba. */
+    public function recentReceiptImage(): ?int
+    {
+        return $this->receipt !== null ? -1 : null;
+    }
+
+    public function startReceipt(int $messageId, bool $autoRegister): ReceiptOutcome
+    {
+        $kind = in_array($this->receipt, self::RECEIPT_OUTCOMES, true) ? $this->receipt : 'valid';
+
+        [$status, $reason] = match ($kind) {
+            'not_receipt' => [PaymentReport::STATUS_NOT_RECEIPT, 'no_es_comprobante'],
+            'review'      => [PaymentReport::STATUS_PENDING_REVIEW, 'verificacion'],
+            default       => $autoRegister
+                ? [PaymentReport::STATUS_REGISTERED, null]
+                : [PaymentReport::STATUS_PENDING_REVIEW, 'sin_auto'],
+        };
+
+        $this->lastReceipt = new ReceiptOutcome(
+            reportId: -1,
+            status: $status,
+            amount: $kind === 'not_receipt' ? null : 50000.0,
+            date: $kind === 'not_receipt' ? null : $this->now()->format('d/m/Y'),
+            reference: $kind === 'not_receipt' ? null : 'M1234567',
+            channel: $kind === 'not_receipt' ? null : 'Nequi',
+            reason: $reason,
+        );
+
+        $this->effects[] = [
+            'kind'   => 'receipt',
+            'status' => $status,
+            'reason' => $reason !== null ? (PaymentReport::REASONS[$reason] ?? $reason) : null,
+        ];
+
+        return $this->lastReceipt;
+    }
+
+    public function receipt(int $reportId, bool $giveUp = false): ?ReceiptOutcome
+    {
+        return $this->lastReceipt;
     }
 
     public function handoff(?int $teamId, bool $assign, ?string $note): array

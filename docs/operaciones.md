@@ -250,6 +250,11 @@ cat /var/www/converza-crm/storage/app/webhooks-reconcile.marca
 sudo -u www-data php /var/www/converza-crm/artisan tinker \
   --execute="echo App\Models\BotFlowRun::withoutGlobalScopes()->where('status','waiting_timer')->where('resume_at','<',now()->subMinutes(5))->count();"
 
+# ¿El worker de IA está vivo y la cola `ai` al día? (comprobantes de pago)
+sudo supervisorctl status converza-ai:*
+sudo -u www-data php /var/www/converza-crm/artisan tinker \
+  --execute="echo Illuminate\Support\Facades\Queue::size('ai');"
+
 # Logs en vivo
 sudo tail -f /var/www/converza-crm/storage/logs/laravel.log
 sudo tail -f /var/log/supervisor/converza-worker.log
@@ -728,6 +733,94 @@ Con el flujo apagado, el tenant vuelve al bot clásico si lo tiene encendido.
 Si el tenant tiene **cualquier** flujo encendido, el clásico está en pausa por
 diseño (nunca contestan los dos). Configuración lo muestra como «en pausa por un
 flujo».
+
+### Comprobantes con IA
+
+<a id="comprobantes-con-ia"></a>
+Arquitectura en [agente-ia.md](agente-ia.md). Lo primero siempre es la pantalla
+**Pagos reportados** (admin): cada comprobante con su imagen, lo transcrito, cada
+verificación con su motivo y el `reason` de por qué quedó donde quedó. Y en el
+chat, la nota interna `🧾 …` que deja cada paso.
+
+#### Encender, en este orden
+
+1. El worker: `sudo supervisorctl status converza-ai:*` → `RUNNING`
+   ([deploy/DEPLOY.md, paso 4 bis](../deploy/DEPLOY.md)).
+2. `.env`: `XAI_API_KEY=…` y `AI_ENABLED=true`. Para registrar pagos, además
+   `ISPWATCH_API_URL=https://ispwatch-crm.app`.
+3. `php artisan config:cache` **y** `sudo -n /bin/systemctl reload php8.2-fpm`.
+4. La empresa: Configuración → Inteligencia artificial → encender. Para el
+   registro automático, el superadmin carga la credencial de ispwatch de esa
+   empresa en Admin → Tenants y el admin del ISP marca la casilla en el bloque.
+
+#### 🔴 Frenar la IA YA (todas las empresas)
+
+```bash
+ssh deploy@159.223.140.27
+cd /var/www/converza-crm
+cp .env .env.bak.$(date +%Y%m%d-%H%M)
+sed -i 's|^AI_ENABLED=.*|AI_ENABLED=false|' .env
+php artisan config:cache                  # sin esto no surte efecto: prod cachea la config
+sudo -n /bin/systemctl reload php8.2-fpm  # sin esto PHP-FPM sigue con la config vieja
+sudo supervisorctl restart converza-ai:*
+```
+
+Nada más sale al proveedor; los comprobantes siguen llegando a «Pagos reportados»
+sin leer (`reason = ia_apagada_global`). Para frenar solo el **registro**
+automático: quitar la credencial de ispwatch de la empresa en Admin → Tenants.
+
+#### 🟠 Un comprobante no se leyó
+
+| `reason` | Qué pasó | Qué hacer |
+|---|---|---|
+| `ia_sin_respuesta` | El flujo esperó 5 min y la lectura no llegó | ¿Worker `converza-ai` corriendo? ¿Cola `ai` atascada? (comandos de §4.3). Si el worker estaba caído, al volver completa los datos del reporte |
+| `ia_error` | El proveedor falló y no se arregla reintentando | `ai_usage_logs.error` (abajo). Un 400 que menciona `reasoning` → `XAI_REASONING_EFFORT=` vacío; 401 → la llave |
+| `sin_llave` | Falta `XAI_API_KEY` | `.env` + `config:cache` + reload |
+| `presupuesto_agotado` | La empresa llegó a su tope del mes | Subirlo en Admin → Tenants, o esperar al mes siguiente |
+| `ia_apagada` / `ia_apagada_global` | Apagada en la empresa / en Converza | Configuración de la empresa / `AI_ENABLED` |
+| `formato_no_soportado` | PDF u otro formato (la Fase 1 solo lee jpg/png) | Revisarlo a mano |
+| `imagen_no_disponible` | La descarga del medio desde Meta falló | Ver «Enviar imagen o audio da 500» (permisos de storage) |
+
+```bash
+# Las últimas llamadas a la IA con error
+sudo -u www-data php /var/www/converza-crm/artisan tinker --execute="
+App\Models\AiUsageLog::withoutGlobalScopes()->where('status','error')->latest('id')->limit(10)
+  ->get(['tenant_id','model','error','latency_ms','created_at'])->each(fn (\$l) => print(json_encode(\$l).PHP_EOL));"
+```
+
+#### 🟠 Un comprobante válido no se registró solo
+
+Es lo esperado mientras falte algo; el detalle está en el reporte:
+
+| `reason` | Por qué |
+|---|---|
+| `sin_auto` | Vino del chat, o el bloque no tiene marcada «registrar sin revisión» |
+| `sin_conexion` | La empresa no tiene credencial de ispwatch, o falta `ISPWATCH_API_URL` |
+| `verificacion` | Alguna verificación no dio ✓ (ver la lista en el detalle). La más común al principio: **`cuenta`**, porque la empresa no cargó los números de cuenta en Medios de pago |
+| `ispwatch_rechazo` | ispwatch contestó con un error definitivo; el mensaje está en el detalle (`last_error`). Un 404 = el endpoint todavía no existe en ispwatch |
+| `ispwatch_error` | ispwatch no respondió tras 3 intentos |
+
+```sql
+-- Comprobantes del día por estado y motivo
+SELECT status, reason, count(*) FROM payment_reports
+WHERE tenant_id = 1 AND created_at > now() - interval '1 day'
+GROUP BY 1, 2 ORDER BY 3 DESC;
+
+-- Gasto de IA del mes por empresa
+SELECT tenant_id, count(*), round(sum(cost_usd)::numeric, 4) AS usd
+FROM ai_usage_logs WHERE created_at >= date_trunc('month', now())
+GROUP BY 1 ORDER BY 3 DESC;
+```
+
+#### 🟠 Un pago quedó registrado dos veces
+
+No debería poder pasar: cada pedido a ispwatch lleva la llave
+`converza-payment-report-{id}` (la misma en cada reintento) y los repetidos por
+referencia o por imagen quedan como `duplicate`. Si pasa, buscar en ispwatch los
+pagos con esa referencia y `source = converza_whatsapp`, reversar allá el
+sobrante, y revisar si las dos fotos tenían referencias distintas (la IA leyó
+mal una) — en ese caso el comprobante era el mismo y la verificación `repetido`
+solo vio la imagen distinta.
 
 ### 🔴 Un tenant ve datos de otro
 

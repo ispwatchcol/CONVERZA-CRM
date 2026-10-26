@@ -15,6 +15,8 @@ use App\Http\Controllers\MetricsController;
 use App\Http\Controllers\NotificationLogController;
 use App\Http\Controllers\BotSettingsController;
 use App\Http\Controllers\FlowController;
+use App\Http\Controllers\PaymentChannelController;
+use App\Http\Controllers\PaymentReportController;
 use App\Http\Controllers\SettingsController;
 use App\Http\Controllers\SupportController;
 use App\Http\Controllers\MediaController;
@@ -80,6 +82,8 @@ Route::middleware('auth')->group(function () {
     Route::post('/chat/conversations/{conversation}/reopen', [ChatController::class, 'reopen'])->middleware('role:agent')->name('chat.conversations.reopen');
     Route::post('/chat/contacts/{contact}/labels', [ChatController::class, 'updateContactLabels'])->middleware('role:agent')->name('chat.contacts.labels');
     Route::delete('/chat/conversations/{conversation}', [ChatController::class, 'destroy'])->middleware('role:admin')->name('chat.conversations.destroy');
+    // «Leer comprobante»: la IA lee la imagen y el resultado llega como nota interna.
+    Route::post('/chat/messages/{message}/receipt', [PaymentReportController::class, 'readFromChat'])->whereNumber('message')->middleware('role:agent')->name('chat.messages.receipt');
 
     // Media files (bypasses storage symlink issues, requires auth)
     Route::get('/media/{path}', [MediaController::class, 'serve'])
@@ -178,6 +182,19 @@ Route::middleware('auth')->group(function () {
         Route::get('/{flow}/runs', [FlowController::class, 'runs'])->whereNumber('flow')->name('runs');
     });
 
+    // ── Pagos reportados: comprobantes leídos con IA (docs/agente-ia.md) ─────
+    // Solo admin: muestra comprobantes de todas las conversaciones y desde aquí
+    // se registra plata en ispwatch.
+    Route::middleware('role:admin')->prefix('pagos')->name('payments.')->group(function () {
+        Route::get('/', [PaymentReportController::class, 'index'])->name('index');
+        Route::get('/clientes', [PaymentReportController::class, 'searchCustomers'])->name('customers.search');
+        Route::get('/{report}', [PaymentReportController::class, 'show'])->whereNumber('report')->name('show');
+        Route::post('/{report}/registrar', [PaymentReportController::class, 'register'])->whereNumber('report')->name('register');
+        Route::post('/{report}/ya-registrado', [PaymentReportController::class, 'markRegistered'])->whereNumber('report')->name('mark-registered');
+        Route::post('/{report}/descartar', [PaymentReportController::class, 'reject'])->whereNumber('report')->name('reject');
+        Route::put('/{report}/cliente', [PaymentReportController::class, 'assignCustomer'])->whereNumber('report')->name('customer');
+    });
+
     // Metrics
     Route::get('/metrics', [MetricsController::class, 'index'])->name('metrics.index');
 
@@ -265,6 +282,14 @@ Route::middleware('auth')->group(function () {
     Route::put('/settings/notifications', [SettingsController::class, 'updateNotifications'])->name('settings.notifications.update');
     Route::put('/settings/assignment', [SettingsController::class, 'updateAssignment'])->middleware('role:admin')->name('settings.assignment.update');
     Route::put('/settings/auto-close', [SettingsController::class, 'updateAutoClose'])->middleware('role:admin')->name('settings.autoclose.update');
+    // Inteligencia artificial y medios de pago (comprobantes, docs/agente-ia.md).
+    Route::middleware('role:admin')->group(function () {
+        Route::put('/settings/ai', [SettingsController::class, 'updateAi'])->name('settings.ai.update');
+        Route::post('/settings/payment-channels', [PaymentChannelController::class, 'store'])->name('settings.payment-channels.store');
+        Route::post('/settings/payment-channels/import', [PaymentChannelController::class, 'import'])->name('settings.payment-channels.import');
+        Route::put('/settings/payment-channels/{channel}', [PaymentChannelController::class, 'update'])->whereNumber('channel')->name('settings.payment-channels.update');
+        Route::delete('/settings/payment-channels/{channel}', [PaymentChannelController::class, 'destroy'])->whereNumber('channel')->name('settings.payment-channels.destroy');
+    });
     Route::post('/settings/whatsapp/test', [SettingsController::class, 'testWhatsAppConnection'])->name('settings.whatsapp.test');
     Route::get('/settings/whatsapp/health', [SettingsController::class, 'whatsappHealth'])->name('settings.whatsapp.health');
     Route::get('/settings/ispwatch/status', [SettingsController::class, 'ispwatchStatus'])->name('settings.ispwatch.status');

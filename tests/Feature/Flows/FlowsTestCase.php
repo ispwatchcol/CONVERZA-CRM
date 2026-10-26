@@ -14,6 +14,7 @@ use App\Services\Flows\GraphBuilder;
 use App\Services\WhatsAppService;
 use Carbon\CarbonInterface;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Http\Client\Request as HttpRequest;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Schema;
 use Tests\TestCase;
@@ -45,7 +46,11 @@ abstract class FlowsTestCase extends TestCase
         config()->set('services.whatsapp.token', 'test-token');
 
         $counter = 0;
-        Http::fake(function () use (&$counter) {
+        Http::fake(function (HttpRequest $request) use (&$counter) {
+            if (($response = $this->fakeExternal($request)) !== null) {
+                return $response;
+            }
+
             $counter++;
 
             return Http::response(['messages' => [['id' => 'wamid.OUT' . $counter]]], 200);
@@ -218,9 +223,21 @@ abstract class FlowsTestCase extends TestCase
         });
 
         (require base_path('database/migrations/2026_09_30_000001_create_bot_flows_tables.php'))->up();
+        // Comprobantes con IA: columnas nuevas de tenants, medios de pago,
+        // reportes de pago y bitácora de uso de IA. También con SU migración.
+        (require base_path('database/migrations/2026_10_25_000001_create_payment_reports_tables.php'))->up();
     }
 
     // ── Ayudas ──────────────────────────────────────────────────────────────
+
+    /**
+     * Respuesta para una petición que NO es un envío a WhatsApp (la IA, la API
+     * de ispwatch, la descarga de un medio). null = se responde como WhatsApp.
+     */
+    protected function fakeExternal(HttpRequest $request): mixed
+    {
+        return null;
+    }
 
     /** Crea, publica y (por defecto) enciende un flujo. Falla la prueba si no valida. */
     protected function publishedFlow(GraphBuilder|array $graph, bool $active = true, string $name = 'Atención'): BotFlow
