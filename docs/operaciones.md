@@ -6,7 +6,8 @@
 **Archivos clave**
 - [.github/workflows/deploy.yml](../.github/workflows/deploy.yml) — el pipeline
 - [deploy/DEPLOY.md](../deploy/DEPLOY.md) — setup inicial del servidor
-- [deploy/supervisor/converza-worker.conf](../deploy/supervisor/converza-worker.conf) — workers
+- [deploy/supervisor/converza-worker.conf](../deploy/supervisor/converza-worker.conf) — workers de la cola de mensajes
+- [deploy/supervisor/converza-ai.conf](../deploy/supervisor/converza-ai.conf) — worker de la cola de IA (comprobantes)
 
 ---
 
@@ -24,7 +25,7 @@
 | SSL | Let's Encrypt (Certbot, renovación automática) |
 | Base de datos | PostgreSQL en Supabase, schema `converza` |
 | Cache / sesión | Redis local |
-| Cola | Tabla `jobs`, 4 workers de Supervisor |
+| Cola | Redis; 2 workers de Supervisor (`default`) + 1 (`ai`) |
 
 > **1 GB de RAM es la restricción que explica el diseño del deploy.** No corras
 > `npm run build` en el droplet: el OOM-killer mata a Vite. Se buildea siempre en
@@ -143,21 +144,29 @@ sudo visudo -f /etc/sudoers.d/deploy-reload
 ```
 deploy ALL=(ALL) NOPASSWD: /bin/systemctl reload php8.2-fpm
 deploy ALL=(ALL) NOPASSWD: /usr/bin/supervisorctl restart converza-worker:*
+deploy ALL=(ALL) NOPASSWD: /usr/bin/supervisorctl restart converza-ai:*
 ```
 
-**3. Supervisor**
+**3. Supervisor** — dos archivos, uno por cola. Van separados para que instalar o
+tocar el de IA nunca reinicie los workers de mensajes.
 
 ```bash
 sudo apt-get install -y supervisor
 sudo systemctl enable --now supervisor
 sudo cp /var/www/converza-crm/deploy/supervisor/converza-worker.conf /etc/supervisor/conf.d/
+sudo cp /var/www/converza-crm/deploy/supervisor/converza-ai.conf /etc/supervisor/conf.d/
 sudo supervisorctl reread && sudo supervisorctl update
-sudo supervisorctl start converza-worker:*
-sudo supervisorctl status converza-worker:*    # 4 procesos RUNNING
+sudo supervisorctl status    # converza-worker: 2 procesos · converza-ai: 1 · todos RUNNING
 ```
 
-Verifica antes que PHP-FPM corra como `www-data`; si no, ajusta `user=` en el
+Verifica antes que PHP-FPM corra como `www-data`; si no, ajusta `user=` en los
 `.conf`.
+
+> Los archivos del repo son la fuente de verdad **y tienen que coincidir con el
+> servidor**. Hasta el 26/10/2026 no coincidían: el servidor tenía `numprocs=2`
+> (bajado a mano el 20/08 por memoria) y el repo seguía en 4, así que copiar el
+> del repo habría vuelto a mandar el droplet a swap. Antes de copiar, compara:
+> `diff /etc/supervisor/conf.d/converza-worker.conf deploy/supervisor/converza-worker.conf`.
 
 **4. Permisos de storage** — ver §6.
 
@@ -284,16 +293,23 @@ free -m
 
 ## 5. Escalado
 
-Si la cola se acumula de forma sostenida:
+Si la cola se acumula de forma sostenida (`Queue::size()` creciendo sin bajar):
 
 ```bash
+# Primero en el repo (es la fuente de verdad), después en el servidor:
 sudo nano /etc/supervisor/conf.d/converza-worker.conf
-# numprocs=4 → 8
+# numprocs=2 → 3 o 4
 sudo supervisorctl reread && sudo supervisorctl update
 ```
 
-Regla de dedo: 1 worker por core. Con 1 GB de RAM, subir de 8 puede provocar
-swapping — antes de eso, agranda el droplet.
+El límite del droplet es la **memoria**, no la CPU: cada worker crece hasta ~98 MB
+antes del reciclado horario, y con 4 (más el de IA y PHP-FPM) el sistema vuelve a
+swap. Antes de pasar de 4, agranda el droplet. La cuenta completa está en el
+comentario de `converza-worker.conf`.
+
+> Esta sección decía "numprocs=4 → 8" y "1 worker por core". Era el consejo
+> estándar de Laravel, y en este droplet empujó 380 MB a swap: lo que pesa aquí
+> es la RAM.
 
 ---
 

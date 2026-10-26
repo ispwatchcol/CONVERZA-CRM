@@ -483,14 +483,21 @@ banco y conciliar contra los pagos con `source = converza_whatsapp`.
 
 ## 13. Pendientes que no son código
 
-Van como tareas de Jira (CON para Converza, KAN para ISPWatch):
+Van como tareas de Jira (CON para Converza, KAN para ISPWatch). Estado al
+26/10/2026:
 
 1. **KAN** — Endpoint `POST /api/v1/integrations/payments` según el §7.
-2. **CON** — Migración en `converza_dev` (el deploy solo migra `converza`).
-3. **CON** — Droplet: instalar el programa `converza-ai`, sumar
-   `supervisorctl restart converza-ai:*` a sudoers, `XAI_API_KEY` +
-   `AI_ENABLED=true` en el `.env`, `config:cache` + reload de PHP-FPM.
+   *Pendiente.*
+2. **CON** — Migración en `converza_dev`. *Hecho el 26/10/2026* (en `converza`
+   la corrió el deploy del PR #95).
+3. **CON** — Droplet. *Hecho:* bloque de IA en el `.env` (`AI_ENABLED=false`,
+   `ISPWATCH_API_URL`), con `config:cache`, reload de PHP-FPM y reinicio de
+   workers. *Pendiente, requiere root* (el usuario `deploy` solo tiene sudo sin
+   contraseña para reiniciar `converza-worker` y recargar PHP-FPM): instalar
+   `converza-ai.conf` (ya está copiado en `/home/deploy/converza-ai.conf`) y la
+   línea de sudoers de `converza-ai`. *Pendiente, requiere la llave:*
+   `XAI_API_KEY` y recién entonces `AI_ENABLED=true`.
 4. **CON** — Piloto de la Fase 2 en el tenant interno (§11) antes de encender el
-   registro automático en un ISP.
+   registro automático en un ISP. *Acordado.*
 5. **CON** — Fase 3 (agente) y Fase 4 (cédula y prospectos), con la FAQ en base
    (CON-62) como prerrequisito de la 3.

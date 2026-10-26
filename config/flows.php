@@ -18,7 +18,7 @@ return [
     // del cliente, el arranque o el fin de una espera). El validador ya impide
     // publicar un ciclo que no espere al cliente; esto es la red por si algo se
     // le escapa: corta el bucle, lo registra y entrega la conversación al equipo
-    // en vez de ocupar un worker (hay cuatro).
+    // en vez de ocupar un worker (hay dos para esta cola).
     'max_steps_per_event' => (int) env('FLOWS_MAX_STEPS_PER_EVENT', 25),
 
     // Tope de bloques en toda la vida de una ejecución.
