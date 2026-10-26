@@ -418,11 +418,20 @@ Runbook completo en [operaciones.md](operaciones.md#comprobantes-con-ia).
 ### Fase 2 — Encender el registro automático (repo ISPWatch + operación)
 
 1. ISPWatch publica el endpoint del §7 (tarea KAN).
-2. Emitir la credencial de una empresa piloto y cargarla en Admin → Tenants.
-3. Piloto con el tenant interno: flujo con «Comprobante de pago» y registro
-   automático **apagado** dos semanas, midiendo en «Pagos reportados» cuántos
-   habrían pasado todas las verificaciones y cuántos de esos estaban bien.
-4. Recién con esa medición, encender el registro automático.
+2. **Prueba de punta a punta en el tenant interno**, que está vinculado al
+   tenant de pruebas de ispwatch (#17): un comprobante de prueba recorre lectura,
+   verificación y registro sin tocar la plata de nadie. Sirve para la plomería,
+   **no** como piloto: a nuestro número le escriben ISPs (sus pagos van al Core
+   Brain, no a ispwatch), no suscriptores con comprobantes.
+3. **Piloto real en un ISP** con clientes (Chaguaní o Tocaima): IA encendida y
+   registro automático **apagado** dos semanas, midiendo en «Pagos reportados»
+   cuántos habrían pasado todas las verificaciones y cuántos de esos estaban
+   bien. Emitir su credencial en ispwatch y cargarla en Admin → Tenants.
+4. Recién con esa medición, encender el registro automático en ese ISP.
+
+> El 25/10 este plan decía "piloto con el tenant interno". Estaba mal por lo del
+> punto 2: ahí no llegan comprobantes de suscriptores, así que dos semanas de
+> piloto no habrían medido nada.
 
 Mejora natural de esta fase: avisarle al cliente cuando una persona registra su
 pago desde «Pagos reportados» (hoy se le escribe desde el chat).
@@ -497,7 +506,8 @@ Van como tareas de Jira (CON para Converza, KAN para ISPWatch). Estado al
    `converza-ai.conf` (ya está copiado en `/home/deploy/converza-ai.conf`) y la
    línea de sudoers de `converza-ai`. *Pendiente, requiere la llave:*
    `XAI_API_KEY` y recién entonces `AI_ENABLED=true`.
-4. **CON** — Piloto de la Fase 2 en el tenant interno (§11) antes de encender el
-   registro automático en un ISP. *Acordado.*
+4. **CON** — Fase 2 (§11): prueba de punta a punta en el tenant interno (contra
+   el tenant de pruebas de ispwatch) y piloto real de dos semanas en un ISP con
+   el registro automático apagado. *Acordado; falta elegir el ISP.*
 5. **CON** — Fase 3 (agente) y Fase 4 (cédula y prospectos), con la FAQ en base
    (CON-62) como prerrequisito de la 3.
