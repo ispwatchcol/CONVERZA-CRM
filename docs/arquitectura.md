@@ -267,7 +267,10 @@ Dentro de `ProcessIncomingWhatsAppMessage`:
    encendidos, despacha el bot clásico `HandleBotResponse` como siempre. El
    enrutador está aislado con try/catch: si falla, el mensaje sigue sin bot. Ver
    [workflows-bot.md §5](workflows-bot.md#5-cómo-se-enruta-un-mensaje) y
-   [bot.md](bot.md).
+   [bot.md](bot.md). Si el mensaje es la foto de un comprobante y el flujo está
+   en un bloque «Comprobante de pago», la lectura **no** corre aquí: el bloque
+   deja la ejecución en `waiting_task` y la lectura va a la cola `ai`
+   ([agente-ia.md §2.3](agente-ia.md#23-lo-lento-afuera-lo-que-actúa-adentro)).
 9. Auto-asigna al agente menos ocupado si el tenant lo tiene activado y ningún
    bot tiene la conversación.
 
@@ -369,6 +372,13 @@ WebSockets. Ver
   `protected $connection = 'ispwatch'`.
 - **Solo lectura, sin excepciones.** En producción debería usarse el rol
   `converza_reader` (SELECT-only) — ver [ispwatch-readonly.sql](ispwatch-readonly.sql).
+- **Lo que hay que escribir en ispwatch se le pide a ispwatch por su API**, nunca
+  por la base. Hoy es una sola cosa: registrar el pago de un comprobante
+  ([`IspwatchPaymentsApi`](../app/Services/Payments/IspwatchPaymentsApi.php),
+  contrato en [agente-ia.md §7](agente-ia.md#7-contrato-con-ispwatch-el-endpoint-de-registro-pendiente-repo-ispwatch)),
+  con una credencial por empresa (`tenants.ispwatch_api_token`, cifrada).
+  Registrar un pago allá es un proceso —abonar, arrastrar saldos, reconectar—,
+  no un INSERT: reimplementarlo aquí haría divergir las dos copias.
 - Las consultas de UI (sidebar del chat, estado en Settings) están **cacheadas
   60 s**. Las de batch (avisos automáticos) **no** se cachean: la frescura importa.
 
@@ -399,6 +409,18 @@ reintentos son solo para esperar el lock de la conversación; una excepción no 
 reintenta, porque reenviaría al cliente lo que ya salió. En producción corren 4 workers de Supervisor con `--max-time=3600`
 (reinicio horario contra fugas de memoria).
 
+### Jobs (cola `ai`)
+
+| Job | Disparado por | Qué hace |
+|---|---|---|
+| [`ProcessPaymentReport`](../app/Jobs/ProcessPaymentReport.php) | Bloque «Comprobante de pago» (vía `FlowRunner`, al soltar el lock) · botón «Leer comprobante» del chat · «Registrar en ispwatch» | Lee el comprobante con IA, lo verifica, decide y, si toca, le pide el registro a ispwatch. Al terminar despierta al flujo que esperaba |
+
+Cola propia (`config('ai.queue')`) y programa propio de Supervisor
+(`converza-ai`, un proceso): una lectura tarda segundos y no puede quedar delante
+de la ingesta. A diferencia de `RunBotFlow`, **sí** se reintenta tras una
+excepción (`tries = 3`, backoff 10 s y 30 s): no le escribe al cliente y retoma
+donde quedó. Ver [agente-ia.md](agente-ia.md).
+
 ### Scheduler ([routes/console.php](../routes/console.php))
 
 | Comando | Frecuencia | Propósito |
@@ -406,7 +428,7 @@ reintenta, porque reenviaría al cliente lo que ya salió. En producción corren
 | `whatsapp:billing-notify` | cada minuto | Factura generada / recordatorio / suspensión |
 | `whatsapp:events-notify` | cada minuto | Bienvenida / pago / falla masiva de router |
 | `campaigns:tick` | cada minuto | Promueve campañas agendadas y despacha lotes |
-| `flows:tick` | cada minuto | Reanuda las Esperas de los flujos y cierra ejecuciones abandonadas |
+| `flows:tick` | cada minuto | Reanuda las Esperas de los flujos, despierta a las que esperan una tarea vencida (comprobante sin leer a tiempo → revisión) y cierra ejecuciones abandonadas |
 | `brain:billing-run` | cada hora, 8 a. m.–8 p. m. (Bogotá) | Cobro automático del SaaS a los ISP: factura, recuerda, corta y reactiva ([core-brain.md §8](core-brain.md)) |
 | `brain:expenses-recurring` | diario 06:00 (Bogotá) | Registra los gastos fijos del negocio a los que les llegó el día |
 | `media:clean` | domingos 03:00 | Borra medios de más de `MEDIA_CLEANUP_DAYS` días |
@@ -432,6 +454,8 @@ Todos usan `withoutOverlapping()` y `onOneServer()`.
 | `Message.type = 'system'` para transferencias | Tabla de auditoría | Ídem: el evento se ve en el hilo, donde el agente lo necesita |
 | Avisos con `tries` de catch-up | Reintento inmediato | Un ISP caído un día entero recupera sus avisos; la idempotencia por ciclo impide duplicar |
 | Build de assets en el runner de CI | `npm run build` en el droplet | El droplet tiene 1 GB de RAM y el OOM-killer mata a Vite |
+| La IA solo transcribe comprobantes; reglas fijas deciden; ispwatch registra por API | Un agente con herramientas que registre pagos | Una imagen puede traer instrucciones; con la IA fuera de la decisión, lo peor que logra es un JSON que después se verifica ([agente-ia.md §2](agente-ia.md#2-las-decisiones-y-por-qué)) |
+| Cola y worker propios para la IA | Cola `default` | Una ráfaga de comprobantes a principio de mes no puede demorar la ingesta de mensajes |
 
 ---
 
@@ -493,8 +517,11 @@ Saber esto ahorra búsquedas inútiles:
 - **No hay WebSockets.** Ver §7.
 - **No hay verificación de firma del webhook.** `X-Hub-Signature-256` se reenvía
   al forwarder pero no se valida. Ver [mejoras.md](mejoras.md#m-01-el-webhook-no-verifica-la-firma-de-meta).
-- **No hay tests significativos.** `tests/Feature/WhatsAppTest.php` prueba rutas
-  que ya no existen. Ver [mejoras.md](mejoras.md#m-02-la-suite-de-tests-está-muerta).
+- **Los tests cubren el Workspace, el cobro, los tickets y los comprobantes**,
+  pero `tests/Feature/WhatsAppTest.php` y `ExampleTest.php` siguen probando rutas
+  que ya no existen y fallan también en `main` (3 fallos conocidos). Este punto
+  decía "no hay tests significativos": dejó de ser cierto con el Workspace de
+  flujos. Ver [mejoras.md](mejoras.md#m-02-la-suite-de-tests-está-muerta).
 - **No hay rate limiting** en las rutas de escritura.
 - **No hay soft-deletes** en `conversations` / `messages`: `ChatController::destroy`
   borra de verdad.

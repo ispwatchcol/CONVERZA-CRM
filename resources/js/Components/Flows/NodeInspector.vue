@@ -44,7 +44,15 @@ watch(() => props.node.id, () => {
         d.assign ??= 'auto';
         d.note ??= true;
     }
+    if (props.node.type === 'receipt') {
+        d.max_retries ??= 1;
+        d.use_recent_image ??= true;
+        d.auto_register ??= false;
+    }
 }, { immediate: true });
+
+// ── Comprobante de pago ──────────────────────────────────────────────────────
+const payments = computed(() => props.catalog.payments ?? {});
 
 // ── Inicio ───────────────────────────────────────────────────────────────────
 const idleEnabled = computed({
@@ -426,6 +434,68 @@ const maxWait = computed(() => props.catalog.limits?.max_wait_minutes ?? 1380);
                 Si varios clientes comparten el teléfono, se elige el que mejor coincide con el nombre del contacto.
                 Los saldos son lo que el cliente debe de verdad (ya descontado su saldo a favor).
             </p>
+        </template>
+
+        <!-- ═══ COMPROBANTE DE PAGO ═══ -->
+        <template v-else-if="node.type === 'receipt'">
+            <p v-if="!payments.aiEnabled" class="text-xs text-amber-800 bg-amber-50 rounded-lg px-3 py-2">
+                La lectura con IA está apagada para tu empresa (Configuración → Inteligencia artificial): los comprobantes van a
+                llegar a «Pagos reportados» sin leer, y el flujo siempre sale por «Para revisión».
+            </p>
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Mensaje que pide el comprobante</label>
+                <FlowTextarea v-model="data.text" :variables="variables" :rows="3" />
+                <p class="text-[11px] text-gray-500 mt-1">Para decirle dónde pagar, usa <code class="text-accent" v-text="token('empresa.medios_pago')"></code> en un Mensaje antes de este bloque.</p>
+            </div>
+
+            <label class="flex items-start gap-2 text-sm text-gray-700">
+                <input v-model="data.use_recent_image" type="checkbox" class="mt-0.5 rounded border-gray-300 text-accent focus:ring-accent" />
+                <span>Si el cliente ya mandó la foto (en los últimos 30 minutos), usarla sin volver a pedirla</span>
+            </label>
+
+            <div class="rounded-xl border p-3 space-y-2" :class="data.auto_register ? 'border-fuchsia-200 bg-fuchsia-50' : 'border-gray-200'">
+                <label class="flex items-start gap-2 text-sm text-gray-800">
+                    <input v-model="data.auto_register" type="checkbox" class="mt-0.5 rounded border-gray-300 text-accent focus:ring-accent" />
+                    <span><strong>Registrar el pago en ispwatch sin revisión</strong> cuando pase todas las verificaciones</span>
+                </label>
+                <p class="text-[11px] text-gray-600 pl-6">
+                    Se verifica que sea un pago exitoso y reciente, a una de tus cuentas, de un cliente identificado por su teléfono, que
+                    no esté repetido, que cuadre con lo que debe y que no supere tu tope. Si algo no cuadra, sale por «Para revisión».
+                </p>
+                <p v-if="data.auto_register && !payments.canRegister" class="text-[11px] text-amber-800 bg-amber-50 rounded-lg px-2 py-1.5">
+                    Tu empresa todavía no tiene la conexión de pagos con ispwatch: hasta que la tenga, ninguno se registra solo.
+                </p>
+                <p v-if="data.auto_register && !payments.channelsWithAccount" class="text-[11px] text-amber-800 bg-amber-50 rounded-lg px-2 py-1.5">
+                    No tienes números de cuenta en tus medios de pago (Configuración → Medios de pago): sin ellos ninguno pasa la verificación de cuenta.
+                </p>
+            </div>
+
+            <div class="grid grid-cols-3 gap-3 items-end">
+                <div class="col-span-2">
+                    <label class="block text-xs font-medium text-gray-700 mb-1">Si no manda una imagen, decir</label>
+                    <input v-model="data.retry_text" type="text" placeholder="Para registrar tu pago necesito la foto o el pantallazo del comprobante 📸"
+                           class="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm" />
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-gray-700 mb-1">Reintentos</label>
+                    <select v-model.number="data.max_retries" class="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm">
+                        <option v-for="n in [0, 1, 2, 3]" :key="n" :value="n">{{ n }}</option>
+                    </select>
+                </div>
+            </div>
+            <p class="text-[11px] text-gray-500 -mt-3">Agotados los reintentos (también si manda una foto que no es un comprobante), sale por «No mandó un comprobante».</p>
+
+            <div class="rounded-xl bg-gray-50 p-3">
+                <p class="text-xs font-semibold text-gray-700 mb-2">Después de este bloque puedes usar:</p>
+                <ul class="space-y-1">
+                    <li v-for="v in variables.filter(v => v.name.startsWith('pago.'))" :key="v.name" class="text-[11px] text-gray-600">
+                        <code class="text-accent" v-text="token(v.name)"></code> — {{ v.description }}
+                    </li>
+                </ul>
+                <p class="text-[11px] text-gray-500 mt-2">
+                    El cliente nunca ve por qué un comprobante fue a revisión: eso queda para tu equipo en «Pagos reportados».
+                </p>
+            </div>
         </template>
 
         <!-- ═══ ETIQUETAR ═══ -->

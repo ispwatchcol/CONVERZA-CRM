@@ -46,6 +46,7 @@ Sobre esa base hay cuatro capas de valor:
 | [Bot de atención](bot.md) | El bot clásico: máquina de estados del primer contacto, horario, switches por paso, diagnóstico. Queda en pausa mientras haya un flujo encendido |
 | [Campañas masivas](campanas.md) | Audiencias, secuencias, warm-up, opt-out, métricas de campaña |
 | [Workflows del bot](workflows-bot.md) | **Implementado (v1).** El Workspace de flujos: decisión de motor, bloques, enrutamiento, ventana de 24 h, cotas del motor, validación y observabilidad |
+| [Agente IA](agente-ia.md) | **Fase 1 implementada.** Comprobantes de pago leídos con IA (xAI): verificación, «Pagos reportados», medios de pago, registro en ispwatch por API (contrato) y el plan del agente conversacional |
 | [Core Brain](core-brain.md) | Cuentas de ISPs, catálogo de planes, cobros del SaaS |
 | [Seguridad](seguridad.md) | Aislamiento multi-tenant, roles, secretos, superficie de ataque |
 
@@ -82,6 +83,9 @@ Sobre esa base hay cuatro capas de valor:
 **"El bot no responde / responde cuando no debe"**
 → Si el tenant tiene un flujo encendido: [Operaciones · Flujos del bot](operaciones.md#flujos-del-bot) (y la pantalla *Actividad* del flujo)
 → Si no: [Bot · Diagnóstico](bot.md#diagnóstico-el-bot-no-respondió) → [Bot · Horario](bot.md#horario-de-atención)
+
+**"Un cliente mandó su comprobante y no se registró / el bot no lo leyó"**
+→ [Operaciones · Comprobantes con IA](operaciones.md#comprobantes-con-ia) → [Agente IA · Verificaciones](agente-ia.md#4-las-verificaciones-y-la-política-de-registro-automático)
 
 **"Quiero entender por qué el chat no usa WebSockets"**
 → [Arquitectura · Tiempo real por polling](arquitectura.md#tiempo-real-sin-websockets)

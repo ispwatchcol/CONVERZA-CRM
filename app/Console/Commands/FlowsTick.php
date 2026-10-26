@@ -10,7 +10,9 @@ use Illuminate\Console\Command;
 /**
  * El reloj del motor de flujos. Corre cada minuto (routes/console.php):
  *
- *   1. Reanuda las Esperas vencidas.
+ *   1. Reanuda las Esperas vencidas, y las ejecuciones cuya tarea (la lectura
+ *      de un comprobante) no avisó dentro de su plazo: el bloque sigue sin el
+ *      resultado y el comprobante pasa a revisión humana.
  *   2. Cierra las preguntas que nadie contestó en `flows.input_timeout_hours`:
  *      sin esto la conversación seguiría "en manos del bot" para siempre, y
  *      bot_active = true le impide a la auto-asignación dársela a un asesor.
@@ -29,13 +31,13 @@ class FlowsTick extends Command
         $resumed = 0;
 
         $due = BotFlowRun::withoutGlobalScopes()
-            ->where('status', BotFlowRun::STATUS_WAITING_TIMER)
+            ->whereIn('status', [BotFlowRun::STATUS_WAITING_TIMER, BotFlowRun::STATUS_WAITING_TASK])
             ->where('resume_at', '<=', now())
             ->where(fn ($q) => $q->whereNull('resume_dispatched_at')
                 ->orWhere('resume_dispatched_at', '<', now()->subMinutes(5)))
             ->orderBy('resume_at')
             ->limit(200)
-            ->get(['id', 'tenant_id']);
+            ->get(['id', 'tenant_id', 'status']);
 
         foreach ($due as $run) {
             // Se marca ANTES de encolar y de forma condicional: el siguiente tic
@@ -43,13 +45,15 @@ class FlowsTick extends Command
             // ganó la carrera este no despacha nada.
             $claimed = BotFlowRun::withoutGlobalScopes()
                 ->whereKey($run->id)
-                ->where('status', BotFlowRun::STATUS_WAITING_TIMER)
+                ->where('status', $run->status)
                 ->where(fn ($q) => $q->whereNull('resume_dispatched_at')
                     ->orWhere('resume_dispatched_at', '<', now()->subMinutes(5)))
                 ->update(['resume_dispatched_at' => now()]);
 
             if ($claimed) {
-                RunBotFlow::dispatch($run->tenant_id, $run->id, RunBotFlow::REASON_TIMER);
+                RunBotFlow::dispatch($run->tenant_id, $run->id, $run->status === BotFlowRun::STATUS_WAITING_TASK
+                    ? RunBotFlow::REASON_TASK
+                    : RunBotFlow::REASON_TIMER);
                 $resumed++;
             }
         }

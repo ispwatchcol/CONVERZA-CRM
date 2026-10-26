@@ -7,6 +7,7 @@ use App\Models\Conversation;
 use App\Models\ConversationRead;
 use App\Models\Label;
 use App\Models\Message;
+use App\Models\PaymentReport;
 use App\Models\QuickReply;
 use App\Models\StaffMember;
 use App\Models\Template;
@@ -244,11 +245,21 @@ class ChatController extends Controller
         }
 
         if ($activeConversation) {
-            $activeChat = Message::where('conversation_id', $activeConversation->id)
+            $messages = Message::where('conversation_id', $activeConversation->id)
                 ->where('tenant_id', $tenantId)
                 ->with('sender:id,name')
                 ->orderBy('created_at')
-                ->get()
+                ->get();
+
+            // Comprobantes ya leídos de las imágenes del hilo: el chat muestra en
+            // qué van en vez de volver a ofrecer «Leer comprobante».
+            $receipts = PaymentReport::where('tenant_id', $tenantId)
+                ->where('conversation_id', $activeConversation->id)
+                ->whereNotNull('message_id')
+                ->get(['id', 'message_id', 'status'])
+                ->keyBy('message_id');
+
+            $activeChat = $messages
                 ->map(fn (Message $msg) => [
                     'id'             => $msg->id,
                     'body'           => $msg->body,
@@ -270,6 +281,9 @@ class ChatController extends Controller
                     'sender_name'    => $msg->sender?->name,
                     // Solo viaja en los mensajes fallidos: explica POR QUÉ no llegó.
                     'status_reason'  => $this->failureReason($msg),
+                    'receipt'        => isset($receipts[$msg->id])
+                        ? ['id' => $receipts[$msg->id]->id, 'status' => $receipts[$msg->id]->status]
+                        : null,
                     'created_at'     => $msg->created_at->toIso8601String(),
                 ])
                 ->all();
@@ -369,6 +383,9 @@ class ChatController extends Controller
             // Cuándo se cierra la ventana de 24 h. null = cerrada (o el contacto
             // nunca escribió). El front calcula el tiempo restante en vivo.
             'serviceWindowExpiresAt' => $serviceWindowExpiresAt,
+            // La empresa encendió la lectura de comprobantes con IA: en las
+            // imágenes del cliente aparece «Leer comprobante».
+            'aiReceipts'           => (bool) $tenant->ai_enabled,
 
             // Plantillas aprobadas para reabrir la conversación fuera de la
             // ventana. Closure: no se evalúa en el polling de 5s.

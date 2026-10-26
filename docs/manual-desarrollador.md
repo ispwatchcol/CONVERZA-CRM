@@ -150,6 +150,18 @@ Detalle en [avisos-automaticos.md](avisos-automaticos.md).
 `CAMPAIGNS_OPT_OUT_KEYWORDS`, `CAMPAIGNS_WARMUP_*`.
 Ver [config/campaigns.php](../config/campaigns.php).
 
+**IA y comprobantes de pago** — ver [config/ai.php](../config/ai.php) y
+[agente-ia.md](agente-ia.md).
+
+| Variable | Para qué |
+|---|---|
+| `AI_ENABLED` | Interruptor general. `false` por defecto: nada sale al proveedor. **En local déjalo en `false`**: con el `.env` apuntando a producción, una lectura de prueba gastaría de verdad |
+| `XAI_API_KEY`, `XAI_MODEL`, `XAI_REASONING_EFFORT` | Proveedor (xAI, Responses API). `grok-4.3` y `low` por defecto |
+| `AI_QUEUE` | Cola de las lecturas (`ai`). Exige el programa `converza-ai` de Supervisor |
+| `AI_DEFAULT_MONTHLY_BUDGET_USD` | Tope de gasto por empresa y mes si la empresa no tiene uno propio |
+| `AI_RECEIPT_*` | Confianza mínima, antigüedad máxima, plazo de la tarea, tope y frecuencia del registro automático |
+| `ISPWATCH_API_URL`, `ISPWATCH_API_TIMEOUT` | API de ispwatch para registrar pagos. La credencial es por empresa (`tenants.ispwatch_api_token`, Admin → Tenants) |
+
 ---
 
 ## 4. Migraciones — la regla que más se olvida
@@ -214,6 +226,11 @@ En producción el deploy corre `php artisan migrate --force` con el
 | Agregar un aviso automático | [`EventCatalog`](../app/Services/Notifications/EventCatalog.php) + el comando correspondiente | `Settings/Index.vue` (aparece solo) |
 | Agregar una variable a un aviso | `EventCatalog::events()` + `resolveValues()` | automático |
 | Cambiar plantillas de Meta | [`TemplateController`](../app/Http/Controllers/TemplateController.php) | [`Pages/Templates/Index.vue`](../resources/js/Pages/Templates/Index.vue) |
+| Cambiar qué se le pide a la IA de un comprobante | [`ReceiptReader`](../app/Services/Payments/ReceiptReader.php) (prompt y JSON schema) + [`ReceiptReading`](../app/Services/Payments/ReceiptReading.php) (saneo) | — |
+| Cambiar cuándo un comprobante se registra solo | [`ReceiptVerifier`](../app/Services/Payments/ReceiptVerifier.php) (las verificaciones) + [`PaymentReportProcessor`](../app/Services/Payments/PaymentReportProcessor.php) (la decisión) · ver [agente-ia.md §4](agente-ia.md#4-las-verificaciones-y-la-política-de-registro-automático) | — |
+| Cambiar «Pagos reportados» | [`PaymentReportController`](../app/Http/Controllers/PaymentReportController.php) | [`Pages/Payments/Index.vue`](../resources/js/Pages/Payments/Index.vue) |
+| Cambiar los medios de pago | [`PaymentChannelController`](../app/Http/Controllers/PaymentChannelController.php) + [`PaymentChannels`](../app/Services/Payments/PaymentChannels.php) | `Settings/Index.vue` (sección Medios de pago) |
+| Agregar un proveedor de IA | Una clase que implemente [`AiProvider`](../app/Services/Ai/AiProvider.php) + el `match` de `AppServiceProvider::register()` | — |
 | Cambiar campañas | [`CampaignController`](../app/Http/Controllers/CampaignController.php), `Services/Campaigns/*` | `Pages/Campaigns/*` |
 | Cambiar métricas | [`MetricsController`](../app/Http/Controllers/MetricsController.php) | [`Pages/Metrics/Index.vue`](../resources/js/Pages/Metrics/Index.vue) |
 | Cambiar planes comerciales | [`PlanCatalog`](../app/Services/Brain/PlanCatalog.php) | automático |
@@ -333,8 +350,13 @@ Un bloque son tres piezas que tienen que coincidir:
    - `outputs($data)`: sus salidas (el `sourceHandle` de las conexiones). Toda
      salida tiene que estar conectada para publicar.
    - `validate()`: su configuración. Señala el bloque con `Issue::error($msg, $node['id'])`.
-   - `enter()` (y `receive()` si espera al cliente, `resume()` si es una espera):
-     devuelve un `Step` (`next`, `waitInput`, `waitTimer`, `end`).
+   - `enter()` (y `receive()` si espera al cliente, `resume()` si es una espera
+     o una tarea): devuelve un `Step` (`next`, `waitInput`, `waitTimer`,
+     `waitTask`, `end`). Si el bloque necesita algo lento y de un tercero, va
+     como **tarea** (`Step::waitTask`), nunca dentro del job del flujo; el tipo
+     de tarea se registra en `FlowRunner::queueTask()`. Ejemplo:
+     [`ReceiptNode`](../app/Services/Flows/Nodes/ReceiptNode.php) y
+     [workflows-bot.md, «Tareas»](workflows-bot.md#tareas-lo-lento-va-a-otra-cola).
    - `waitsForInput()`, `waitMinutes()`, `sendsMessage()`, `definesVariables()`,
      `texts()`: los usa el validador para ciclos, la ventana de 24 h y las variables.
    - **Todo lo que toca el mundo, por `$ex->io`** (`FlowIO`). Nunca HTTP ni
@@ -588,7 +610,14 @@ try {
 composer test        # config:clear + artisan test
 php artisan test --filter=NombreDelTest
 php artisan test tests/Feature/Flows tests/Unit/Flows   # el Workspace de flujos
+php artisan test tests/Feature/Payments tests/Unit/Payments   # comprobantes con IA
 ```
+
+Las de comprobantes ([`PaymentsTestCase`](../tests/Feature/Payments/PaymentsTestCase.php))
+simulan todo lo externo —xAI, la API de ispwatch, la descarga del medio desde
+Meta— y reemplazan `IspwatchRepository` por uno en memoria. Además apuntan la
+conexión `ispwatch` a un SQLite vacío: si algún camino se saltara el repositorio
+falso, la prueba revienta en vez de leer la base real del `.env`.
 
 Las pruebas corren contra **SQLite en memoria** (`phpunit.xml`), nunca contra la
 base del `.env` —que en local es la de producción—. Como las migraciones son de

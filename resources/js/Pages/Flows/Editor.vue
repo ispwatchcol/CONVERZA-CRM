@@ -238,7 +238,7 @@ const variables = computed(() => {
     const list = [];
     const push = (v) => { if (!seen.has(v.name)) { seen.add(v.name); list.push(v); } };
 
-    props.catalog.variables.filter((v) => !v.name.startsWith('cliente.')).forEach(push);
+    props.catalog.variables.filter((v) => !v.name.startsWith('cliente.') && !v.name.startsWith('pago.')).forEach(push);
 
     for (const n of getNodes.value) {
         if (n.type === 'question' && n.data?.save_as) {
@@ -250,6 +250,11 @@ const variables = computed(() => {
     // Los datos de ispwatch solo existen si el flujo tiene un bloque que los busque.
     if (getNodes.value.some((n) => n.type === 'ispwatch')) {
         props.catalog.variables.filter((v) => v.name.startsWith('cliente.')).forEach(push);
+    }
+
+    // Igual los del comprobante: solo después de un bloque «Comprobante de pago».
+    if (getNodes.value.some((n) => n.type === 'receipt')) {
+        props.catalog.variables.filter((v) => v.name.startsWith('pago.')).forEach(push);
     }
 
     return list;

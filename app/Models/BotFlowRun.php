@@ -22,6 +22,7 @@ class BotFlowRun extends Model
     public const STATUS_PENDING       = 'pending';        // creada, el job aún no la arranca
     public const STATUS_WAITING_INPUT = 'waiting_input';  // esperando respuesta del cliente
     public const STATUS_WAITING_TIMER = 'waiting_timer';  // en un bloque Espera
+    public const STATUS_WAITING_TASK  = 'waiting_task';   // esperando un trabajo de otra cola (leer un comprobante)
 
     // Terminadas.
     public const STATUS_COMPLETED  = 'completed';   // llegó a un bloque Fin
@@ -33,6 +34,7 @@ class BotFlowRun extends Model
         self::STATUS_PENDING,
         self::STATUS_WAITING_INPUT,
         self::STATUS_WAITING_TIMER,
+        self::STATUS_WAITING_TASK,
     ];
 
     protected $fillable = [

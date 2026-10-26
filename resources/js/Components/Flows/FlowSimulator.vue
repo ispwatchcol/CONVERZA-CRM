@@ -33,9 +33,25 @@ const settings = ref({
 });
 
 const status = computed(() => state.value?.status ?? null);
-const live = computed(() => ['pending', 'waiting_input', 'waiting_timer'].includes(status.value));
+const live = computed(() => ['pending', 'waiting_input', 'waiting_timer', 'waiting_task'].includes(status.value));
 const waitingTimer = computed(() => status.value === 'waiting_timer');
 const ended = computed(() => state.value && !live.value);
+
+// El flujo espera un comprobante (bloque «Comprobante de pago»), o todavía no
+// arrancó y el cliente puede abrir el chat mandando la foto. En el simulador no
+// se lee ninguna imagen: se elige qué resultado probar.
+const graphHasReceipt = computed(() => (props.getGraph()?.nodes ?? []).some((n) => n.type === 'receipt'));
+const waitingReceipt = computed(() => {
+    if (!graphHasReceipt.value) return false;
+    if (!state.value || ended.value) return true;
+    const node = (props.getGraph()?.nodes ?? []).find((n) => n.id === state.value?.current_node);
+    return status.value === 'waiting_input' && node?.type === 'receipt';
+});
+const RECEIPT_OPTIONS = [
+    { value: 'valid', label: 'Comprobante válido' },
+    { value: 'review', label: 'Con algo raro' },
+    { value: 'not_receipt', label: 'No es un comprobante' },
+];
 
 const statusText = computed(() => {
     if (!state.value) return 'Escribe como si fueras el cliente para arrancar el flujo.';
@@ -77,7 +93,7 @@ async function call(payload) {
         }
 
         // El traspaso de resguardo (ventana cerrada, error) también queda dicho.
-        if (data.state && !['pending', 'waiting_input', 'waiting_timer'].includes(data.state.status)
+        if (data.state && !['pending', 'waiting_input', 'waiting_timer', 'waiting_task'].includes(data.state.status)
             && !(data.effects ?? []).some((e) => e.kind === 'handoff')
             && data.state.ended_reason !== 'completed') {
             messages.value.push({ from: 'system', text: `⚠️ ${ENDED_REASONS[data.state.ended_reason] ?? data.state.ended_reason}` });
@@ -96,6 +112,14 @@ async function call(payload) {
 }
 
 function describeEffect(effect) {
+    if (effect.kind === 'receipt') {
+        const result = {
+            registered: '✅ el pago quedaría registrado en ispwatch',
+            pending_review: '🗂️ quedaría en «Pagos reportados» para revisión',
+            not_receipt: '🚫 la imagen no es un comprobante',
+        }[effect.status] ?? effect.status;
+        return `🧾 Comprobante (simulado, sin IA): ${result}${effect.reason ? ` — ${effect.reason}` : ''}`;
+    }
     if (effect.kind === 'label') return `🏷️ ${effect.action === 'remove' ? 'Quita' : 'Pone'} la etiqueta «${effect.label}»`;
     if (effect.kind === 'contact') return `📇 Guarda en la ficha (${effect.field}): ${effect.value}`;
     if (effect.kind === 'handoff') {
@@ -120,6 +144,14 @@ function send(text = null, replyId = null) {
 function skipWait() {
     messages.value.push({ from: 'system', text: '⏩ Espera saltada' });
     call({ skip_wait: true });
+}
+
+function sendReceipt(kind) {
+    if (loading.value) return;
+    if (ended.value) reset(false);
+
+    messages.value.push({ from: 'client', text: '📷 Comprobante de pago' });
+    call({ text: '📷 Imagen', receipt: kind });
 }
 
 function reset(clearMessages = true) {
@@ -233,6 +265,17 @@ defineExpose({ reset });
             <button v-if="waitingTimer" type="button" class="w-full rounded-lg border border-slate-300 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50" :disabled="loading" @click="skipWait">
                 ⏩ Saltar la espera
             </button>
+
+            <div v-if="waitingReceipt" class="rounded-lg border border-fuchsia-200 bg-fuchsia-50 p-2">
+                <p class="text-[11px] text-fuchsia-800 mb-1.5">📷 Mandar un comprobante de prueba (no se lee ninguna imagen ni se registra nada):</p>
+                <div class="flex flex-wrap gap-1">
+                    <button v-for="opt in RECEIPT_OPTIONS" :key="opt.value" type="button" :disabled="loading"
+                            class="px-2 py-1 rounded-md bg-white border border-fuchsia-200 text-[11px] font-medium text-fuchsia-700 hover:bg-fuchsia-100 disabled:opacity-50"
+                            @click="sendReceipt(opt.value)">
+                        {{ opt.label }}
+                    </button>
+                </div>
+            </div>
 
             <form class="flex items-center gap-2" @submit.prevent="send()">
                 <input v-model="input" type="text" maxlength="1000"

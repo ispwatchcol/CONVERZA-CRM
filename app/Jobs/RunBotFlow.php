@@ -10,7 +10,8 @@ use Throwable;
 
 /**
  * Despierta al motor de flujos para una ejecución: arrancarla, leerle al
- * cliente lo que escribió, o seguir después de una Espera.
+ * cliente lo que escribió, seguir después de una Espera o después de que
+ * terminó una tarea (la lectura de un comprobante).
  */
 class RunBotFlow implements ShouldQueue
 {
@@ -19,6 +20,7 @@ class RunBotFlow implements ShouldQueue
     public const REASON_START   = 'start';
     public const REASON_MESSAGE = 'message';
     public const REASON_TIMER   = 'timer';
+    public const REASON_TASK    = 'task';
 
     // Cada release() por lock ocupado cuenta como intento: cinco dan unos diez
     // segundos para que termine el job que tiene el lock de la conversación.

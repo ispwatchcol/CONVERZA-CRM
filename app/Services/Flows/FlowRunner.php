@@ -2,18 +2,23 @@
 
 namespace App\Services\Flows;
 
+use App\Jobs\RunBotFlow;
 use App\Models\BotFlowRun;
 use App\Models\BotFlowStep;
 use App\Models\BotFlowVersion;
 use App\Models\Conversation;
 use App\Models\Message;
+use App\Models\PaymentReport;
 use App\Models\Tenant;
 use App\Services\Assignment\ConversationAssigner;
 use App\Services\Flows\IO\LiveFlowIO;
+use App\Services\Flows\Nodes\ReceiptNode;
 use App\Services\Flows\Nodes\StartNode;
 use App\Services\Ispwatch\IspwatchRepository;
+use App\Services\Payments\PaymentReportProcessor;
 use App\Services\WhatsAppService;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Corre el motor sobre una conversación real. Es lo que hace RunBotFlow.
@@ -29,6 +34,9 @@ use Illuminate\Support\Facades\Cache;
  *   - Los humanos mandan: si un asesor tomó la conversación o le escribió al
  *     cliente, la ejecución se corta sin decir nada más.
  *   - Versión inmutable: la ejecución usa la versión con la que arrancó.
+ *   - Las tareas (Step::waitTask) se encolan DESPUÉS de soltar el lock: la
+ *     tarea, al terminar, despierta a esta misma ejecución, y ese despertar
+ *     necesita el lock libre y el estado `waiting_task` ya guardado.
  */
 final class FlowRunner
 {
@@ -38,6 +46,9 @@ final class FlowRunner
     /** Entrantes que no son una respuesta: se consumen sin mostrárselos al flujo. */
     private const IGNORED_TYPES = ['reaction', 'system'];
 
+    /** @var list<array{kind: string, id: int, dispatch: bool}> Tareas pedidas en este despertar. */
+    private array $tasks = [];
+
     public function __construct(
         private readonly FlowEngine $engine,
         private readonly WhatsAppService $whatsapp,
@@ -45,7 +56,10 @@ final class FlowRunner
         private readonly ConversationAssigner $assigner,
     ) {}
 
-    /** @param 'start'|'message'|'timer' $reason Por qué se despertó el job (solo informativo). */
+    /**
+     * @param 'start'|'message'|'timer'|'task' $reason Por qué se despertó el job. Solo
+     *        'task' cambia algo: es lo único que saca a una ejecución de `waiting_task`.
+     */
     public function process(Tenant $tenant, int $runId, string $reason): string
     {
         $run = BotFlowRun::withoutGlobalScopes()->where('tenant_id', $tenant->id)->find($runId);
@@ -60,14 +74,23 @@ final class FlowRunner
             return self::LOCKED;
         }
 
+        $this->tasks = [];
+
         try {
             $run->refresh();
 
             if ($run->isLive()) {
-                $this->processLocked($tenant, $run);
+                $this->processLocked($tenant, $run, $reason);
             }
         } finally {
             $lock->release();
+        }
+
+        $tasks       = $this->tasks;
+        $this->tasks = [];
+
+        foreach ($tasks as $task) {
+            $this->queueTask($tenant, $task);
         }
 
         return self::DONE;
@@ -124,7 +147,7 @@ final class FlowRunner
         }
     }
 
-    private function processLocked(Tenant $tenant, BotFlowRun $run): void
+    private function processLocked(Tenant $tenant, BotFlowRun $run, string $reason): void
     {
         $conversation = Conversation::withoutGlobalScopes()
             ->where('tenant_id', $tenant->id)
@@ -155,7 +178,7 @@ final class FlowRunner
         $graph = FlowGraph::fromArray($version->graph);
         $ex    = new Execution(
             $graph,
-            $this->io($tenant, $conversation),
+            $this->io($tenant, $conversation, $run->id),
             StartNode::timezoneOf($graph->start()['data'] ?? []),
             (array) ($run->variables ?? []),
             (array) ($run->state ?? []),
@@ -168,11 +191,14 @@ final class FlowRunner
             $run->ended_reason,
         );
 
-        // 1. El evento propio del estado: arrancar, o seguir tras una Espera vencida.
+        // 1. El evento propio del estado: arrancar, seguir tras una Espera
+        //    vencida, o seguir porque la tarea terminó (o se le venció el plazo).
         if ($state->status === BotFlowRun::STATUS_PENDING) {
             $this->step($run, $ex, $state, FlowEngine::EVENT_START);
         } elseif ($state->status === BotFlowRun::STATUS_WAITING_TIMER && $run->resume_at?->lte(now())) {
             $this->step($run, $ex, $state, FlowEngine::EVENT_TIMER);
+        } elseif ($state->status === BotFlowRun::STATUS_WAITING_TASK && $reason === RunBotFlow::REASON_TASK) {
+            $this->step($run, $ex, $state, FlowEngine::EVENT_TASK);
         }
 
         // 2. Lo que el cliente escribió y el flujo aún no leyó, de a uno y en orden.
@@ -202,6 +228,7 @@ final class FlowRunner
                 (string) $message->body,
                 $message->raw_metadata['reply_id'] ?? null,
                 $message->id,
+                (string) ($message->type ?: 'text'),
             ));
         }
     }
@@ -209,6 +236,11 @@ final class FlowRunner
     private function step(BotFlowRun $run, Execution $ex, RunState $state, string $event, ?Inbound $input = null): void
     {
         $records = $this->engine->advance($ex, $state, $event, $input);
+
+        if ($state->task !== null) {
+            $this->tasks[] = $state->task;
+            $state->task   = null;
+        }
 
         // El bot acaba de preguntar algo: lo que el cliente escribió ANTES no
         // es la respuesta a esta pregunta (p. ej. "hola" + "buenas" en ráfaga,
@@ -253,7 +285,8 @@ final class FlowRunner
             'last_activity_at' => now(),
         ]);
 
-        if ($state->status === BotFlowRun::STATUS_WAITING_TIMER && $run->isDirty('resume_at')) {
+        // Un plazo nuevo (otra Espera, otra tarea) se vuelve a poder despertar.
+        if (in_array($state->status, [BotFlowRun::STATUS_WAITING_TIMER, BotFlowRun::STATUS_WAITING_TASK], true) && $run->isDirty('resume_at')) {
             $run->resume_dispatched_at = null;
         }
 
@@ -291,7 +324,7 @@ final class FlowRunner
             ->exists();
     }
 
-    private function io(Tenant $tenant, Conversation $conversation): LiveFlowIO
+    private function io(Tenant $tenant, Conversation $conversation, ?int $runId = null): LiveFlowIO
     {
         return new LiveFlowIO(
             $this->whatsapp->forTenant($tenant),
@@ -300,6 +333,34 @@ final class FlowRunner
             $conversation->contact,
             $this->ispwatch,
             $this->assigner,
+            $runId,
         );
+    }
+
+    /**
+     * Manda a su cola la tarea que pidió un bloque. Es el punto donde se
+     * registra cada tipo de tarea nueva.
+     *
+     * @param array{kind: string, id: int} $task
+     */
+    private function queueTask(Tenant $tenant, array $task): void
+    {
+        try {
+            if ($task['kind'] !== ReceiptNode::TASK) {
+                Log::warning('Flujo: tarea de tipo desconocido', $task);
+
+                return;
+            }
+
+            $report = PaymentReport::withoutGlobalScopes()->where('tenant_id', $tenant->id)->find($task['id']);
+
+            if ($report) {
+                app(PaymentReportProcessor::class)->queue($report);
+            }
+        } catch (\Throwable $e) {
+            // Si no se pudo encolar, la ejecución no queda colgada: flows:tick la
+            // despierta al vencer el plazo y el bloque sigue sin el resultado.
+            report($e);
+        }
     }
 }

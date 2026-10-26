@@ -3,6 +3,7 @@
 namespace App\Services\Flows\IO;
 
 use App\Services\Flows\CustomerLookup;
+use App\Services\Flows\ReceiptOutcome;
 use App\Services\Flows\SendResult;
 use Carbon\CarbonImmutable;
 
@@ -46,6 +47,29 @@ interface FlowIO
     public function saveContactField(string $field, string $value): void;
 
     public function lookupCustomer(): CustomerLookup;
+
+    /** {{empresa.medios_pago}}: los medios de pago que la empresa muestra en el bot. */
+    public function paymentMethodsText(): string;
+
+    /**
+     * Una imagen (o PDF) que el cliente mandó hace poco y que todavía nadie
+     * leyó como comprobante: el id del mensaje, o null.
+     */
+    public function recentReceiptImage(): ?int;
+
+    /**
+     * Crea el reporte del comprobante que trae el mensaje. Si la IA lo puede
+     * leer vuelve `pending()`: el bloque espera la tarea (Step::waitTask).
+     *
+     * @param bool $autoRegister Registrar en ispwatch sin revisión si pasa todo.
+     */
+    public function startReceipt(int $messageId, bool $autoRegister): ReceiptOutcome;
+
+    /**
+     * En qué va un comprobante. Con `$giveUp`, si todavía se está leyendo pasa
+     * a revisión humana (se venció el plazo de la tarea).
+     */
+    public function receipt(int $reportId, bool $giveUp = false): ?ReceiptOutcome;
 
     /**
      * Entrega la conversación al equipo.

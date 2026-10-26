@@ -176,6 +176,12 @@ jobs:
             sudo supervisorctl restart converza-worker:* \
               || echo "  WARNING: workers not configured yet — see deploy/DEPLOY.md"
 
+            # Worker de la cola de IA (comprobantes). Va aparte y con sudo -n:
+            # si el programa o su permiso de sudo todavia no existen, avisa y
+            # sigue, sin tocar el reinicio de los workers principales.
+            sudo -n supervisorctl restart converza-ai:* \
+              || echo "  WARNING: converza-ai not configured yet — see deploy/DEPLOY.md (worker de IA)"
+
             echo "==> Deploy complete: $(git log -1 --format='%h %s')"
 
             if [ "$VERIFY_OK" -ne 1 ]; then

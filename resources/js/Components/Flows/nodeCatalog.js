@@ -57,6 +57,14 @@ export const NODE_TYPES = {
         handle: '!bg-teal-500',
         palette: true,
     },
+    receipt: {
+        label: 'Comprobante de pago',
+        hint: 'Lee el comprobante con IA',
+        header: 'bg-fuchsia-50 text-fuchsia-800 border-fuchsia-100',
+        dot: 'bg-fuchsia-500',
+        handle: '!bg-fuchsia-500',
+        palette: true,
+    },
     tag: {
         label: 'Etiquetar',
         hint: 'Pone o quita una etiqueta',
@@ -128,6 +136,14 @@ export function defaultData(type) {
             return { minutes: 5 };
         case 'handoff':
             return { text: 'Te comunico con un asesor 🙌. En breve alguien del equipo te escribe.', team_id: null, assign: 'auto', note: true };
+        case 'receipt':
+            return {
+                text: 'Envíame la foto o el pantallazo del comprobante de pago 📸',
+                retry_text: '',
+                max_retries: 1,
+                use_recent_image: true,
+                auto_register: false,
+            };
         default:
             return {};
     }
@@ -169,6 +185,14 @@ export function outputsOf(type, data = {}) {
             return [
                 { handle: 'found', label: 'Encontrado' },
                 { handle: 'not_found', label: 'No encontrado' },
+            ];
+        case 'receipt':
+            // Espejo de ReceiptNode::outputs(): «Pago registrado» solo existe
+            // con el registro automático encendido.
+            return [
+                ...(data?.auto_register ? [{ handle: 'registered', label: 'Pago registrado' }] : []),
+                { handle: 'review', label: 'Para revisión del equipo' },
+                { handle: 'invalid', label: 'No mandó un comprobante' },
             ];
         case 'question':
             return (data?.validation ?? 'any') === 'any'
@@ -258,6 +282,8 @@ export function summaryOf(type, data = {}, catalog = {}) {
         }
         case 'ispwatch':
             return 'Busca por el teléfono del contacto: saldo, facturas y estado del servicio';
+        case 'receipt':
+            return `${data.auto_register ? 'Registra solo si pasa todo' : 'Lo deja para revisión'} · ${truncate(data.text, 60) || 'Sin texto todavía'}`;
         case 'tag': {
             const name = (catalog.labels ?? []).find((l) => l.id === Number(data.label_id))?.name;
             if (!name) return 'Elige una etiqueta';
@@ -302,6 +328,7 @@ export const RUN_STATUS = {
     pending: { label: 'Arrancando', class: 'bg-sky-100 text-sky-700' },
     waiting_input: { label: 'Esperando al cliente', class: 'bg-sky-100 text-sky-700' },
     waiting_timer: { label: 'En una espera', class: 'bg-slate-100 text-slate-700' },
+    waiting_task: { label: 'Leyendo un comprobante', class: 'bg-fuchsia-100 text-fuchsia-700' },
     completed: { label: 'Resuelta por el bot', class: 'bg-emerald-100 text-emerald-700' },
     handed_off: { label: 'Pasó al equipo', class: 'bg-orange-100 text-orange-700' },
     cancelled: { label: 'Cortada', class: 'bg-gray-100 text-gray-600' },
@@ -316,6 +343,9 @@ export function outcomeLabel(step) {
         next: 'Siguió',
         waiting_input: 'Esperando respuesta',
         waiting_timer: 'En espera',
+        waiting_task: 'Leyendo el comprobante',
+        registered: 'Pago registrado',
+        review: 'Para revisión del equipo',
         no_match: 'No entendió',
         invalid: 'Respuesta no válida',
         true: 'Sí',

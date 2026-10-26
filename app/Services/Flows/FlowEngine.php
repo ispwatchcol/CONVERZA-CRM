@@ -6,9 +6,9 @@ use App\Models\BotFlowRun;
 use Illuminate\Support\Facades\Log;
 
 /**
- * El intérprete: dado un evento (arranque, respuesta del cliente o fin de una
- * espera), avanza la ejecución bloque a bloque hasta que toca esperar o el
- * flujo termina.
+ * El intérprete: dado un evento (arranque, respuesta del cliente, fin de una
+ * espera o fin de una tarea), avanza la ejecución bloque a bloque hasta que
+ * toca esperar o el flujo termina.
  *
  * No sabe de colas, locks ni base de datos: eso es del FlowRunner. Tampoco
  * sabe si está enviando de verdad o simulando: eso es del FlowIO. Por eso el
@@ -19,6 +19,7 @@ final class FlowEngine
     public const EVENT_START = 'start';
     public const EVENT_INPUT = 'input';
     public const EVENT_TIMER = 'timer';
+    public const EVENT_TASK  = 'task';
 
     /** Notas internas del traspaso de resguardo, según por qué se cortó el flujo. */
     private const SAFETY_NOTES = [
@@ -51,6 +52,7 @@ final class FlowEngine
             self::EVENT_START => BotFlowRun::STATUS_PENDING,
             self::EVENT_INPUT => BotFlowRun::STATUS_WAITING_INPUT,
             self::EVENT_TIMER => BotFlowRun::STATUS_WAITING_TIMER,
+            self::EVENT_TASK  => BotFlowRun::STATUS_WAITING_TASK,
             default           => null,
         };
         if ($expected === null || $run->status !== $expected) {
@@ -67,10 +69,12 @@ final class FlowEngine
             ]);
         }
 
+        // Un bloque espera o un reloj o una tarea, nunca las dos cosas: el fin de
+        // cualquiera de las dos se le avisa por resume().
         $step = $this->call($ex, fn () => match ($event) {
-            self::EVENT_INPUT => $handler->receive($node, $ex, $input ?? new Inbound('')),
-            self::EVENT_TIMER => $handler->resume($node, $ex),
-            default           => $handler->enter($node, $ex),
+            self::EVENT_INPUT                   => $handler->receive($node, $ex, $input ?? new Inbound('')),
+            self::EVENT_TIMER, self::EVENT_TASK => $handler->resume($node, $ex),
+            default                             => $handler->enter($node, $ex),
         });
 
         $executed = 0;
@@ -90,6 +94,17 @@ final class FlowEngine
             if ($step->kind === Step::WAIT_TIMER) {
                 $run->status   = BotFlowRun::STATUS_WAITING_TIMER;
                 $run->resumeAt = $step->until;
+
+                return $records;
+            }
+
+            if ($step->kind === Step::WAIT_TASK) {
+                // El motor no encola nada (no sabe de colas): deja la tarea
+                // anotada y el runner la manda al soltar el lock. `resumeAt` es
+                // el plazo: vencido, flows:tick despierta a la ejecución igual.
+                $run->status   = BotFlowRun::STATUS_WAITING_TASK;
+                $run->resumeAt = $step->until;
+                $run->task     = ($step->task['dispatch'] ?? true) ? $step->task : null;
 
                 return $records;
             }
