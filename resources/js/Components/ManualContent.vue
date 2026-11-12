@@ -1045,6 +1045,13 @@ vence el {{fecha_vencimiento}}.</pre>
                     <section id="configuracion" class="bg-white rounded-xl border border-gray-200 p-6 scroll-mt-4">
                         <h2 class="text-xl font-bold text-gray-900 mb-3">Configuración</h2>
 
+                        <p class="text-sm text-gray-600">
+                            La página tiene cuatro pestañas: <strong>Conexiones y API keys</strong> (perfil, ispwatch y las credenciales de
+                            WhatsApp: Phone Number ID, tokens y secreto), <strong>Atención</strong> (auto-asignación y cierre automático),
+                            <strong>Bot y avisos</strong> y <strong>Pagos e IA</strong> (lectura de comprobantes y medios de pago). El bot
+                            clásico y los flujos están en el menú, bajo <em>Bot y automatización</em>.
+                        </p>
+
                         <h3 class="font-semibold text-gray-800 mt-4 mb-2">Perfil del workspace</h3>
                         <p class="text-sm text-gray-600">
                             Nombre, identificador y estado. El nombre aparece en los avisos automáticos como la variable

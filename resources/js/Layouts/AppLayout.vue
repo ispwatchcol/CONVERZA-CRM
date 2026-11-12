@@ -132,32 +132,66 @@ const currentRoute = computed(() => {
     try { return route().current(); } catch { return ''; }
 });
 
-const navItems = [
-    { name: 'Dashboard', route: 'dashboard', icon: 'dashboard' },
-    { name: 'Contactos', route: 'contacts.index', icon: 'contacts' },
-    { name: 'Etiquetas', route: 'labels.index', icon: 'labels' },
-    { name: 'Chat', route: 'chat.index', icon: 'chat' },
-    { name: 'Plantillas', route: 'templates.index', icon: 'templates' },
-    { name: 'Campañas', route: 'campaigns.index', icon: 'campaigns' },
-    // El Workspace de flujos decide qué se le dice a TODOS los clientes: solo
-    // admin. La ruta también está cerrada con 'role:admin'.
-    { name: 'Flujos del bot', route: 'flows.index', icon: 'flows', adminOnly: true },
-    // Comprobantes de pago de TODAS las conversaciones y registro de plata en
-    // ispwatch: solo admin (la ruta también está cerrada con 'role:admin').
-    { name: 'Pagos reportados', route: 'payments.index', icon: 'payments', adminOnly: true },
-    { name: 'Notificaciones', route: 'notifications.index', icon: 'bell' },
-    { name: 'Staff', route: 'staff.index', icon: 'staff' },
-    { name: 'Equipos', route: 'teams.index', icon: 'teams' },
-    { name: 'Respuestas Rápidas', route: 'quick-replies.index', icon: 'quickreplies' },
-    { name: 'Notas de Cierre', route: 'closing-notes.index', icon: 'closingnotes' },
-    { name: 'Métricas', route: 'metrics.index', icon: 'metrics' },
-    { name: 'Manual', route: 'manual.index', icon: 'manual' },
-    // Soporte con NOSOTROS (no con los clientes del ISP): es la relación comercial
-    // del workspace, así que solo la ve el admin. La ruta también está cerrada con
-    // 'role:admin' — esto es la cortesía visual, no el control.
-    { name: 'Soporte', route: 'support.index', icon: 'support', adminOnly: true },
-    { name: 'Configuración', route: 'settings.index', icon: 'settings' },
+// El menú va en grupos según lo que se hace, no en una lista plana de 17:
+// atender, automatizar (todo lo del bot junto), equipo y cuenta. `match` son los
+// patrones de ruta que dejan el ítem resaltado (por defecto, su familia de rutas).
+const navGroups = [
+    {
+        label: null,
+        items: [
+            { name: 'Dashboard', route: 'dashboard', icon: 'dashboard' },
+        ],
+    },
+    {
+        label: 'Atención',
+        items: [
+            { name: 'Chat', route: 'chat.index', icon: 'chat' },
+            { name: 'Contactos', route: 'contacts.index', icon: 'contacts' },
+            { name: 'Etiquetas', route: 'labels.index', icon: 'labels' },
+            { name: 'Respuestas Rápidas', route: 'quick-replies.index', icon: 'quickreplies' },
+            { name: 'Notas de Cierre', route: 'closing-notes.index', icon: 'closingnotes' },
+        ],
+    },
+    {
+        label: 'Bot y automatización',
+        items: [
+            // El Workspace de flujos decide qué se le dice a TODOS los clientes:
+            // solo admin. La ruta también está cerrada con 'role:admin'.
+            { name: 'Flujos del bot', route: 'flows.index', icon: 'flows', adminOnly: true },
+            // El bot clásico (menú fijo) vive en /settings/bot: se muestra aquí,
+            // con los flujos, y no escondido dentro de Configuración.
+            { name: 'Bot clásico', route: 'settings.bot.index', icon: 'bot', match: ['settings.bot.*'] },
+            // Comprobantes de pago de TODAS las conversaciones y registro de
+            // plata en ispwatch: solo admin.
+            { name: 'Pagos reportados', route: 'payments.index', icon: 'payments', adminOnly: true },
+            { name: 'Notificaciones', route: 'notifications.index', icon: 'bell' },
+            { name: 'Plantillas', route: 'templates.index', icon: 'templates' },
+            { name: 'Campañas', route: 'campaigns.index', icon: 'campaigns' },
+        ],
+    },
+    {
+        label: 'Equipo',
+        items: [
+            { name: 'Staff', route: 'staff.index', icon: 'staff' },
+            { name: 'Equipos', route: 'teams.index', icon: 'teams' },
+            { name: 'Métricas', route: 'metrics.index', icon: 'metrics' },
+        ],
+    },
+    {
+        label: 'Cuenta',
+        items: [
+            // Conexiones (WhatsApp, ispwatch), IA, medios de pago, asignación…
+            { name: 'Configuración', route: 'settings.index', icon: 'settings' },
+            { name: 'Manual', route: 'manual.index', icon: 'manual' },
+            // Soporte con NOSOTROS (no con los clientes del ISP): es la relación
+            // comercial del workspace, así que solo la ve el admin. La ruta
+            // también está cerrada con 'role:admin' — esto es cortesía visual.
+            { name: 'Soporte', route: 'support.index', icon: 'support', adminOnly: true },
+        ],
+    },
 ];
+
+const navItems = navGroups.flatMap(g => g.items);
 
 // Items que solo ven los superadmins del SaaS (no admins de tenants).
 const superadminNavItems = [
@@ -170,7 +204,9 @@ const isTenantAdmin = computed(() => authUser.value?.role === 'admin');
 
 // Los items marcados adminOnly no se le pintan al asesor. La autorización real
 // vive en las rutas; esto solo evita ofrecerle un enlace que le daría 403.
-const visibleNavItems = computed(() => navItems.filter(i => !i.adminOnly || isTenantAdmin.value));
+const visibleNavGroups = computed(() => navGroups
+    .map(g => ({ ...g, items: g.items.filter(i => !i.adminOnly || isTenantAdmin.value) }))
+    .filter(g => g.items.length > 0));
 
 // Items del Core Brain (equipo interno del founder).
 const brainNavItems = [
@@ -191,6 +227,17 @@ function isBrainActive(prefix) {
 
 function isActive(routeName) {
     return currentRoute.value?.startsWith(routeName.split('.')[0]);
+}
+
+// Un ítem está activo por sus patrones `match` o, si no los tiene, por su
+// familia de rutas. «Bot clásico» (settings.bot.*) y «Configuración»
+// (settings.index) comparten familia: sin `match` se resaltarían los dos.
+function isItemActive(item) {
+    if (item.match) {
+        return item.match.some(p => { try { return route().current(p); } catch { return false; } });
+    }
+    if (item.route === 'settings.index') return currentRoute.value === 'settings.index';
+    return isActive(item.route);
 }
 
 // El FAB de soporte es fixed bottom-6 right-6 en todo el viewport. En el Chat
@@ -299,14 +346,20 @@ onUnmounted(() => {
             <!-- Nav -->
             <nav class="flex-1 overflow-y-auto py-4 px-3 space-y-0.5"
                  :class="!sidebarOpen && 'flex flex-col items-center px-0 space-y-2'">
+                <template v-for="(group, gi) in visibleNavGroups" :key="group.label ?? 'inicio'">
+                <!-- Etiqueta del grupo (plegado: una raya) -->
+                <div v-if="group.label" class="pt-3 pb-1" :class="sidebarOpen ? 'px-3' : 'flex justify-center'">
+                    <p v-if="sidebarOpen" class="text-[10px] uppercase tracking-wider font-semibold text-text-muted/70">{{ group.label }}</p>
+                    <div v-else class="h-px bg-white/10 w-8"></div>
+                </div>
                 <Link
-                    v-for="item in visibleNavItems"
+                    v-for="item in group.items"
                     :key="item.route"
                     :href="route(item.route)"
                     class="group flex items-center rounded-lg font-medium transition-all duration-200"
                     :class="[
                         sidebarOpen ? 'px-3 py-2.5 text-sm w-full' : 'p-3 justify-center w-12 h-12',
-                        isActive(item.route)
+                        isItemActive(item)
                             ? (sidebarOpen ? 'bg-sidebar-active text-white border-l-[3px] border-accent' : 'bg-sidebar-active text-white')
                             : 'text-text-muted hover:bg-sidebar-hover hover:text-white'
                     ]"
@@ -320,6 +373,7 @@ onUnmounted(() => {
                         <svg v-else-if="item.icon === 'templates'" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" /></svg>
         <svg v-else-if="item.icon === 'campaigns'" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" /></svg>
                         <svg v-else-if="item.icon === 'flows'" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 5.25h4.5v4.5h-4.5zM15.75 14.25h4.5v4.5h-4.5zM15.75 3.75h4.5v4.5h-4.5zM8.25 7.5h3a1.5 1.5 0 011.5 1.5v6a1.5 1.5 0 001.5 1.5h1.5M12.75 6h3" /></svg>
+                        <svg v-else-if="item.icon === 'bot'" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 3v1.5M15.75 3v1.5M12 3v1.5M4.5 8.25H3m18 0h-1.5M4.5 12H3m18 0h-1.5m-16.5 3.75H3m18 0h-1.5M8.25 19.5V21M12 19.5V21m3.75-1.5V21m-9-1.5h10.5a2.25 2.25 0 002.25-2.25V6.75a2.25 2.25 0 00-2.25-2.25H6.75A2.25 2.25 0 004.5 6.75v10.5a2.25 2.25 0 002.25 2.25zm.75-12h9v9h-9v-9z" /></svg>
                         <svg v-else-if="item.icon === 'payments'" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 14.25l6-6m4.5-3.493V21.75l-3.75-1.5-3.75 1.5-3.75-1.5-3.75 1.5V4.757c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0111.186 0c1.1.128 1.907 1.077 1.907 2.185zM9.75 9h.008v.008H9.75V9zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm4.125 4.5h.008v.008h-.008V13.5zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z" /></svg>
                         <svg v-else-if="item.icon === 'bell'" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0" /></svg>
                         <svg v-else-if="item.icon === 'staff'" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" /></svg>
@@ -333,6 +387,7 @@ onUnmounted(() => {
                     </span>
                     <span v-show="sidebarOpen" class="truncate">{{ item.name }}</span>
                 </Link>
+                </template>
 
                 <!-- ── SaaS Admin + Core Brain (sección unificada) ────────── -->
                 <template v-if="isSuperadmin || canBrain">
@@ -430,7 +485,7 @@ onUnmounted(() => {
                         <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" /></svg>
                     </button>
                     <h2 class="text-base font-semibold text-gray-800 truncate">
-                        {{ navItems.find(i => isActive(i.route))?.name
+                        {{ navItems.find(i => isItemActive(i))?.name
                             || superadminNavItems.find(i => isActive(i.route))?.name
                             || brainNavItems.find(i => isBrainActive(i.activePrefix))?.name
                             || 'Dashboard' }}

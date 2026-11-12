@@ -150,7 +150,7 @@ function contextSummary(ctx) {
             <div class="mb-6 flex items-start justify-between gap-4">
                 <div>
                     <div class="flex items-center gap-2 mb-1">
-                        <Link :href="route('settings.index')"
+                        <Link :href="route('settings.index', { tab: 'bot' })"
                               class="text-sm text-gray-400 hover:text-accent transition">
                             Configuración
                         </Link>
