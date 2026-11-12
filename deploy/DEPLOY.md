@@ -56,7 +56,7 @@ sudo supervisorctl reread
 sudo supervisorctl update
 sudo supervisorctl start converza-worker:*
 
-# Verificá: deben aparecer 4 procesos en RUNNING
+# Verificá: deben aparecer 2 procesos en RUNNING
 sudo supervisorctl status converza-worker:*
 ```
 
@@ -64,28 +64,33 @@ Output esperado:
 ```
 converza-worker:converza-worker_00   RUNNING   pid 12345, uptime 0:00:05
 converza-worker:converza-worker_01   RUNNING   pid 12346, uptime 0:00:05
-converza-worker:converza-worker_02   RUNNING   pid 12347, uptime 0:00:05
-converza-worker:converza-worker_03   RUNNING   pid 12348, uptime 0:00:05
 ```
+
+> Este paso mostraba 4 procesos. El droplet corre **2** desde el 20/08/2026 (con
+> 4 se iba a swap: el límite es la RAM), pero el archivo del repo siguió en 4
+> hasta el 26/10/2026. Si alguna vez dudás, compará antes de copiar:
+> `diff /etc/supervisor/conf.d/converza-worker.conf deploy/supervisor/converza-worker.conf`.
 
 ### 4 bis. El worker de la cola de IA (comprobantes de pago)
 
-El mismo archivo trae un segundo programa, `converza-ai`, que atiende la cola
-`ai` (lectura de comprobantes con IA y registro de pagos en ispwatch, ver
+Tiene **su propio archivo**, `converza-ai.conf`: atiende la cola `ai` (lectura de
+comprobantes con IA y registro de pagos en ispwatch, ver
 [docs/agente-ia.md](../docs/agente-ia.md)). Va aparte para que una ráfaga de
-comprobantes no deje esperando a la ingesta de mensajes.
+comprobantes no deje esperando a la ingesta de mensajes, y en otro archivo para
+que instalarlo no toque los workers de mensajes.
 
 ```bash
-sudo cp /var/www/converza-crm/deploy/supervisor/converza-worker.conf /etc/supervisor/conf.d/
+sudo cp /var/www/converza-crm/deploy/supervisor/converza-ai.conf /etc/supervisor/conf.d/
 sudo supervisorctl reread
 sudo supervisorctl update          # arranca converza-ai sin tocar converza-worker
 sudo supervisorctl status converza-ai:*
 # converza-ai:converza-ai_00   RUNNING   pid 23456, uptime 0:00:04
 ```
 
-Es un solo proceso (~50 MB): cada lectura es una llamada HTTP, no CPU. Sin él
-nada se lee: los flujos esperan 5 minutos y mandan el comprobante a revisión
-humana. Con `AI_ENABLED=false` (el valor por defecto) ni siquiera se encola.
+Es un solo proceso (~60-100 MB, como cualquier worker): cada lectura es una
+llamada HTTP, no CPU. Sin él nada se lee: los flujos esperan 5 minutos y mandan el
+comprobante a revisión humana. Con `AI_ENABLED=false` (el valor por defecto) ni
+siquiera se encola.
 
 ### 5. Confirmá el `.env` de producción
 
@@ -240,18 +245,24 @@ sudo tail -f /var/www/converza-crm/storage/logs/laravel.log
 
 ## ⚡ Escalado
 
-Si ves que la cola se va llenando (`jobs` count subiendo constantemente), agregá más workers:
+Si ves que la cola se va llenando (`Queue::size()` subiendo de forma sostenida —
+la cola es Redis, la tabla `jobs` siempre da 0), agregá workers, primero en el repo
+y después en el servidor:
 
 ```bash
 sudo nano /etc/supervisor/conf.d/converza-worker.conf
-# Cambiá numprocs=4 → 8 (o más)
+# Cambiá numprocs=2 → 3 o 4
 
 sudo supervisorctl reread
 sudo supervisorctl update
 sudo supervisorctl status converza-worker:*
 ```
 
-Regla de dedo: 1 worker por core de CPU. Un droplet de 2 vCPU maneja bien hasta 4 workers.
+En este droplet el límite es la **memoria**, no la CPU: con 4 workers de mensajes
+(más el de IA y PHP-FPM) vuelve a swap. Antes de pasar de 4, subí el droplet.
+
+> Esta sección decía "numprocs=4 → 8" y "1 worker por core". Es el consejo
+> estándar, y en 1 GB de RAM empujó 380 MB a swap (20/08/2026).
 
 ---
 

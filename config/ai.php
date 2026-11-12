@@ -16,8 +16,8 @@ return [
 
     // Cola de las tareas de IA. NO es 'default' a propósito: leer una imagen
     // tarda segundos y no puede quedar delante de la ingesta de mensajes ni de
-    // los envíos. Exige su propio programa de Supervisor (converza-ai en
-    // deploy/supervisor/converza-worker.conf): sin él las lecturas no corren y
+    // los envíos. Exige su propio programa de Supervisor (converza-ai, en
+    // deploy/supervisor/converza-ai.conf): sin él las lecturas no corren y
     // `flows:tick` manda a revisión humana lo que lleve más de
     // `receipts.task_timeout_minutes` esperando.
     'queue' => env('AI_QUEUE', 'ai'),

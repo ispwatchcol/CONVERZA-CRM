@@ -24,7 +24,7 @@
 | Rutas en JS | Ziggy | `route('chat.index')` disponible en Vue |
 | Base de datos | **PostgreSQL** (Supabase) | Schema dedicado: `converza` (prod) / `converza_dev` (local) |
 | Base externa | PostgreSQL de ispwatch, schema `public` | Conexión separada, **read-only** |
-| Colas | `database` (tabla `jobs`) | 4 workers vía Supervisor en producción |
+| Colas | Redis en producción | 2 workers de la cola `default` + 1 de la cola `ai` vía Supervisor |
 | Cache / sesión | Redis en producción, `database` en local | La presencia depende del cache |
 | Mensajería | Meta WhatsApp Cloud API (Graph `v20.0` por defecto) | |
 | Almacenamiento de medios | Disco local (`storage/app/public`) | S3/Supabase soportado pero **no operativo** hoy |
@@ -406,8 +406,10 @@ dueño del SaaS con `php artisan tenant:link`.
 `tries = 3`, `backoff = 5s` en el job de entrada; `tries = 2`, `backoff = 3s` en
 el bot clásico. `RunBotFlow` tiene `tries = 5` pero `maxExceptions = 1`: los
 reintentos son solo para esperar el lock de la conversación; una excepción no se
-reintenta, porque reenviaría al cliente lo que ya salió. En producción corren 4 workers de Supervisor con `--max-time=3600`
-(reinicio horario contra fugas de memoria).
+reintenta, porque reenviaría al cliente lo que ya salió. En producción corren **2** workers de Supervisor para esta cola, con `--max-time=3600`
+(reinicio horario contra fugas de memoria). Eran 4 hasta el 20/08/2026: el límite
+del droplet de 1 GB es la memoria, no la CPU (la cuenta está en
+[converza-worker.conf](../deploy/supervisor/converza-worker.conf)).
 
 ### Jobs (cola `ai`)
 
@@ -416,8 +418,9 @@ reintenta, porque reenviaría al cliente lo que ya salió. En producción corren
 | [`ProcessPaymentReport`](../app/Jobs/ProcessPaymentReport.php) | Bloque «Comprobante de pago» (vía `FlowRunner`, al soltar el lock) · botón «Leer comprobante» del chat · «Registrar en ispwatch» | Lee el comprobante con IA, lo verifica, decide y, si toca, le pide el registro a ispwatch. Al terminar despierta al flujo que esperaba |
 
 Cola propia (`config('ai.queue')`) y programa propio de Supervisor
-(`converza-ai`, un proceso): una lectura tarda segundos y no puede quedar delante
-de la ingesta. A diferencia de `RunBotFlow`, **sí** se reintenta tras una
+(`converza-ai`, un proceso, en su propio archivo
+[converza-ai.conf](../deploy/supervisor/converza-ai.conf)): una lectura tarda
+segundos y no puede quedar delante de la ingesta. A diferencia de `RunBotFlow`, **sí** se reintenta tras una
 excepción (`tries = 3`, backoff 10 s y 30 s): no le escribe al cliente y retoma
 donde quedó. Ver [agente-ia.md](agente-ia.md).
 
