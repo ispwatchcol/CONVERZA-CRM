@@ -2,7 +2,8 @@
 
 namespace Tests\Unit\Payments;
 
-use App\Services\Ai\AiProvider;
+use App\Models\Tenant;
+use App\Services\Ai\AiProviders;
 use App\Services\Ai\AiProviderException;
 use App\Services\Ai\AiRequest;
 use App\Services\Ai\OpenAiProvider;
@@ -22,19 +23,21 @@ class OpenAiProviderTest extends TestCase
     {
         parent::setUp();
 
-        config()->set('ai.openai.api_key', 'sk-test');
         config()->set('ai.openai.base_url', 'https://api.openai.com/v1');
         config()->set('ai.openai.model', 'gpt-5-mini');
         config()->set('ai.openai.reasoning_effort', 'low');
     }
 
-    public function test_el_proveedor_lo_elige_la_configuracion(): void
+    public function test_el_proveedor_lo_arma_cada_empresa_con_su_llave(): void
     {
-        config()->set('ai.provider', 'openai');
-        $this->assertInstanceOf(OpenAiProvider::class, app(AiProvider::class));
+        $providers = new AiProviders();
 
-        config()->set('ai.provider', 'xai');
-        $this->assertInstanceOf(XaiProvider::class, app(AiProvider::class));
+        $this->assertInstanceOf(OpenAiProvider::class, $providers->make('openai', 'sk-1'));
+        $this->assertInstanceOf(XaiProvider::class, $providers->make('xai', 'xai-1'));
+        $this->assertNull($providers->make('otro', 'k'));
+        $this->assertNull($providers->forTenant(new Tenant()), 'Sin llave no hay proveedor: no existe llave de plataforma.');
+        $this->assertFalse($providers->make('openai', null)->isConfigured());
+        $this->assertTrue($providers->make('openai', 'sk-1')->isConfigured());
     }
 
     public function test_lee_un_comprobante_con_su_llave_su_modelo_y_sin_retencion(): void
@@ -53,7 +56,7 @@ class OpenAiProviderTest extends TestCase
             ],
         ])]);
 
-        $response = (new OpenAiProvider())->respond(new AiRequest(
+        $response = (new OpenAiProvider('sk-test'))->respond(new AiRequest(
             purpose: 'receipt',
             instructions: 'Transcribe.',
             messages: [['role' => 'user', 'content' => [
@@ -93,7 +96,7 @@ class OpenAiProviderTest extends TestCase
         $request = new AiRequest('receipt', 'x', [['role' => 'user', 'content' => 'hola']]);
 
         try {
-            (new OpenAiProvider())->respond($request);
+            (new OpenAiProvider('sk-test'))->respond($request);
             $this->fail('Un 401 tiene que lanzar.');
         } catch (AiProviderException $e) {
             $this->assertFalse($e->retryable);
@@ -101,7 +104,7 @@ class OpenAiProviderTest extends TestCase
         }
 
         try {
-            (new OpenAiProvider())->respond($request);
+            (new OpenAiProvider('sk-test'))->respond($request);
             $this->fail('Un 429 tiene que lanzar.');
         } catch (AiProviderException $e) {
             $this->assertTrue($e->retryable);

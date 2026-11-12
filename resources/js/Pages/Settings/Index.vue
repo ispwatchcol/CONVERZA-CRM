@@ -17,7 +17,7 @@ const props = defineProps({
     notificationRoutes: { type: Object, default: () => ({}) },
     // Bot: { enabled, state: 'off'|'active'|'out_of_schedule', schedule_summary }
     bot: { type: Object, default: () => ({ enabled: false, state: 'off', schedule_summary: null, active_flows: 0 }) },
-    // IA: { enabled, unavailable, reasons, spent_usd, budget_usd, requests_month, auto_max_amount, can_register, ispwatch_linked, pending_reports }
+    // IA: { enabled, provider, has_key, key_hint, unavailable, reasons, spent_usd, budget_usd (null = sin tope), requests_month, auto_max_amount, can_register, ispwatch_linked, pending_reports }
     ai: { type: Object, default: () => ({}) },
     // Medios de pago de la empresa y el catálogo de formas de pago de ispwatch.
     paymentChannels: { type: Array, default: () => [] },
@@ -115,19 +115,53 @@ function setTab(key) {
 }
 
 // ── Inteligencia artificial (comprobantes de pago) ───────────────────────────
+// La llave de IA es de CADA empresa: se guarda cifrada y nunca vuelve al
+// navegador (solo se sabe si existe y sus últimos 4 caracteres).
+const AI_PROVIDERS = [
+    { value: 'openai', label: 'OpenAI', hint: 'platform.openai.com → API keys', placeholder: 'sk-proj-…' },
+    { value: 'xai', label: 'xAI (Grok)', hint: 'console.x.ai → API keys', placeholder: 'xai-…' },
+];
 const aiForm = useForm({
     ai_enabled: props.ai?.enabled ?? false,
+    ai_provider: props.ai?.provider ?? 'openai',
+    ai_api_key: '',
+    ai_api_key_clear: false,
+    ai_monthly_budget_usd: props.ai?.budget_usd ?? '',
     receipts_auto_max_amount: props.ai?.auto_max_amount ?? 300000,
 });
+const aiProviderMeta = computed(() => AI_PROVIDERS.find((p) => p.value === aiForm.ai_provider) ?? AI_PROVIDERS[0]);
+// Con otro proveedor, la llave guardada ya no sirve: hay que cargar una nueva.
+const aiKeyUsable = computed(() => props.ai?.has_key && aiForm.ai_provider === props.ai?.provider && !aiForm.ai_api_key_clear);
 function saveAi() {
     aiForm
         .transform((data) => ({
             ai_enabled: !!data.ai_enabled,
+            ai_provider: data.ai_provider,
+            ai_api_key: data.ai_api_key,
+            ai_api_key_clear: !!data.ai_api_key_clear,
+            ai_monthly_budget_usd: data.ai_monthly_budget_usd === '' || data.ai_monthly_budget_usd == null ? null : Number(data.ai_monthly_budget_usd),
             receipts_auto_max_amount: data.receipts_auto_max_amount === '' || data.receipts_auto_max_amount == null
                 ? null
                 : Number(data.receipts_auto_max_amount),
         }))
-        .put(route('settings.ai.update'), { preserveScroll: true });
+        .put(route('settings.ai.update'), {
+            preserveScroll: true,
+            onSuccess: () => { aiForm.ai_api_key = ''; aiForm.ai_api_key_clear = false; aiTest.value = null; },
+        });
+}
+const aiTest = ref(null);
+const aiTesting = ref(false);
+async function testAiKey() {
+    aiTesting.value = true;
+    aiTest.value = null;
+    try {
+        const { data } = await axios.post(route('settings.ai.test'), { ai_provider: aiForm.ai_provider, ai_api_key: aiForm.ai_api_key });
+        aiTest.value = data;
+    } catch (e) {
+        aiTest.value = { ok: false, message: e.response?.data?.message ?? 'No se pudo probar la llave.' };
+    } finally {
+        aiTesting.value = false;
+    }
 }
 const aiUsagePercent = computed(() => {
     const budget = Number(props.ai?.budget_usd) || 0;
@@ -933,11 +967,47 @@ const waBadge = computed(() => {
                             </button>
                         </div>
 
-                        <p class="text-xs text-gray-600 bg-gray-50 rounded-lg px-3 py-2">
-                            <strong>La llave del proveedor de IA no la cargas tú:</strong> la administra Converza y se te cobra
-                            dentro de tu plan, con un tope mensual. Tú solo decides si la lectura está encendida. Tus propias
-                            llaves (token de WhatsApp, etc.) están en <button type="button" class="text-accent font-medium hover:underline" @click="setTab('conexiones')">Conexiones y API keys</button>.
-                        </p>
+                        <!-- Tu llave de IA: es tuya y el uso se te cobra a ti, no a Converza -->
+                        <div class="rounded-xl border border-gray-200 p-4 space-y-3">
+                            <div>
+                                <p class="text-sm font-semibold text-gray-800">Tu llave de IA</p>
+                                <p class="text-xs text-gray-500 mt-0.5">
+                                    Usas <strong>tu propia cuenta</strong> de OpenAI o xAI: el consumo se te cobra directo a ti (unos US$ 0,003 por
+                                    comprobante) y Converza nunca usa la llave de otra empresa. Se guarda cifrada y no se vuelve a mostrar.
+                                </p>
+                            </div>
+                            <div class="grid md:grid-cols-3 gap-3">
+                                <div>
+                                    <label class="block text-xs font-medium text-gray-700 mb-1">Proveedor</label>
+                                    <select v-model="aiForm.ai_provider" class="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm">
+                                        <option v-for="p in AI_PROVIDERS" :key="p.value" :value="p.value">{{ p.label }}</option>
+                                    </select>
+                                </div>
+                                <div class="md:col-span-2">
+                                    <label class="block text-xs font-medium text-gray-700 mb-1">
+                                        API key
+                                        <span v-if="aiKeyUsable" class="ml-1 text-[10px] font-semibold text-emerald-600">● guardada ({{ ai.key_hint }})</span>
+                                        <span v-else class="ml-1 text-[10px] font-semibold text-gray-400">○ sin llave</span>
+                                    </label>
+                                    <input v-model="aiForm.ai_api_key" type="password" autocomplete="off" :disabled="aiForm.ai_api_key_clear"
+                                           :placeholder="aiKeyUsable ? '•••••••• (en blanco = conservar la guardada)' : aiProviderMeta.placeholder"
+                                           class="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm font-mono focus:ring-2 focus:ring-accent/30 focus:border-accent transition disabled:bg-gray-50">
+                                    <p v-if="aiForm.errors.ai_api_key" class="text-[11px] text-red-600 mt-1">{{ aiForm.errors.ai_api_key }}</p>
+                                    <p v-else class="text-[11px] text-gray-400 mt-1">La creas en {{ aiProviderMeta.hint }}.</p>
+                                </div>
+                            </div>
+                            <div class="flex flex-wrap items-center gap-3">
+                                <button type="button" :disabled="aiTesting || (!aiForm.ai_api_key && !aiKeyUsable)" @click="testAiKey"
+                                        class="px-3 py-2 border border-gray-200 rounded-xl text-xs font-medium text-gray-700 hover:bg-gray-50 transition disabled:opacity-50">
+                                    {{ aiTesting ? 'Probando…' : 'Probar llave' }}
+                                </button>
+                                <label v-if="aiKeyUsable" class="flex items-center gap-2 text-[11px] text-gray-600">
+                                    <input v-model="aiForm.ai_api_key_clear" type="checkbox" class="rounded border-gray-300 text-red-500 focus:ring-red-400">
+                                    Quitar mi llave al guardar
+                                </label>
+                                <p v-if="aiTest" class="text-xs" :class="aiTest.ok ? 'text-emerald-700' : 'text-red-600'">{{ aiTest.message }}</p>
+                            </div>
+                        </div>
 
                         <p v-if="ai.enabled && ai.unavailable && ai.unavailable !== 'ia_apagada'" class="text-xs text-amber-800 bg-amber-50 rounded-lg px-3 py-2">
                             Ahora mismo no se está leyendo nada: {{ (ai.reasons ?? {})[ai.unavailable] ?? ai.unavailable }}.
@@ -946,11 +1016,14 @@ const waBadge = computed(() => {
                         <div class="grid md:grid-cols-2 gap-3">
                             <div class="rounded-xl border border-gray-100 p-4">
                                 <p class="text-sm font-medium text-gray-800">Uso de este mes</p>
-                                <p class="text-xs text-gray-500 mt-0.5">{{ ai.requests_month ?? 0 }} lecturas · US$ {{ Number(ai.spent_usd ?? 0).toFixed(2) }} de US$ {{ Number(ai.budget_usd ?? 0).toFixed(2) }}</p>
-                                <div class="mt-2 h-1.5 rounded-full bg-gray-100 overflow-hidden">
+                                <p class="text-xs text-gray-500 mt-0.5">{{ ai.requests_month ?? 0 }} lecturas · ≈ US$ {{ Number(ai.spent_usd ?? 0).toFixed(2) }}<span v-if="ai.budget_usd"> de US$ {{ Number(ai.budget_usd).toFixed(2) }}</span> (estimado)</p>
+                                <div v-if="ai.budget_usd" class="mt-2 h-1.5 rounded-full bg-gray-100 overflow-hidden">
                                     <div class="h-full rounded-full" :class="aiUsagePercent >= 90 ? 'bg-red-500' : 'bg-fuchsia-500'" :style="{ width: aiUsagePercent + '%' }"></div>
                                 </div>
-                                <p class="text-[11px] text-gray-400 mt-1">Al llegar al tope, los comprobantes quedan para revisión manual hasta el mes siguiente.</p>
+                                <label class="block text-[11px] font-medium text-gray-700 mt-2">Tope mensual (US$, opcional)</label>
+                                <input v-model="aiForm.ai_monthly_budget_usd" type="number" min="0" step="1" placeholder="sin tope"
+                                       class="mt-1 w-full px-3 py-1.5 border border-gray-200 rounded-lg text-sm">
+                                <p class="text-[11px] text-gray-400 mt-1">Alcanzado el tope, los comprobantes quedan para revisión manual hasta el mes siguiente. El gasto real lo ves en tu cuenta del proveedor.</p>
                             </div>
                             <div class="rounded-xl border border-gray-100 p-4">
                                 <label class="text-sm font-medium text-gray-800">Tope para registrar sin revisión</label>

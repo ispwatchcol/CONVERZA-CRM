@@ -11,6 +11,7 @@ use App\Models\Template;
 use App\Models\Tenant;
 use App\Models\TenantNotificationRoute;
 use App\Services\Ai\AiGateway;
+use App\Services\Ai\AiProviders;
 use App\Services\Ispwatch\IspwatchRepository;
 use App\Services\Notifications\EventCatalog;
 use App\Services\WhatsAppService;
@@ -59,6 +60,10 @@ class SettingsController extends Controller
 
         return [
             'enabled'         => (bool) $tenant->ai_enabled,
+            // La llave nunca viaja: solo si existe, de qué proveedor y cuántos caracteres termina.
+            'provider'        => $tenant->ai_provider,
+            'has_key'         => $tenant->hasAiKey(),
+            'key_hint'        => $tenant->hasAiKey() ? '••••' . mb_substr((string) $tenant->ai_api_key, -4) : null,
             'unavailable'     => $ai->unavailableReason($tenant),
             'reasons'         => PaymentReport::REASONS,
             'spent_usd'       => round($ai->spentThisMonth($tenant), 2),
@@ -69,6 +74,40 @@ class SettingsController extends Controller
             'ispwatch_linked' => (bool) $tenant->ispwatch_tenant_id,
             'pending_reports' => PaymentReport::where('tenant_id', $tenant->id)->where('status', PaymentReport::STATUS_PENDING_REVIEW)->count(),
         ];
+    }
+
+    /**
+     * «Probar llave»: le pregunta al proveedor por su lista de modelos (no cuesta
+     * nada) con la llave que viene en el formulario o, si no viene, la guardada.
+     */
+    public function testAi(Request $request, AiProviders $providers)
+    {
+        $tenant = app('tenant');
+
+        $data = $request->validate([
+            'ai_provider' => ['nullable', 'string', Rule::in(AiProviders::NAMES)],
+            'ai_api_key'  => ['nullable', 'string', 'max:400'],
+        ]);
+
+        $name = $data['ai_provider'] ?? $tenant->ai_provider;
+        $key  = filled($data['ai_api_key'] ?? null) ? trim($data['ai_api_key']) : ($tenant->hasAiKey() && $name === $tenant->ai_provider ? (string) $tenant->ai_api_key : null);
+
+        if (! $name || ! $key) {
+            return response()->json(['ok' => false, 'message' => 'Elige el proveedor y escribe tu llave.'], 422);
+        }
+
+        try {
+            $response = Http::withToken($key)->acceptJson()->timeout(15)
+                ->get(rtrim((string) config("ai.{$name}.base_url"), '/') . '/models');
+        } catch (\Throwable) {
+            return response()->json(['ok' => false, 'message' => 'No se pudo conectar con el proveedor. Intenta de nuevo en un momento.']);
+        }
+
+        return response()->json(match (true) {
+            $response->successful()                       => ['ok' => true, 'message' => 'La llave es válida ✓'],
+            in_array($response->status(), [401, 403], true) => ['ok' => false, 'message' => 'El proveedor rechazó la llave: revisa que esté completa y sea de ' . ($name === 'openai' ? 'OpenAI' : 'xAI') . '.'],
+            default                                       => ['ok' => false, 'message' => 'El proveedor respondió ' . $response->status() . '. Intenta de nuevo.'],
+        });
     }
 
     /** Formas de pago del catálogo de ispwatch, para enlazar los medios de pago. */
@@ -90,7 +129,8 @@ class SettingsController extends Controller
     /**
      * Inteligencia artificial: encenderla (es opt-in, los comprobantes salen a
      * un proveedor externo) y el tope por comprobante para registrar sin
-     * revisión. El presupuesto mensual lo fija el superadmin.
+     * revisión. La llave del proveedor es de la empresa: se guarda cifrada y
+     * nunca vuelve al navegador (en blanco = conservar la guardada).
      */
     public function updateAi(Request $request)
     {
@@ -99,7 +139,31 @@ class SettingsController extends Controller
         $data = $request->validate([
             'ai_enabled'               => ['required', 'boolean'],
             'receipts_auto_max_amount' => ['nullable', 'numeric', 'min:1000', 'max:100000000'],
+            'ai_provider'              => ['nullable', 'string', Rule::in(AiProviders::NAMES)],
+            'ai_api_key'               => ['nullable', 'string', 'max:400'],
+            'ai_api_key_clear'         => ['nullable', 'boolean'],
+            'ai_monthly_budget_usd'    => ['nullable', 'numeric', 'min:0', 'max:100000'],
         ]);
+
+        if (! empty($data['ai_api_key_clear'])) {
+            $data['ai_api_key'] = null;
+        } elseif (blank($data['ai_api_key'] ?? null)) {
+            unset($data['ai_api_key']);
+        } else {
+            $data['ai_api_key'] = trim((string) $data['ai_api_key']);
+        }
+        unset($data['ai_api_key_clear']);
+
+        // Cambiar de proveedor deja la llave vieja sin sentido (es de otro): se
+        // borra salvo que venga una nueva en el mismo envío.
+        if (array_key_exists('ai_provider', $data) && $data['ai_provider'] !== $tenant->ai_provider
+            && ! array_key_exists('ai_api_key', $data)) {
+            $data['ai_api_key'] = null;
+        }
+
+        if (($data['ai_enabled'] ?? false) && ! ($data['ai_provider'] ?? $tenant->ai_provider)) {
+            return back()->with('error', 'Elige tu proveedor de IA y carga tu llave antes de encenderla.');
+        }
 
         $tenant->fill($data)->save();
 

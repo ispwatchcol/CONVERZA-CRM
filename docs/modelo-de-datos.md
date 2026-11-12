@@ -77,7 +77,9 @@ Un workspace = un ISP cliente del SaaS.
 | `auto_assign_enabled` | bool | Auto-asignación al agente menos ocupado |
 | `is_active` | bool | Un tenant inactivo no resuelve en `ResolveTenant` ni en el webhook |
 | `ai_enabled` | bool, `false` | La empresa encendió la lectura de comprobantes con IA (opt-in: la foto sale a un proveedor externo) |
-| `ai_monthly_budget_usd` | decimal(8,2), nullable | Tope de gasto de IA por mes. `null` = `config('ai.default_monthly_budget_usd')`. Lo fija el superadmin |
+| `ai_provider` | string(20), nullable | `xai` u `openai`: el proveedor de IA que eligió la empresa |
+| `ai_api_key` | text, nullable | **Cifrado**. La llave de IA **de la empresa** (no hay una de plataforma). Nunca viaja al navegador |
+| `ai_monthly_budget_usd` | decimal(8,2), nullable | Tope de gasto de IA por mes, opcional. `null` = `config('ai.default_monthly_budget_usd')` (0 = sin tope). Lo fija la empresa o el superadmin |
 | `receipts_auto_max_amount` | decimal(14,2), nullable | Tope por comprobante para registrar sin revisión. `null` = config |
 | `ispwatch_api_token` | text, nullable | **Cifrado**. Credencial que emite ispwatch para que Converza registre pagos de ESTA empresa. Nunca viaja al navegador |
 

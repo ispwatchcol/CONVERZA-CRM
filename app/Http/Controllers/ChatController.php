@@ -385,7 +385,7 @@ class ChatController extends Controller
             'serviceWindowExpiresAt' => $serviceWindowExpiresAt,
             // La empresa encendió la lectura de comprobantes con IA: en las
             // imágenes del cliente aparece «Leer comprobante».
-            'aiReceipts'           => (bool) $tenant->ai_enabled,
+            'aiReceipts'           => (bool) $tenant->ai_enabled && $tenant->hasAiKey(),
 
             // Plantillas aprobadas para reabrir la conversación fuera de la
             // ventana. Closure: no se evalúa en el polling de 5s.

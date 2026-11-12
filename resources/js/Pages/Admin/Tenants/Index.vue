@@ -463,9 +463,9 @@ function formatDate(iso) {
                             <div>
                                 <label class="block text-xs font-medium text-gray-700 mb-1">
                                     Tope mensual de IA (USD)
-                                    <span class="text-gray-400 font-normal ml-1">vacío = el general</span>
+                                    <span class="text-gray-400 font-normal ml-1">vacío = sin tope</span>
                                 </label>
-                                <input v-model="editForm.ai_monthly_budget_usd" type="number" min="0" max="1000" step="0.5" placeholder="5"
+                                <input v-model="editForm.ai_monthly_budget_usd" type="number" min="0" max="1000" step="0.5" placeholder="sin tope"
                                        class="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-accent/30 focus:border-accent transition"
                                        :class="editForm.errors.ai_monthly_budget_usd ? 'border-red-400' : 'border-gray-200'">
                                 <p v-if="editForm.errors.ai_monthly_budget_usd" class="text-red-500 text-[11px] mt-1">{{ editForm.errors.ai_monthly_budget_usd }}</p>

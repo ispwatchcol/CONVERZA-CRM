@@ -10,10 +10,10 @@ return [
     // que se apaga si la IA se porta mal; no hace falta desplegar nada.
     'enabled' => (bool) env('AI_ENABLED', false),
 
-    // Proveedor: 'xai' (Grok) u 'openai'. Las funciones hablan con AiGateway, no
-    // con el proveedor, así que cambiarlo no las toca. Cada uno tiene su bloque
-    // abajo con su llave y su modelo.
-    'provider' => env('AI_PROVIDER', 'xai'),
+    // Proveedores: 'xai' (Grok) y 'openai'. NO hay llave de plataforma: cada
+    // empresa carga la SUYA en Configuración (tenants.ai_api_key, cifrada) y elige
+    // su proveedor (tenants.ai_provider). Aquí solo van las URLs, el modelo y los
+    // precios de cada uno. Las funciones hablan con AiGateway, no con el proveedor.
 
     // Cola de las tareas de IA. NO es 'default' a propósito: leer una imagen
     // tarda segundos y no puede quedar delante de la ingesta de mensajes ni de
@@ -24,13 +24,13 @@ return [
     'queue' => env('AI_QUEUE', 'ai'),
 
     // Tope de gasto por empresa y mes calendario (hora de Colombia), en USD,
-    // cuando la empresa no tiene uno propio (tenants.ai_monthly_budget_usd).
-    // Alcanzado el tope, los comprobantes quedan para revisión humana.
-    'default_monthly_budget_usd' => (float) env('AI_DEFAULT_MONTHLY_BUDGET_USD', 5),
+    // cuando la empresa no se puso uno (tenants.ai_monthly_budget_usd). 0 = sin
+    // tope: el gasto es de la empresa (su llave), no de Converza. Alcanzado un
+    // tope, los comprobantes quedan para revisión humana.
+    'default_monthly_budget_usd' => (float) env('AI_DEFAULT_MONTHLY_BUDGET_USD', 0),
 
     'xai' => [
         'base_url' => env('XAI_BASE_URL', 'https://api.x.ai/v1'),
-        'api_key'  => env('XAI_API_KEY'),
         // grok-4.3: lee imágenes, soporta salida con JSON schema estricto y es
         // el más barato de los que hacen las dos cosas (oct/2026).
         'model'    => env('XAI_MODEL', 'grok-4.3'),
@@ -48,7 +48,6 @@ return [
 
     'openai' => [
         'base_url' => env('OPENAI_BASE_URL', 'https://api.openai.com/v1'),
-        'api_key'  => env('OPENAI_API_KEY'),
         // gpt-5-mini: lee imágenes y soporta JSON schema estricto (nov/2026).
         'model'    => env('OPENAI_MODEL', 'gpt-5-mini'),
         // Igual que con Grok: transcribir no necesita razonar a fondo. Vacío =

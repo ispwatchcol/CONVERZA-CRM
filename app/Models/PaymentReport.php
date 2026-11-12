@@ -42,7 +42,7 @@ class PaymentReport extends Model
         'sin_auto'             => 'Registro automático apagado: lo revisa el equipo',
         'ia_apagada'           => 'La IA está apagada para tu empresa: revisión manual',
         'ia_apagada_global'    => 'La IA está pausada en Converza: revisión manual',
-        'sin_llave'            => 'Falta configurar el proveedor de IA: revisión manual',
+        'sin_llave'            => 'Falta cargar la llave de IA de tu empresa (Configuración → Pagos e IA): revisión manual',
         'presupuesto_agotado'  => 'Se agotó el presupuesto de IA del mes: revisión manual',
         'ia_error'             => 'La IA no respondió: revisión manual',
         'ia_sin_respuesta'     => 'La lectura tardó demasiado: revisión manual',
