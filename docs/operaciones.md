@@ -769,8 +769,9 @@ chat, la nota interna `🧾 …` que deja cada paso.
 
 1. El worker: `sudo supervisorctl status converza-ai:*` → `RUNNING`
    ([deploy/DEPLOY.md, paso 4 bis](../deploy/DEPLOY.md)).
-2. `.env`: `XAI_API_KEY=…` y `AI_ENABLED=true`. Para registrar pagos, además
-   `ISPWATCH_API_URL=https://ispwatch-crm.app`.
+2. `.env`: `AI_ENABLED=true`. Para registrar pagos, además
+   `ISPWATCH_API_URL=https://ispwatch-crm.app`. **No hay llave de IA en el
+   `.env`**: es de cada empresa.
 3. `php artisan config:cache` **y** `sudo -n /bin/systemctl reload php8.2-fpm`.
 4. La empresa: Configuración → Inteligencia artificial → encender. Para el
    registro automático, el superadmin carga la credencial de ispwatch de esa
@@ -798,8 +799,8 @@ automático: quitar la credencial de ispwatch de la empresa en Admin → Tenants
 |---|---|---|
 | `ia_sin_respuesta` | El flujo esperó 5 min y la lectura no llegó | ¿Worker `converza-ai` corriendo? ¿Cola `ai` atascada? (comandos de §4.3). Si el worker estaba caído, al volver completa los datos del reporte |
 | `ia_error` | El proveedor falló y no se arregla reintentando | `ai_usage_logs.error` (abajo). Un 400 que menciona `reasoning` → `XAI_REASONING_EFFORT=` vacío; 401 → la llave |
-| `sin_llave` | Falta `XAI_API_KEY` | `.env` + `config:cache` + reload |
-| `presupuesto_agotado` | La empresa llegó a su tope del mes | Subirlo en Admin → Tenants, o esperar al mes siguiente |
+| `sin_llave` | La empresa no cargó su llave de IA (o no eligió proveedor) | Configuración → Pagos e IA → proveedor + API key → «Probar llave» |
+| `presupuesto_agotado` | La empresa llegó al tope mensual que ella (o el superadmin) se puso | Subirlo o quitarlo (Configuración → Pagos e IA, o Admin → Tenants), o esperar al mes siguiente |
 | `ia_apagada` / `ia_apagada_global` | Apagada en la empresa / en Converza | Configuración de la empresa / `AI_ENABLED` |
 | `formato_no_soportado` | PDF u otro formato (la Fase 1 solo lee jpg/png) | Revisarlo a mano |
 | `imagen_no_disponible` | La descarga del medio desde Meta falló | Ver «Enviar imagen o audio da 500» (permisos de storage) |

@@ -23,7 +23,7 @@ use Illuminate\Database\Eloquent\Model;
  */
 final class AiGateway
 {
-    public function __construct(private readonly AiProvider $provider) {}
+    public function __construct(private readonly AiProviders $providers) {}
 
     /** null = se puede usar; si no, el motivo (una llave de PaymentReport::REASONS). */
     public function unavailableReason(Tenant $tenant): ?string
@@ -31,8 +31,8 @@ final class AiGateway
         return match (true) {
             ! config('ai.enabled')                                              => 'ia_apagada_global',
             ! $tenant->ai_enabled                                               => 'ia_apagada',
-            ! $this->provider->isConfigured()                                   => 'sin_llave',
-            $this->spentThisMonth($tenant) >= $this->monthlyBudget($tenant)     => 'presupuesto_agotado',
+            ! $this->providers->forTenant($tenant)?->isConfigured()             => 'sin_llave',
+            $this->overBudget($tenant)                                          => 'presupuesto_agotado',
             default                                                             => null,
         };
     }
@@ -52,7 +52,7 @@ final class AiGateway
         $started = hrtime(true);
 
         try {
-            $response = $this->provider->respond($request);
+            $response = $this->providers->forTenant($tenant)->respond($request);
         } catch (AiProviderException $e) {
             $this->log($tenant, $request, $subject, $started, null, $e->getMessage());
 
@@ -77,9 +77,23 @@ final class AiGateway
             ->sum('cost_usd');
     }
 
-    public function monthlyBudget(Tenant $tenant): float
+    /**
+     * El tope mensual de la empresa en USD, o null si no tiene. Es OPCIONAL: la
+     * llave y el gasto son de la empresa, así que el tope es un freno que ella
+     * (o el superadmin) se pone, no un límite de Converza.
+     */
+    public function monthlyBudget(Tenant $tenant): ?float
     {
-        return (float) ($tenant->ai_monthly_budget_usd ?? config('ai.default_monthly_budget_usd', 5));
+        $budget = (float) ($tenant->ai_monthly_budget_usd ?? config('ai.default_monthly_budget_usd', 0));
+
+        return $budget > 0 ? $budget : null;
+    }
+
+    private function overBudget(Tenant $tenant): bool
+    {
+        $budget = $this->monthlyBudget($tenant);
+
+        return $budget !== null && $this->spentThisMonth($tenant) >= $budget;
     }
 
     private function log(Tenant $tenant, AiRequest $request, ?Model $subject, int $started, ?AiResponse $response, ?string $error = null): void
@@ -97,8 +111,8 @@ final class AiGateway
             AiUsageLog::create([
                 'tenant_id'        => $tenant->id,
                 'purpose'          => mb_substr($request->purpose, 0, 20),
-                'provider'         => $response?->provider ?? $this->provider->name(),
-                'model'            => mb_substr($response?->model ?? (string) config("ai.{$this->provider->name()}.model"), 0, 60),
+                'provider'         => $response?->provider ?? (string) $tenant->ai_provider,
+                'model'            => mb_substr($response?->model ?? (string) config("ai.{$tenant->ai_provider}.model"), 0, 60),
                 'status'           => $response !== null ? 'ok' : 'error',
                 'input_tokens'     => $response?->inputTokens ?? 0,
                 'output_tokens'    => $response?->outputTokens ?? 0,

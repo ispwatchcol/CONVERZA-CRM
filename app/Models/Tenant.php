@@ -26,6 +26,8 @@ class Tenant extends Model
         'is_active',
         'ai_enabled',
         'ai_monthly_budget_usd',
+        'ai_provider',
+        'ai_api_key',
         'receipts_auto_max_amount',
         'ispwatch_api_token',
     ];
@@ -34,6 +36,7 @@ class Tenant extends Model
         'wa_access_token',
         'wa_app_secret',
         'ispwatch_api_token',
+        'ai_api_key',
     ];
 
     protected function casts(): array
@@ -50,7 +53,14 @@ class Tenant extends Model
             'ai_monthly_budget_usd' => 'decimal:2',
             'receipts_auto_max_amount' => 'decimal:2',
             'ispwatch_api_token' => 'encrypted',
+            'ai_api_key' => 'encrypted',
         ];
+    }
+
+    /** ¿Cargó la empresa su llave de IA? Valor crudo, para no descifrar (ver hasWhatsAppConfigured). */
+    public function hasAiKey(): bool
+    {
+        return filled($this->getRawOriginal('ai_api_key')) && in_array($this->ai_provider, ['xai', 'openai'], true);
     }
 
     /** Dónde le pagan los clientes al ISP (Configuración → Medios de pago). */

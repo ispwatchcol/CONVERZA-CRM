@@ -943,7 +943,7 @@ vence el {{fecha_vencimiento}}.</pre>
 
                         <h3 class="font-semibold text-gray-800 mt-4 mb-2">Para empezar (administrador)</h3>
                         <ol class="space-y-2 text-sm text-gray-600 list-decimal list-inside">
-                            <li>En <em>Configuración → Inteligencia artificial</em>, enciende la lectura de comprobantes. La foto del comprobante se envía a un proveedor de IA externo (OpenAI o xAI) solo para leerla y no queda guardada allá; enciéndela si tu política de tratamiento de datos lo permite.</li>
+                            <li>En <em>Configuración → Inteligencia artificial</em>, enciende la lectura de comprobantes. Eliges tu proveedor (OpenAI o xAI) y pegas <strong>tu propia API key</strong> (la creas en tu cuenta del proveedor; el consumo, unos US$ 0,003 por comprobante, se te cobra a ti y la llave se guarda cifrada). Usa «Probar llave» para comprobarla. La foto del comprobante se envía a ese proveedor solo para leerla y no queda guardada allá; enciéndela si tu política de tratamiento de datos lo permite.</li>
                             <li>En <em>Configuración → Medios de pago</em>, usa <em>Traer de ispwatch</em> y complétale a cada medio su <strong>número de cuenta</strong> y a nombre de quién. Con el número, Converza comprueba que el pago haya ido a una cuenta tuya; sin él, ningún pago se registra solo.</li>
                             <li>Opcional: en un flujo, agrega el bloque <em>Comprobante de pago</em>. Antes, un <em>Mensaje</em> con <code v-pre class="bg-gray-100 px-1.5 py-0.5 rounded text-xs">{{empresa.medios_pago}}</code> le dice al cliente dónde pagar.</li>
                         </ol>

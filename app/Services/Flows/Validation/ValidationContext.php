@@ -40,7 +40,8 @@ final class ValidationContext
         return new self(
             labels: Label::withoutGlobalScopes()->where('tenant_id', $tenantId)->pluck('name', 'id')->all(),
             teams: Team::withoutGlobalScopes()->where('tenant_id', $tenantId)->pluck('name', 'id')->all(),
-            aiEnabled: (bool) config('ai.enabled') && (bool) $tenant?->ai_enabled,
+            // Encendida Y lista (llave cargada, sin tope agotado): lo que de verdad hace falta para leer.
+            aiEnabled: $tenant !== null && app(\App\Services\Ai\AiGateway::class)->unavailableReason($tenant) === null,
             canRegisterPayments: (bool) $tenant?->canRegisterPayments(),
             hasPaymentAccounts: PaymentChannel::withoutGlobalScopes()
                 ->where('tenant_id', $tenantId)

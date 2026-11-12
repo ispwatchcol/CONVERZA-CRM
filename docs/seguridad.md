@@ -135,7 +135,7 @@ Es **solo lectura** — las escrituras siguen bloqueadas en sus propios endpoint
 | `wa_access_token` | `tenants` | Cast `encrypted` (APP_KEY) + `$hidden` |
 | `wa_app_secret` | `tenants` | Ídem |
 | `ispwatch_api_token` | `tenants` | Ídem. Credencial de ispwatch para registrar pagos de **una** empresa; solo la carga el superadmin (Admin → Tenants) y el navegador solo sabe si existe |
-| `XAI_API_KEY` | `.env` | Llave del proveedor de IA. Una sola para todas las empresas; el gasto se reparte y se topa por empresa en `ai_usage_logs` |
+| `ai_api_key` | `tenants` | Llave de IA (OpenAI o xAI) **de cada empresa**: cast `encrypted` + `$hidden`, nunca vuelve al navegador (solo «existe» y los últimos 4 caracteres). No hay llave de plataforma |
 | `APP_KEY` | `.env` | Nunca en git |
 | Credenciales de base | `.env` | Ídem |
 | Llave SSH de deploy | GitHub Secrets | Par dedicado, solo para el droplet |
