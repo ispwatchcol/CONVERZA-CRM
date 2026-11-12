@@ -9,8 +9,15 @@
  * contraseña vive en DOS variables del `.env` (`DB_PASSWORD` para el schema
  * `converza` e `ISPWATCH_DB_PASSWORD` para `public`), y solo se actualizó una.
  *
- * Con esto, rotar pasa a ser «cambiar un secreto en GitHub y desplegar». Las dos
- * variables se actualizan juntas o ninguna: es imposible olvidar la segunda.
+ * Con esto, rotar pasa a ser «cambiar un secreto en GitHub y desplegar».
+ *
+ * DOS BASES, DOS SECRETOS (desde el 12/11/2026)
+ * Hasta el 02/11/2026 Converza e ispwatch vivían en el mismo Postgres y un solo
+ * secreto se escribía en las dos variables. Ese día Converza se mudó a su propio
+ * Supabase, con otra contraseña, y el secreto quedó con la vieja: el primer
+ * despliegue siguiente (12/11) pisó `DB_PASSWORD` con una contraseña que la base
+ * nueva rechaza y tumbó producción. Ahora cada variable tiene su secreto, y la
+ * que no venga no se toca.
  *
  * POR QUÉ SOLO LAS CREDENCIALES Y NO EL `.env` ENTERO
  * Generar el `.env` completo desde secretos obligaría a tener las ~40 variables
@@ -23,10 +30,10 @@
  * shell. Una variable de entorno solo es visible para este proceso.
  *
  * USO
- *   CONVERZA_DB_PASSWORD="..." php deploy/sync-secrets.php
+ *   CONVERZA_DB_PASSWORD="..." ISPWATCH_DB_PASSWORD="..." php deploy/sync-secrets.php
  *
- * Si la variable no está definida, no hace nada y sale con 0: así los despliegues
- * siguen funcionando mientras el secreto todavía no se ha creado en GitHub.
+ * Cada una es opcional. Sin ninguna, no hace nada y sale con 0: así los
+ * despliegues siguen funcionando aunque los secretos no existan en GitHub.
  *
  * ORDEN EN EL DESPLIEGUE
  * Tiene que correr ANTES de `migrate` y de `config:cache`. Si la contraseña rotó,
@@ -35,15 +42,27 @@
 
 const ENV_PATH = __DIR__ . '/../.env';
 
-/** Claves del .env que reciben el mismo valor. Ambas conexiones usan el mismo
- *  usuario y contraseña de Postgres; solo cambian de `search_path`. */
-const CLAVES_DB = ['DB_PASSWORD', 'ISPWATCH_DB_PASSWORD'];
+/** Clave del .env => variable de entorno que trae su valor. Son dos bases
+ *  distintas (Converza e ispwatch), cada una con su contraseña. */
+const CLAVES_DB = [
+    'DB_PASSWORD'          => 'CONVERZA_DB_PASSWORD',
+    'ISPWATCH_DB_PASSWORD' => 'ISPWATCH_DB_PASSWORD',
+];
 
-$nueva = getenv('CONVERZA_DB_PASSWORD');
+/** @var array<string, string> $nuevas Clave del .env => valor, solo las que vinieron. */
+$nuevas = [];
 
-if ($nueva === false || $nueva === '') {
-    echo "sync-secrets: CONVERZA_DB_PASSWORD no está definida — no se toca el .env.\n";
-    echo "  (esperado hasta que el secreto exista en GitHub; ver docs/operaciones.md §6 bis)\n";
+foreach (CLAVES_DB as $clave => $variable) {
+    $valor = getenv($variable);
+
+    if ($valor !== false && $valor !== '') {
+        $nuevas[$clave] = $valor;
+    }
+}
+
+if ($nuevas === []) {
+    echo "sync-secrets: no vino ninguna contraseña — no se toca el .env.\n";
+    echo "  (esperado si los secretos no existen en GitHub; ver docs/operaciones.md §6 bis)\n";
     exit(0);
 }
 
@@ -73,7 +92,7 @@ $cambiadas = [];
 // presencia de salto final—.
 $lineas = preg_split('/(\r\n|\n|\r)/', $contenido, -1, PREG_SPLIT_DELIM_CAPTURE);
 
-foreach (CLAVES_DB as $clave) {
+foreach ($nuevas as $clave => $nueva) {
     $encontrada = false;
 
     foreach ($lineas as $i => $linea) {
@@ -118,7 +137,7 @@ if (file_put_contents(ENV_PATH, $contenido) === false) {
 // valor. Que file_put_contents devuelva bytes no garantiza el contenido final.
 $verificar = file_get_contents(ENV_PATH);
 
-foreach (CLAVES_DB as $clave) {
+foreach ($nuevas as $clave => $nueva) {
     if (! str_contains($verificar, $clave . '=' . formatear($nueva))) {
         fwrite(STDERR, "sync-secrets: la verificación de {$clave} falló. Respaldo en {$respaldo}\n");
         exit(1);

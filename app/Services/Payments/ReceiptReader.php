@@ -18,7 +18,7 @@ use Illuminate\Database\Eloquent\Model;
  */
 final class ReceiptReader
 {
-    /** Formatos que acepta el proveedor (xAI: jpg/jpeg y png). */
+    /** Formatos que aceptan los dos proveedores (xAI solo lee jpg/jpeg y png). */
     public const SUPPORTED_MIMES = ['image/jpeg', 'image/jpg', 'image/png'];
 
     public const INSTRUCTIONS = <<<'TXT'

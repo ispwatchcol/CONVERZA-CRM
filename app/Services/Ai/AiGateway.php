@@ -89,8 +89,8 @@ final class AiGateway
             $estimated = false;
 
             if ($response !== null && $cost === null) {
-                $cost = $response->inputTokens / 1_000_000 * (float) config('ai.xai.price_input_per_million', 0)
-                    + $response->outputTokens / 1_000_000 * (float) config('ai.xai.price_output_per_million', 0);
+                $cost = $response->inputTokens / 1_000_000 * (float) config("ai.{$response->provider}.price_input_per_million", 0)
+                    + $response->outputTokens / 1_000_000 * (float) config("ai.{$response->provider}.price_output_per_million", 0);
                 $estimated = true;
             }
 
@@ -98,7 +98,7 @@ final class AiGateway
                 'tenant_id'        => $tenant->id,
                 'purpose'          => mb_substr($request->purpose, 0, 20),
                 'provider'         => $response?->provider ?? $this->provider->name(),
-                'model'            => mb_substr($response?->model ?? (string) config('ai.xai.model'), 0, 60),
+                'model'            => mb_substr($response?->model ?? (string) config("ai.{$this->provider->name()}.model"), 0, 60),
                 'status'           => $response !== null ? 'ok' : 'error',
                 'input_tokens'     => $response?->inputTokens ?? 0,
                 'output_tokens'    => $response?->outputTokens ?? 0,

@@ -885,7 +885,7 @@ const waBadge = computed(() => {
                                     {{ aiForm.ai_enabled ? 'Lectura de comprobantes ACTIVADA' : 'Lectura de comprobantes DESACTIVADA' }}
                                 </p>
                                 <p class="text-xs mt-1" :class="aiForm.ai_enabled ? 'text-fuchsia-700' : 'text-gray-500'">
-                                    La foto del comprobante se envía a un proveedor de IA (xAI · Grok) solo para leerla: valor, fecha, referencia y a qué cuenta se pagó.
+                                    La foto del comprobante se envía a un proveedor de IA externo (OpenAI o xAI) solo para leerla: valor, fecha, referencia y a qué cuenta se pagó.
                                     No queda guardada allá. Actívala si tu política de tratamiento de datos lo permite. Apagada, los comprobantes igual llegan a
                                     «Pagos reportados», sin leer.
                                 </p>

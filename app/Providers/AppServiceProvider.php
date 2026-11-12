@@ -5,6 +5,7 @@ namespace App\Providers;
 use App\Models\Conversation;
 use App\Observers\ConversationObserver;
 use App\Services\Ai\AiProvider;
+use App\Services\Ai\OpenAiProvider;
 use App\Services\Ai\XaiProvider;
 use Illuminate\Support\ServiceProvider;
 
@@ -12,9 +13,10 @@ class AppServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
-        // Hoy un solo proveedor; el match es el punto donde se agrega otro.
+        // El proveedor lo elige AI_PROVIDER; el match es donde se agrega otro.
         $this->app->bind(AiProvider::class, fn () => match (config('ai.provider')) {
-            default => new XaiProvider(),
+            'openai' => new OpenAiProvider(),
+            default  => new XaiProvider(),
         });
     }
 

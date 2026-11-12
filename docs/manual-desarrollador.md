@@ -156,7 +156,9 @@ Ver [config/campaigns.php](../config/campaigns.php).
 | Variable | Para qué |
 |---|---|
 | `AI_ENABLED` | Interruptor general. `false` por defecto: nada sale al proveedor. **En local déjalo en `false`**: con el `.env` apuntando a producción, una lectura de prueba gastaría de verdad |
-| `XAI_API_KEY`, `XAI_MODEL`, `XAI_REASONING_EFFORT` | Proveedor (xAI, Responses API). `grok-4.3` y `low` por defecto |
+| `AI_PROVIDER` | `xai` (por defecto) u `openai` |
+| `XAI_API_KEY`, `XAI_MODEL`, `XAI_REASONING_EFFORT` | xAI (Responses API). `grok-4.3` y `low` por defecto |
+| `OPENAI_API_KEY`, `OPENAI_MODEL`, `OPENAI_PRICE_INPUT`, `OPENAI_PRICE_OUTPUT` | OpenAI. `gpt-5-mini` por defecto; los precios son para estimar el gasto, porque OpenAI no lo informa |
 | `AI_QUEUE` | Cola de las lecturas (`ai`). Exige el programa `converza-ai` de Supervisor |
 | `AI_DEFAULT_MONTHLY_BUDGET_USD` | Tope de gasto por empresa y mes si la empresa no tiene uno propio |
 | `AI_RECEIPT_*` | Confianza mínima, antigüedad máxima, plazo de la tarea, tope y frecuencia del registro automático |

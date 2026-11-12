@@ -139,10 +139,17 @@ al cliente a mano en «Pagos reportados».
 - Tope de gasto mensual por empresa (USD 5 por defecto). Alcanzado, los
   comprobantes llegan igual, sin leer.
 
-### 2.7 Proveedor intercambiable; xAI hoy
+### 2.7 Proveedor intercambiable: xAI u OpenAI
 
-Las funciones hablan con `AiGateway`, que habla con un `AiProvider`. Hoy el único
-es `XaiProvider` contra la **Responses API** (`POST /v1/responses`):
+Las funciones hablan con `AiGateway`, que habla con un `AiProvider`. Hay dos,
+`XaiProvider` y `OpenAiProvider` (desde el 12/11/2026), y se elige con
+`AI_PROVIDER=xai|openai`. Los dos hablan la misma **Responses API**
+(`POST /v1/responses`), así que comparten `ResponsesApiProvider`. Lo que cambia
+con OpenAI: su llave y modelo (`OPENAI_API_KEY`, `OPENAI_MODEL`, por defecto
+`gpt-5-mini`), que se le quitan al schema los límites de lista que su modo
+estricto rechaza, y que **no informa el costo** de cada llamada: el gasto del mes
+se estima con `OPENAI_PRICE_INPUT` / `OPENAI_PRICE_OUTPUT`, que hay que mantener
+al día. La tabla de abajo es la de xAI:
 
 | Elección | Por qué |
 |---|---|

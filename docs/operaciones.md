@@ -345,32 +345,39 @@ en sí fue correcta; lo que faltó fue propagarla.
 
 ### Dónde vive cada credencial
 
-Una sola contraseña de Postgres aparece en **cuatro variables repartidas en dos
-máquinas**. Rotarla y tocar solo una es el error fácil:
+Son **dos bases con dos contraseñas distintas** desde el 02/11/2026, cuando
+Converza se mudó a su propio Supabase:
 
-| Credencial | Dónde | Variables |
-|---|---|---|
-| Postgres (Supabase) | `.env` del droplet | `DB_PASSWORD` **y** `ISPWATCH_DB_PASSWORD` |
-| Postgres (Supabase) | `.env` local de cada dev | las mismas dos |
+| Credencial | Dónde | Variable | Secreto de GitHub |
+|---|---|---|---|
+| Postgres de Converza (Supabase propio) | `.env` del droplet y local | `DB_PASSWORD` | `CONVERZA_DB_PASSWORD` |
+| Postgres de ispwatch (Supabase viejo) | `.env` del droplet y local | `ISPWATCH_DB_PASSWORD` | `ISPWATCH_DB_PASSWORD` |
 | Token de WhatsApp | Columna `tenants.wa_access_token`, cifrada | — (se cambia en `/settings`) |
 | Token global de WhatsApp | `.env` del droplet | `WHATSAPP_API_TOKEN` |
 
-> Las dos conexiones de Postgres usan el **mismo usuario y la misma contraseña**;
-> solo cambian de `search_path` (`converza` vs `public`). Es facilísimo arreglar
-> una y olvidar la otra: pasó exactamente eso, y el síntoma fue que `/login`
-> funcionaba mientras el dashboard seguía en 500.
+> Hasta el 02/11/2026 las dos conexiones compartían usuario y contraseña, y un
+> solo secreto (`DB_PASSWORD`) se escribía en las dos variables. Tras la mudanza
+> ese secreto quedó con la contraseña vieja, y el primer despliegue siguiente
+> (12/11/2026, PR #96) **pisó la de Converza con la de ispwatch y tumbó
+> producción** hasta restaurar el `.env.bak`. Desde entonces cada variable tiene
+> su secreto, el `DB_PASSWORD` viejo ya no se lee, y un secreto que no existe
+> simplemente no toca su variable.
 
 ### Procedimiento (con el secreto en GitHub)
 
-**Esta es la vía normal desde el 21/08/2026.** La contraseña vive en un único
-sitio —el secret `DB_PASSWORD` del repo— y el despliegue la propaga a las dos
-variables del `.env` a la vez, así que es imposible olvidar la segunda.
+Cada contraseña vive en su secreto del repo y el despliegue la propaga a su
+variable del `.env`.
 
 ```bash
-# 1. Rotar en el proveedor (Supabase → Settings → Database)
-# 2. GitHub → Settings → Secrets and variables → Actions → DB_PASSWORD → Update
+# 1. Rotar en el proveedor (Supabase → Settings → Database) de ESA base
+# 2. GitHub → Settings → Secrets and variables → Actions →
+#    CONVERZA_DB_PASSWORD o ISPWATCH_DB_PASSWORD → Update
 # 3. Actions → "Deploy to production" → Run workflow
 ```
+
+Los secretos son opcionales: sin ellos el despliegue no toca las contraseñas y
+se rotan a mano (abajo). Si se cargan, **cada uno con la contraseña de su base**:
+un valor equivocado tumba producción en el siguiente despliegue.
 
 El despliegue corre `deploy/sync-secrets.php` antes de `migrate`, y termina con
 `deploy:verify`: si algo quedó mal, el workflow sale en rojo.
@@ -407,8 +414,8 @@ responde e imprime el motivo con la conexión que falló.
 
 Tres capas, en orden de rapidez:
 
-1. **`sync-secrets.php`** actualiza las dos variables juntas — no se puede
-   olvidar una.
+1. **`sync-secrets.php`** escribe cada contraseña desde su propio secreto y
+   respalda el `.env` antes de tocarlo.
 2. **`deploy:verify`** falla el despliegue si la config publicada no funciona.
 3. **El centinela** sobre `/health` avisa en menos de 5 minutos si algo se
    escapó igual.
