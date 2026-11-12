@@ -77,12 +77,12 @@ function previewBody(msg) {
 const healthIssues = computed(() => {
     const issues = [];
     if (!props.health.whatsapp_configured) {
-        issues.push({ key: 'wa', label: 'WhatsApp sin configurar', link: route('settings.index') });
+        issues.push({ key: 'wa', label: 'WhatsApp sin configurar', link: route('settings.index', { tab: 'conexiones' }) });
     } else if (props.health.whatsapp_status === 'error') {
-        issues.push({ key: 'wa', label: 'WhatsApp con error de conexión', link: route('settings.index') });
+        issues.push({ key: 'wa', label: 'WhatsApp con error de conexión', link: route('settings.index', { tab: 'conexiones' }) });
     }
     if (props.health.ispwatch_linked && !props.health.ispwatch_connected) {
-        issues.push({ key: 'isp', label: 'ISPWatch vinculado pero no responde', link: route('settings.index') });
+        issues.push({ key: 'isp', label: 'ISPWatch vinculado pero no responde', link: route('settings.index', { tab: 'conexiones' }) });
     }
     return issues;
 });

@@ -91,6 +91,29 @@ const botStateLabel = computed(() => ({
 // Solo el admin del tenant configura la asignación automática.
 const isAdmin = computed(() => usePage().props.auth?.user?.role === 'admin');
 
+// ── Pestañas ─────────────────────────────────────────────────────────────────
+// La página crecía sin fin y las llaves de WhatsApp quedaban enterradas. Cada
+// pestaña agrupa lo que se configura junto; `?tab=` permite enlazar a una
+// (p. ej. desde «Pagos reportados») y la última elegida se recuerda.
+const TABS = [
+    { key: 'conexiones', label: 'Conexiones y API keys', hint: 'WhatsApp (token, Phone Number ID), ispwatch y perfil' },
+    { key: 'atencion',   label: 'Atención',              hint: 'Asignación de chats y cierre automático' },
+    { key: 'bot',        label: 'Bot y avisos',          hint: 'Bot de respuestas y avisos automáticos' },
+    { key: 'pagos',      label: 'Pagos e IA',            hint: 'Lectura de comprobantes con IA y medios de pago' },
+];
+const readStored = () => { try { return localStorage.getItem('converza-settings-tab'); } catch { return null; } };
+const fromUrl = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('tab') : null;
+const validTab = (k) => TABS.some((t) => t.key === k) ? k : null;
+const tab = ref(validTab(fromUrl) ?? validTab(readStored()) ?? 'conexiones');
+
+function setTab(key) {
+    tab.value = key;
+    try { localStorage.setItem('converza-settings-tab', key); } catch { /* sin almacenamiento: no pasa nada */ }
+    const url = new URL(window.location.href);
+    url.searchParams.set('tab', key);
+    window.history.replaceState(window.history.state, '', url);
+}
+
 // ── Inteligencia artificial (comprobantes de pago) ───────────────────────────
 const aiForm = useForm({
     ai_enabled: props.ai?.enabled ?? false,
@@ -422,9 +445,20 @@ const waBadge = computed(() => {
                 </span>
             </div>
 
+            <!-- Pestañas -->
+            <div class="mb-6 flex gap-1 overflow-x-auto rounded-xl bg-gray-100 p-1" role="tablist">
+                <button v-for="t in TABS" :key="t.key" type="button" role="tab" :aria-selected="tab === t.key" :title="t.hint"
+                        class="px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition"
+                        :class="tab === t.key ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'"
+                        @click="setTab(t.key)">
+                    {{ t.label }}
+                </button>
+            </div>
+            <p class="-mt-3 mb-5 text-xs text-gray-500">{{ TABS.find((t) => t.key === tab)?.hint }}</p>
+
             <div class="space-y-6">
                 <!-- ═══════════════ PERFIL ═══════════════ -->
-                <section class="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+                <section v-show="tab === 'conexiones'" class="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
                     <div class="flex items-center justify-between mb-4">
                         <div class="flex items-center">
                             <div class="w-9 h-9 rounded-xl bg-accent/10 flex items-center justify-center mr-3">
@@ -467,7 +501,7 @@ const waBadge = computed(() => {
                 </section>
 
                 <!-- ═══════════════ ISPWATCH (read-only) ═══════════════ -->
-                <section class="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+                <section v-show="tab === 'conexiones'" class="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
                     <div class="flex items-center justify-between mb-4">
                         <div class="flex items-center">
                             <div class="w-9 h-9 rounded-xl bg-blue-50 flex items-center justify-center mr-3">
@@ -518,7 +552,7 @@ const waBadge = computed(() => {
                 </section>
 
                 <!-- ═══════════════ WHATSAPP ═══════════════ -->
-                <section class="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+                <section v-show="tab === 'conexiones'" class="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
                     <div class="flex items-center justify-between mb-4">
                         <div class="flex items-center">
                             <div class="w-9 h-9 rounded-xl bg-green-50 flex items-center justify-center mr-3">
@@ -688,7 +722,7 @@ const waBadge = computed(() => {
                 </section>
 
                 <!-- ═══════════════ ASIGNACIÓN AUTOMÁTICA ═══════════════ -->
-                <section v-if="isAdmin" class="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+                <section v-show="tab === 'atencion'" v-if="isAdmin" class="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
                     <div class="flex items-center mb-4">
                         <div class="w-9 h-9 rounded-xl bg-indigo-50 flex items-center justify-center mr-3">
                             <svg class="w-5 h-5 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M18 18.72a9.094 9.094 0 003.741-.479 3 3 0 00-4.682-2.72m.94 3.198l.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0112 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 016 18.719m12 0a5.971 5.971 0 00-.941-3.197m0 0A5.995 5.995 0 0012 12.75a5.995 5.995 0 00-5.058 2.772m0 0a3 3 0 00-4.681 2.72 8.986 8.986 0 003.74.477m.94-3.197a5.971 5.971 0 00-.94 3.197M15 6.75a3 3 0 11-6 0 3 3 0 016 0zm6 3a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0zm-13.5 0a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0z"/></svg>
@@ -730,7 +764,7 @@ const waBadge = computed(() => {
                 </section>
 
                 <!-- ═══════════════ CIERRE AUTOMÁTICO ═══════════════ -->
-                <section v-if="isAdmin" class="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+                <section v-show="tab === 'atencion'" v-if="isAdmin" class="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
                     <div class="flex items-center mb-4">
                         <div class="w-9 h-9 rounded-xl bg-sky-50 flex items-center justify-center mr-3">
                             <svg class="w-5 h-5 text-sky-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
@@ -790,7 +824,7 @@ const waBadge = computed(() => {
                 </section>
 
                 <!-- ═══════════════ BOT DE RESPUESTAS AUTOMÁTICAS ═══════════════ -->
-                <section v-if="isAdmin" class="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+                <section v-show="tab === 'bot'" v-if="isAdmin" class="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
                     <div class="flex items-center mb-4">
                         <div class="w-9 h-9 rounded-xl bg-violet-50 flex items-center justify-center mr-3">
                             <svg class="w-5 h-5 text-violet-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/></svg>
@@ -865,7 +899,7 @@ const waBadge = computed(() => {
                 </section>
 
                 <!-- ═══════════════ INTELIGENCIA ARTIFICIAL ═══════════════ -->
-                <section v-if="isAdmin" class="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+                <section v-show="tab === 'pagos'" v-if="isAdmin" class="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
                     <div class="flex items-center mb-4">
                         <div class="w-9 h-9 rounded-xl bg-fuchsia-50 flex items-center justify-center mr-3">
                             <svg class="w-5 h-5 text-fuchsia-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456z"/></svg>
@@ -898,6 +932,12 @@ const waBadge = computed(() => {
                                       :class="aiForm.ai_enabled ? 'left-5' : 'left-0.5'"></span>
                             </button>
                         </div>
+
+                        <p class="text-xs text-gray-600 bg-gray-50 rounded-lg px-3 py-2">
+                            <strong>La llave del proveedor de IA no la cargas tú:</strong> la administra Converza y se te cobra
+                            dentro de tu plan, con un tope mensual. Tú solo decides si la lectura está encendida. Tus propias
+                            llaves (token de WhatsApp, etc.) están en <button type="button" class="text-accent font-medium hover:underline" @click="setTab('conexiones')">Conexiones y API keys</button>.
+                        </p>
 
                         <p v-if="ai.enabled && ai.unavailable && ai.unavailable !== 'ia_apagada'" class="text-xs text-amber-800 bg-amber-50 rounded-lg px-3 py-2">
                             Ahora mismo no se está leyendo nada: {{ (ai.reasons ?? {})[ai.unavailable] ?? ai.unavailable }}.
@@ -942,7 +982,7 @@ const waBadge = computed(() => {
                 </section>
 
                 <!-- ═══════════════ MEDIOS DE PAGO ═══════════════ -->
-                <section v-if="isAdmin" class="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+                <section v-show="tab === 'pagos'" v-if="isAdmin" class="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
                     <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
                         <div class="flex items-center">
                             <div class="w-9 h-9 rounded-xl bg-emerald-50 flex items-center justify-center mr-3">
@@ -1040,7 +1080,7 @@ const waBadge = computed(() => {
                 </section>
 
                 <!-- ═══════════════ AVISOS AUTOMÁTICOS ═══════════════ -->
-                <section class="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+                <section v-show="tab === 'bot'" class="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
                     <div class="flex items-center justify-between mb-4">
                         <div class="flex items-center">
                             <div class="w-9 h-9 rounded-xl bg-amber-50 flex items-center justify-center mr-3">
@@ -1116,7 +1156,7 @@ const waBadge = computed(() => {
                 </section>
 
                 <!-- ═══════════════ WORKSPACE INFO ═══════════════ -->
-                <section class="bg-gradient-to-br from-sidebar to-sidebar-hover rounded-2xl p-6 text-white">
+                <section v-show="tab === 'conexiones'" class="bg-gradient-to-br from-sidebar to-sidebar-hover rounded-2xl p-6 text-white">
                     <div class="flex items-center justify-between mb-4">
                         <div class="flex items-center">
                             <div class="w-9 h-9 rounded-xl bg-white/10 flex items-center justify-center mr-3">

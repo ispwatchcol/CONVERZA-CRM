@@ -196,7 +196,7 @@ const matchLabel = { telefono: 'por su teléfono', telefono_ambiguo: 'por teléf
                 <div class="text-sm text-amber-800">
                     <p class="font-semibold">Los comprobantes nuevos no se están leyendo con IA.</p>
                     <p class="text-xs mt-0.5">{{ reasons[aiReason] ?? aiReason }}. Igual llegan aquí para revisarlos a mano.
-                        <Link :href="route('settings.index')" class="underline">Configuración → Inteligencia artificial</Link></p>
+                        <Link :href="route('settings.index', { tab: 'pagos' })" class="underline">Configuración → Inteligencia artificial</Link></p>
                 </div>
             </div>
             <div v-if="!canRegister" class="mb-4 flex items-start gap-3 rounded-2xl border border-gray-200 bg-white p-4">
