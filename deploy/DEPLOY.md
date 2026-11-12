@@ -107,8 +107,8 @@ QUEUE_CONNECTION=redis
 LOG_LEVEL=warning
 
 # IA (comprobantes de pago). Apagada hasta que el worker converza-ai corra.
+# La llave de IA NO va aquí: cada empresa carga la suya en Configuración.
 AI_ENABLED=true
-XAI_API_KEY=xai-...
 # URL de ispwatch para registrar pagos (la credencial va por empresa, en Admin → Tenants)
 ISPWATCH_API_URL=https://ispwatch-crm.app
 ```

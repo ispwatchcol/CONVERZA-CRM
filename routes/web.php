@@ -285,6 +285,7 @@ Route::middleware('auth')->group(function () {
     // Inteligencia artificial y medios de pago (comprobantes, docs/agente-ia.md).
     Route::middleware('role:admin')->group(function () {
         Route::put('/settings/ai', [SettingsController::class, 'updateAi'])->name('settings.ai.update');
+        Route::post('/settings/ai/test', [SettingsController::class, 'testAi'])->middleware('throttle:12,1')->name('settings.ai.test');
         Route::post('/settings/payment-channels', [PaymentChannelController::class, 'store'])->name('settings.payment-channels.store');
         Route::post('/settings/payment-channels/import', [PaymentChannelController::class, 'import'])->name('settings.payment-channels.import');
         Route::put('/settings/payment-channels/{channel}', [PaymentChannelController::class, 'update'])->whereNumber('channel')->name('settings.payment-channels.update');

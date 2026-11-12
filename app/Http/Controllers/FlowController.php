@@ -155,7 +155,7 @@ class FlowController extends Controller
                 'autoAssign'     => (bool) $tenant->auto_assign_enabled,
                 // Lo que mira el bloque «Comprobante de pago» para avisar en el panel.
                 'payments'       => [
-                    'aiEnabled'           => (bool) config('ai.enabled') && (bool) $tenant->ai_enabled,
+                    'aiEnabled'           => app(\App\Services\Ai\AiGateway::class)->unavailableReason($tenant) === null,
                     'canRegister'         => $tenant->canRegisterPayments(),
                     'channelsShownInBot'  => PaymentChannel::where('tenant_id', $tenant->id)->where('is_active', true)->where('show_in_bot', true)->count(),
                     'channelsWithAccount' => PaymentChannel::where('tenant_id', $tenant->id)->where('is_active', true)->whereNotNull('account_number')->count(),

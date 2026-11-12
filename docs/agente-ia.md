@@ -134,20 +134,29 @@ al cliente a mano en «Pagos reportados».
 
 - Interruptor general `AI_ENABLED` (apagado por defecto) y otro por empresa
   (`tenants.ai_enabled`, apagado por defecto: la foto sale a un tercero).
-- Cada llamada queda en `ai_usage_logs` con tokens, latencia y el **costo real**
-  que informa xAI (`usage.cost_in_usd_ticks`). Nada del contenido.
-- Tope de gasto mensual por empresa (USD 5 por defecto). Alcanzado, los
-  comprobantes llegan igual, sin leer.
+- **La llave de IA es de cada empresa** (`tenants.ai_api_key`, cifrada, y su
+  proveedor en `tenants.ai_provider`). No existe una llave de plataforma: el uso
+  se le cobra directo a la empresa en su cuenta de OpenAI o xAI, una llave
+  filtrada solo expone a su dueña, y una empresa nunca consume la de otra. La
+  llave no vuelve al navegador (la pantalla solo muestra que existe y sus
+  últimos 4 caracteres) y se puede probar sin gastar (`Probar llave` consulta la
+  lista de modelos).
+- Cada llamada queda en `ai_usage_logs` con tokens, latencia y el costo (el real
+  si el proveedor lo informa; si no, estimado con los precios de `config/ai.php`).
+  Nada del contenido. De ahí sale el gasto que muestra Configuración.
+- Tope de gasto mensual **opcional** por empresa (sin tope por defecto: el gasto
+  es suyo). Alcanzado, los comprobantes llegan igual, sin leer. El gasto real lo
+  ve la empresa en su cuenta del proveedor; el de Configuración es una estimación.
 
 ### 2.7 Proveedor intercambiable: xAI u OpenAI
 
 Las funciones hablan con `AiGateway`, que habla con un `AiProvider`. Hay dos,
-`XaiProvider` y `OpenAiProvider` (desde el 12/11/2026), y se elige con
-`AI_PROVIDER=xai|openai`. Los dos hablan la misma **Responses API**
-(`POST /v1/responses`), así que comparten `ResponsesApiProvider`. Lo que cambia
-con OpenAI: su llave y modelo (`OPENAI_API_KEY`, `OPENAI_MODEL`, por defecto
-`gpt-5-mini`), que se le quitan al schema los límites de lista que su modo
-estricto rechaza, y que **no informa el costo** de cada llamada: el gasto del mes
+`XaiProvider` y `OpenAiProvider` (desde el 12/11/2026). **Cada empresa elige el
+suyo** en Configuración → Pagos e IA y `AiProviders` lo arma con su llave. Los
+dos hablan la misma **Responses API** (`POST /v1/responses`), así que comparten
+`ResponsesApiProvider`. Lo que cambia con OpenAI: el modelo (`OPENAI_MODEL`, por
+defecto `gpt-5-mini`), que se le quitan al schema los límites de lista que su
+modo estricto rechaza, y que **no informa el costo** de cada llamada: el gasto
 se estima con `OPENAI_PRICE_INPUT` / `OPENAI_PRICE_OUTPUT`, que hay que mantener
 al día. La tabla de abajo es la de xAI:
 
@@ -380,7 +389,7 @@ cifrada y nunca vuelve al navegador).
   el prompt) y 200-400 de salida con razonamiento bajo: **≈ USD 0,003-0,004 por
   comprobante** con `grok-4.3`. Mil comprobantes al mes ≈ USD 3-4. El costo real
   queda en `ai_usage_logs`.
-- Tope por defecto USD 5 por empresa y mes (Admin → Tenants lo cambia por empresa).
+- Sin tope por defecto: lo paga la empresa con su llave. Ella (o el superadmin en Admin → Tenants) puede ponerse uno mensual.
 - Una lectura tarda unos segundos; el plazo de la tarea en un flujo es 5 minutos.
 - Imágenes jpg/png de hasta 10 MB. Los PDF van directo a revisión (la Fase 1 no
   los lee).
@@ -400,7 +409,8 @@ cifrada y nunca vuelve al navegador).
 | Reintento que crea un segundo pago | `Idempotency-Key` estable por reporte |
 | Credencial de ispwatch filtrada | Es de UNA empresa, solo `write:payments`, allowlist de IP, revocable desde ispwatch; cifrada en Converza y oculta al navegador |
 | Un asesor registrando plata | «Pagos reportados» y el registro manual son solo admin |
-| Gasto descontrolado | Interruptor general, opt-in por empresa, tope mensual, bitácora con costo real |
+| Gasto descontrolado | Interruptor general, opt-in por empresa, tope mensual opcional, bitácora con costo; el gasto es de la empresa (su llave) |
+| Llave de IA filtrada | Es de UNA empresa, cifrada en la base, nunca se serializa ni vuelve al navegador, y se revoca desde su cuenta del proveedor |
 | Datos personales a un tercero | Opt-in, `store: false`, nada del contenido en la bitácora (§2.8) |
 | Comprobante falsificado con cuidado | **No se ataja aquí**. Topes, marca de origen en ispwatch y conciliación; la pasarela de pagos (§11) lo elimina |
 
@@ -410,9 +420,9 @@ cifrada y nunca vuelve al navegador).
 
 Runbook completo en [operaciones.md](operaciones.md#comprobantes-con-ia).
 
-- **Encender** (en este orden): worker `converza-ai` corriendo → `XAI_API_KEY` y
-  `AI_ENABLED=true` en el `.env` → `config:cache` + reload de PHP-FPM → la
-  empresa enciende la IA en Configuración.
+- **Encender** (en este orden): worker `converza-ai` corriendo → `AI_ENABLED=true`
+  en el `.env` → `config:cache` + reload de PHP-FPM → **cada empresa** carga SU
+  llave y enciende la IA en Configuración → Pagos e IA.
 - **Frenar ya**: `AI_ENABLED=false` + `config:cache` + reload. Nada sale al
   proveedor; los comprobantes llegan a «Pagos reportados» sin leer.
 - **Por empresa**: el admin la apaga en Configuración, o el superadmin le baja el
@@ -511,8 +521,9 @@ Van como tareas de Jira (CON para Converza, KAN para ISPWatch). Estado al
    workers. *Pendiente, requiere root* (el usuario `deploy` solo tiene sudo sin
    contraseña para reiniciar `converza-worker` y recargar PHP-FPM): instalar
    `converza-ai.conf` (ya está copiado en `/home/deploy/converza-ai.conf`) y la
-   línea de sudoers de `converza-ai`. *Pendiente, requiere la llave:*
-   `XAI_API_KEY` y recién entonces `AI_ENABLED=true`.
+   línea de sudoers de `converza-ai`. *Pendiente:* `AI_ENABLED=true` en el `.env`
+   y que la empresa del piloto cargue su propia llave (ya no hay llave de
+   plataforma).
 4. **CON** — Fase 2 (§11): prueba de punta a punta en el tenant interno (contra
    el tenant de pruebas de ispwatch) y piloto real de dos semanas en un ISP con
    el registro automático apagado. *Acordado; falta elegir el ISP.*

@@ -30,6 +30,9 @@ abstract class PaymentsTestCase extends FlowsTestCase
 
     public int $xaiStatus = 200;
 
+    /** @var list<array{0: int, 1: array}> Respuestas [status, cuerpo] de OpenAI, en orden. */
+    public array $openaiQueue = [];
+
     /** [status, cuerpo] que contesta la API de ispwatch al registrar. */
     public array $ispwatchApi = [];
 
@@ -48,7 +51,6 @@ abstract class PaymentsTestCase extends FlowsTestCase
 
         config()->set('database.connections.ispwatch', ['driver' => 'sqlite', 'database' => ':memory:', 'prefix' => '']);
         config()->set('ai.enabled', true);
-        config()->set('ai.xai.api_key', 'xai-test-key');
         config()->set('ai.xai.base_url', 'https://api.x.ai/v1');
         config()->set('ai.xai.model', 'grok-4.3');
         config()->set('ai.xai.reasoning_effort', 'low');
@@ -57,7 +59,7 @@ abstract class PaymentsTestCase extends FlowsTestCase
         config()->set('media.download_types', ['image', 'audio', 'document']);
         Storage::fake('public');
 
-        $this->tenant->update(['ispwatch_tenant_id' => 77, 'ai_enabled' => true, 'ispwatch_api_token' => 'tok-77']);
+        $this->tenant->update(['ispwatch_tenant_id' => 77, 'ai_enabled' => true, 'ispwatch_api_token' => 'tok-77', 'ai_provider' => 'xai', 'ai_api_key' => 'xai-test-key']);
 
         PaymentChannel::create([
             'tenant_id'                  => $this->tenant->id,
@@ -126,6 +128,12 @@ abstract class PaymentsTestCase extends FlowsTestCase
                     ],
                 ], 200)
                 : Http::response(['error' => ['message' => 'falla de prueba']], $this->xaiStatus);
+        }
+
+        if (str_starts_with($url, 'https://api.openai.com/') && $this->openaiQueue !== []) {
+            [$status, $body] = array_shift($this->openaiQueue);
+
+            return Http::response($body, $status);
         }
 
         if (str_starts_with($url, 'https://ispwatch.test/')) {

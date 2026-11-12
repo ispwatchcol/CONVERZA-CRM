@@ -29,6 +29,9 @@ abstract class ResponsesApiProvider implements AiProvider
     /** El nombre del proveedor y de su bloque en config/ai.php. */
     abstract public function name(): string;
 
+    /** @param string|null $apiKey La llave de LA EMPRESA. No hay llave de plataforma. */
+    public function __construct(private readonly ?string $apiKey = null) {}
+
     /** Para los mensajes de error. */
     abstract protected function label(): string;
 
@@ -45,7 +48,7 @@ abstract class ResponsesApiProvider implements AiProvider
 
     public function isConfigured(): bool
     {
-        return filled(config("ai.{$this->name()}.api_key")) && filled(config("ai.{$this->name()}.base_url"));
+        return filled($this->apiKey) && filled(config("ai.{$this->name()}.base_url"));
     }
 
     public function respond(AiRequest $request): AiResponse
@@ -75,7 +78,7 @@ abstract class ResponsesApiProvider implements AiProvider
         }
 
         try {
-            $response = Http::withToken((string) $config['api_key'])
+            $response = Http::withToken((string) $this->apiKey)
                 ->acceptJson()
                 ->asJson()
                 ->connectTimeout(10)

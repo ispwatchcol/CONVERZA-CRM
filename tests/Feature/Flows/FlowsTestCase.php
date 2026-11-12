@@ -226,6 +226,8 @@ abstract class FlowsTestCase extends TestCase
         // Comprobantes con IA: columnas nuevas de tenants, medios de pago,
         // reportes de pago y bitácora de uso de IA. También con SU migración.
         (require base_path('database/migrations/2026_10_25_000001_create_payment_reports_tables.php'))->up();
+        // La llave de IA es de cada empresa (tenants.ai_provider / ai_api_key).
+        (require base_path('database/migrations/2026_11_12_000001_add_ai_credentials_to_tenants.php'))->up();
     }
 
     // ── Ayudas ──────────────────────────────────────────────────────────────
