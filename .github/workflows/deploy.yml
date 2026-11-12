@@ -66,12 +66,24 @@ jobs:
         env:
           # El secreto entra por el entorno del runner, no interpolado en el
           # script: así no queda en el YAML renderizado del log.
-          DB_PASSWORD_PLANO: ${{ secrets.DB_PASSWORD }}
+          #
+          # Son DOS secretos porque son dos bases: Converza vive en su propio
+          # Supabase desde el 02/11/2026 e ispwatch en otro. El secreto viejo
+          # DB_PASSWORD ya NO se lee: se escribia en las dos variables, y el
+          # 12/11/2026 piso la de Converza con la de ispwatch y tumbo produccion.
+          # El que no exista simplemente no se toca.
+          CONVERZA_PASS_PLANO: ${{ secrets.CONVERZA_DB_PASSWORD }}
+          ISPWATCH_PASS_PLANO: ${{ secrets.ISPWATCH_DB_PASSWORD }}
         run: |
           # Se manda en base64 porque el valor viaja como argumento por SSH. Una
           # contraseña con comillas rompería el entrecomillado; base64 solo
           # produce [A-Za-z0-9+/=], siempre seguro sin comillas.
-          DB_PASSWORD_B64=$(printf '%s' "$DB_PASSWORD_PLANO" | base64 -w0)
+          #
+          # Cada argumento lleva un prefijo (C= / I=): un argumento vacio
+          # desaparece al viajar por SSH y, sin prefijo, la contraseña de una
+          # base caeria en el lugar de la otra.
+          CONVERZA_B64="C=$(printf '%s' "$CONVERZA_PASS_PLANO" | base64 -w0)"
+          ISPWATCH_B64="I=$(printf '%s' "$ISPWATCH_PASS_PLANO" | base64 -w0)"
 
           # ¡OJO CON EL << 'EOF' ENTRECOMILLADO!
           #
@@ -103,11 +115,19 @@ jobs:
           # explicaba esta misma sintaxis. Si necesitás nombrarla, describila con
           # palabras como acá arriba.
           ssh -i ~/.ssh/deploy_key ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} \
-            bash -s -- "$DB_PASSWORD_B64" << 'EOF'
+            bash -s -- "$CONVERZA_B64" "$ISPWATCH_B64" << 'EOF'
             set -e
 
-            # Argumento 1: la contraseña en base64 (o vacío si no hay secreto).
-            PASS_B64="$1"
+            # Argumentos: C=<base64> (Converza) e I=<base64> (ispwatch). Lo que
+            # sigue al prefijo queda vacio si el secreto no existe.
+            CONVERZA_B64=""
+            ISPWATCH_B64=""
+            for ARG in "$@"; do
+              case "$ARG" in
+                C=*) CONVERZA_B64="${ARG#C=}" ;;
+                I=*) ISPWATCH_B64="${ARG#I=}" ;;
+              esac
+            done
 
             cd /var/www/converza-crm
 
@@ -132,9 +152,9 @@ jobs:
             echo "==> Installing PHP dependencies"
             composer install --no-dev --optimize-autoloader --no-interaction
 
-            # Propaga la contraseña de Postgres desde GitHub Secrets al .env.
-            # Actualiza DB_PASSWORD e ISPWATCH_DB_PASSWORD JUNTAS: olvidar la
-            # segunda es exactamente lo que causó la caída del 20/08/2026.
+            # Propaga las contraseñas de Postgres desde GitHub Secrets al .env:
+            # DB_PASSWORD (Converza) e ISPWATCH_DB_PASSWORD (ispwatch), cada una
+            # desde su propio secreto.
             #
             # Va ANTES de migrate (si la contraseña rotó, migrate fallaría con la
             # vieja) y antes de config:cache (que congelaría el valor viejo).
@@ -143,9 +163,10 @@ jobs:
             echo "==> Syncing secrets into .env"
             # export es un builtin del shell: el valor no aparece en la lista de
             # procesos, a diferencia de un prefijo VAR=valor delante del comando.
-            export CONVERZA_DB_PASSWORD="$(printf '%s' "$PASS_B64" | base64 -d)"
+            export CONVERZA_DB_PASSWORD="$(printf '%s' "$CONVERZA_B64" | base64 -d)"
+            export ISPWATCH_DB_PASSWORD="$(printf '%s' "$ISPWATCH_B64" | base64 -d)"
             php deploy/sync-secrets.php
-            unset CONVERZA_DB_PASSWORD
+            unset CONVERZA_DB_PASSWORD ISPWATCH_DB_PASSWORD
 
             echo "==> Running migrations"
             php artisan migrate --force

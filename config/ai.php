@@ -10,8 +10,9 @@ return [
     // que se apaga si la IA se porta mal; no hace falta desplegar nada.
     'enabled' => (bool) env('AI_ENABLED', false),
 
-    // Proveedor. Hoy solo 'xai' (Grok). Las funciones hablan con AiGateway, no
-    // con el proveedor, así que cambiarlo no las toca.
+    // Proveedor: 'xai' (Grok) u 'openai'. Las funciones hablan con AiGateway, no
+    // con el proveedor, así que cambiarlo no las toca. Cada uno tiene su bloque
+    // abajo con su llave y su modelo.
     'provider' => env('AI_PROVIDER', 'xai'),
 
     // Cola de las tareas de IA. NO es 'default' a propósito: leer una imagen
@@ -43,6 +44,22 @@ return [
         // respuesta no trae el exacto (`usage.cost_in_usd_ticks`).
         'price_input_per_million'  => (float) env('XAI_PRICE_INPUT', 1.25),
         'price_output_per_million' => (float) env('XAI_PRICE_OUTPUT', 2.50),
+    ],
+
+    'openai' => [
+        'base_url' => env('OPENAI_BASE_URL', 'https://api.openai.com/v1'),
+        'api_key'  => env('OPENAI_API_KEY'),
+        // gpt-5-mini: lee imágenes y soporta JSON schema estricto (nov/2026).
+        'model'    => env('OPENAI_MODEL', 'gpt-5-mini'),
+        // Igual que con Grok: transcribir no necesita razonar a fondo. Vacío =
+        // no se envía (para un modelo que no razone y rechace el parámetro).
+        'reasoning_effort' => env('OPENAI_REASONING_EFFORT', 'low'),
+        'timeout'  => (int) env('OPENAI_TIMEOUT', 60),
+        // USD por millón de tokens. OpenAI NO informa el costo de cada llamada,
+        // así que el gasto del mes (y el tope) sale SIEMPRE de estos dos
+        // números: si cambian de modelo o de precios, actualizarlos.
+        'price_input_per_million'  => (float) env('OPENAI_PRICE_INPUT', 0.25),
+        'price_output_per_million' => (float) env('OPENAI_PRICE_OUTPUT', 2.00),
     ],
 
     'receipts' => [
