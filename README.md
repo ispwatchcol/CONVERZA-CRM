@@ -29,7 +29,7 @@ automáticos. Construido sobre **Laravel 12 + Inertia + Vue 3 + Tailwind** y la
 | Backend | Laravel 12 (PHP 8.2) |
 | Frontend | Vue 3 + Inertia.js 2 + Tailwind CSS 4 |
 | Build | Vite 7 |
-| Base de datos | **PostgreSQL** (Supabase) — schema `converza` / `converza_dev` |
+| Base de datos | **PostgreSQL** (Supabase) — schema `converza` |
 | Base externa | PostgreSQL de ispwatch, **solo lectura** |
 | Colas | `database` (4 workers vía Supervisor) |
 | Cache / sesión | Redis en producción |
@@ -158,7 +158,7 @@ app/
 └── Services/           # WhatsAppService · IspwatchRepository · EventCatalog · PlanCatalog
 
 resources/js/Pages/     # páginas Inertia, una carpeta por módulo
-database/migrations/    # ⚠️ correr en AMBOS schemas: converza y converza_dev
+database/migrations/    # las corre el deploy en el schema converza (converza_dev retirado 19/11/2026)
 docs/                   # documentación completa
 deploy/                 # setup del servidor y config de Supervisor
 ```

@@ -3,6 +3,7 @@
 namespace App\Services\Flows\Validation;
 
 use App\Http\Controllers\BotSettingsController;
+use App\Models\AiAgent;
 use App\Models\Label;
 use App\Models\PaymentChannel;
 use App\Models\Team;
@@ -31,6 +32,8 @@ final class ValidationContext
         public readonly bool $aiEnabled = true,
         public readonly bool $canRegisterPayments = true,
         public readonly bool $hasPaymentAccounts = true,
+        // Los agentes IA activos de la empresa (id => nombre), para «Agente IA».
+        public readonly array $agents = [],
     ) {}
 
     public static function forTenant(int $tenantId): self
@@ -48,6 +51,11 @@ final class ValidationContext
                 ->where('is_active', true)
                 ->whereNotNull('account_number')
                 ->exists(),
+            agents: AiAgent::withoutGlobalScopes()
+                ->where('tenant_id', $tenantId)
+                ->where('is_active', true)
+                ->pluck('name', 'id')
+                ->all(),
         );
     }
 

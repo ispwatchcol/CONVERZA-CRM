@@ -1,6 +1,6 @@
 # Modelo de datos
 
-> **En una frase:** un solo esquema Postgres (`converza` / `converza_dev`) con
+> **En una frase:** un solo esquema Postgres (`converza`) con
 > aislamiento por columna `tenant_id`, más una conexión externa read-only al
 > esquema `public` de ispwatch.
 
@@ -13,16 +13,17 @@
 
 ## 1. Convenciones
 
-- Motor: **PostgreSQL** (Supabase). Schema `converza` en producción,
-  `converza_dev` en desarrollo.
+- Motor: **PostgreSQL** (Supabase). Schema `converza`. (Hubo un `converza_dev`
+  de desarrollo; se retiró el 19/11/2026 y no se migra más.)
 - Toda tabla de negocio lleva `tenant_id` con FK a `tenants` y borrado en
   cascada. Las excepciones son deliberadas (Core Brain, tablas de sistema).
 - IDs `bigint` autoincrementales.
 - Timestamps `created_at` / `updated_at` salvo en tablas de solo-inserción.
 - Los estados nuevos se declaran como `string` en vez de `enum`: alterar un
   `CHECK` de Postgres a posteriori es costoso.
-- **Las migraciones deben correrse en ambos schemas.** Ver
-  [manual-desarrollador.md](manual-desarrollador.md#4-migraciones--la-regla-que-más-se-olvida).
+- **Las migraciones van solo a `converza` y las corre el deploy** (desde el
+  19/11/2026; antes había que correrlas también en `converza_dev`). Ver
+  [manual-desarrollador.md §4](manual-desarrollador.md#4-migraciones).
 
 ---
 
@@ -77,8 +78,10 @@ Un workspace = un ISP cliente del SaaS.
 | `auto_assign_enabled` | bool | Auto-asignación al agente menos ocupado |
 | `is_active` | bool | Un tenant inactivo no resuelve en `ResolveTenant` ni en el webhook |
 | `ai_enabled` | bool, `false` | La empresa encendió la lectura de comprobantes con IA (opt-in: la foto sale a un proveedor externo) |
-| `ai_provider` | string(20), nullable | `xai` u `openai`: el proveedor de IA que eligió la empresa |
+| `ai_provider` | string(20), nullable | El proveedor de IA que eligió la empresa: `openai`, `xai`, `anthropic`, `gemini`, `deepseek`, `groq`, `openrouter`, `mistral` o `custom` (lista en `config('ai.providers')`) |
 | `ai_api_key` | text, nullable | **Cifrado**. La llave de IA **de la empresa** (no hay una de plataforma). Nunca viaja al navegador |
+| `ai_model` | string(120), nullable | El modelo que eligió de la lista de su proveedor. `null` = el de `config("ai.{proveedor}.model")` (`Tenant::aiModel()`). Se borra al cambiar de proveedor |
+| `ai_base_url` | string(255), nullable | Solo con `ai_provider = custom`: la URL de su API compatible con OpenAI. https y pública (`PublicUrl`, anti-SSRF) |
 | `ai_monthly_budget_usd` | decimal(8,2), nullable | Tope de gasto de IA por mes, opcional. `null` = `config('ai.default_monthly_budget_usd')` (0 = sin tope). Lo fija la empresa o el superadmin |
 | `receipts_auto_max_amount` | decimal(14,2), nullable | Tope por comprobante para registrar sin revisión. `null` = config |
 | `ispwatch_api_token` | text, nullable | **Cifrado**. Credencial que emite ispwatch para que Converza registre pagos de ESTA empresa. Nunca viaja al navegador |
@@ -350,7 +353,25 @@ que se registra el pago allá; **sin FK**, es otra base).
 `cost_usd` (el que informa el proveedor; `cost_estimated = true` si se calculó con
 los precios de config), `latency_ms`, `error`, y a qué se le cargó
 (`subject_type`/`subject_id`). **Sin el contenido**: son datos personales. De aquí
-sale el gasto del mes contra el tope. Solo `created_at`.
+sale el gasto del mes contra el tope. Solo `created_at`. `purpose`: `receipt`,
+`agent` (un flujo), `agent_sim` (simulador) o `agent_test` (chat de prueba).
+
+### Agentes IA: `ai_agents`, `ai_agent_turns`
+
+Ver [agente-ia.md §14](agente-ia.md#14-el-agente-que-conversa-fase-3-primera-versión).
+
+**`ai_agents`** — un agente de la empresa: `name`, `instructions` (el prompt, con
+`{{variables}}`), `model` (nullable: `null` = el de la empresa), `is_active`. Lo
+referencia por id el bloque «Agente IA» de un flujo (`data.agent_id`, **sin FK**:
+vive en el JSON del grafo). Borrado o apagado, el bloque sale por «IA no disponible».
+
+**`ai_agent_turns`** — cada respuesta que un flujo le pidió a un agente: la tarea
+asíncrona del bloque (`Step::waitTask('agent')`). `ai_agent_id` (`nullOnDelete`),
+`bot_flow_run_id` y `conversation_id` (sin FK), `status` (`pending` → `done` /
+`failed` / `unavailable`), `instructions` y `messages` (el prompt completo y el
+historial que viajaron a la IA: **datos personales**, igual que el chat),
+`reply`, `action` (`continue`/`human`/`end`) y `reason` (por qué no respondió).
+El simulador y el chat de prueba no crean filas aquí.
 
 ---
 

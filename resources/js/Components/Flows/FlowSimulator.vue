@@ -41,6 +41,7 @@ const ended = computed(() => state.value && !live.value);
 // arrancó y el cliente puede abrir el chat mandando la foto. En el simulador no
 // se lee ninguna imagen: se elige qué resultado probar.
 const graphHasReceipt = computed(() => (props.getGraph()?.nodes ?? []).some((n) => n.type === 'receipt'));
+const graphHasAgent = computed(() => (props.getGraph()?.nodes ?? []).some((n) => n.type === 'ai_agent'));
 const waitingReceipt = computed(() => {
     if (!graphHasReceipt.value) return false;
     if (!state.value || ended.value) return true;
@@ -120,6 +121,11 @@ function describeEffect(effect) {
         }[effect.status] ?? effect.status;
         return `🧾 Comprobante (simulado, sin IA): ${result}${effect.reason ? ` — ${effect.reason}` : ''}`;
     }
+    if (effect.kind === 'agent') {
+        if (effect.status !== 'done') return `🤖 Agente IA: no respondió — ${effect.reason ?? 'IA no disponible'}`;
+        const exit = { human: ' · pide pasar a un asesor', end: ' · da la conversación por resuelta' }[effect.action] ?? '';
+        return `🤖 Agente IA respondió con tu IA de verdad${effect.model ? ` (${effect.model})` : ''}${exit}`;
+    }
     if (effect.kind === 'label') return `🏷️ ${effect.action === 'remove' ? 'Quita' : 'Pone'} la etiqueta «${effect.label}»`;
     if (effect.kind === 'contact') return `📇 Guarda en la ficha (${effect.field}): ${effect.value}`;
     if (effect.kind === 'handoff') {
@@ -179,6 +185,7 @@ defineExpose({ reset });
             <div>
                 <p class="text-sm font-semibold text-gray-900">Simulador</p>
                 <p class="text-[11px] text-gray-500">No envía nada por WhatsApp ni toca la base.</p>
+                <p v-if="graphHasAgent" class="text-[11px] text-purple-700">El «Agente IA» responde con tu IA de verdad: cada respuesta cuesta como una real.</p>
             </div>
             <div class="flex items-center gap-1">
                 <button type="button" class="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100" title="Cliente simulado" @click="showSettings = !showSettings">

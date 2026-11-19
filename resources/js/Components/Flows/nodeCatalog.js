@@ -65,6 +65,22 @@ export const NODE_TYPES = {
         handle: '!bg-fuchsia-500',
         palette: true,
     },
+    ai_agent: {
+        label: 'Agente IA',
+        hint: 'Conversa con tu agente IA',
+        header: 'bg-purple-50 text-purple-800 border-purple-100',
+        dot: 'bg-purple-500',
+        handle: '!bg-purple-500',
+        palette: true,
+    },
+    code: {
+        label: 'Código',
+        hint: 'JavaScript para calcular y decidir',
+        header: 'bg-zinc-100 text-zinc-800 border-zinc-200',
+        dot: 'bg-zinc-700',
+        handle: '!bg-zinc-700',
+        palette: true,
+    },
     tag: {
         label: 'Etiquetar',
         hint: 'Pone o quita una etiqueta',
@@ -144,6 +160,10 @@ export function defaultData(type) {
                 use_recent_image: true,
                 auto_register: false,
             };
+        case 'ai_agent':
+            return { agent_id: null, greeting: '', max_turns: 10 };
+        case 'code':
+            return { code: CODE_EXAMPLES[0].code, exits: [] };
         default:
             return {};
     }
@@ -193,6 +213,23 @@ export function outputsOf(type, data = {}) {
                 ...(data?.auto_register ? [{ handle: 'registered', label: 'Pago registrado' }] : []),
                 { handle: 'review', label: 'Para revisión del equipo' },
                 { handle: 'invalid', label: 'No mandó un comprobante' },
+            ];
+        case 'code':
+            // Espejo de CodeNode::outputs(): Siguiente, las salidas propias y Error.
+            return [
+                { handle: 'next', label: 'Siguiente' },
+                ...(data?.exits ?? []).filter((x) => x && x.id).slice(0, 5).map((x) => ({
+                    handle: `exit_${x.id}`,
+                    label: String(x.name ?? '').trim() || '(sin nombre)',
+                })),
+                { handle: 'error', label: 'Error' },
+            ];
+        case 'ai_agent':
+            // Espejo de AgentNode::outputs().
+            return [
+                { handle: 'human', label: 'Pasar a un asesor' },
+                { handle: 'done', label: 'Conversación resuelta' },
+                { handle: 'unavailable', label: 'IA no disponible' },
             ];
         case 'question':
             return (data?.validation ?? 'any') === 'any'
@@ -284,6 +321,17 @@ export function summaryOf(type, data = {}, catalog = {}) {
             return 'Busca por el teléfono del contacto: saldo, facturas y estado del servicio';
         case 'receipt':
             return `${data.auto_register ? 'Registra solo si pasa todo' : 'Lo deja para revisión'} · ${truncate(data.text, 60) || 'Sin texto todavía'}`;
+        case 'code': {
+            const written = codeWrittenNames(data.code);
+            const lines = String(data.code ?? '').split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('//')).length;
+            if (!lines) return 'Sin código todavía';
+            return truncate(`${lines} línea${lines === 1 ? '' : 's'}${written.length ? ` · deja ${written.map((n) => `{{${n}}}`).join(', ')}` : ''}`);
+        }
+        case 'ai_agent': {
+            const agent = (catalog.agents ?? []).find((a) => a.id === Number(data.agent_id));
+            if (!agent) return 'Elige un agente (se crean en Agentes IA)';
+            return `${agent.name}${agent.is_active ? '' : ' (apagado)'} · hasta ${Number(data.max_turns) || 10} respuestas${data.greeting ? ' · con saludo' : ''}`;
+        }
         case 'tag': {
             const name = (catalog.labels ?? []).find((l) => l.id === Number(data.label_id))?.name;
             if (!name) return 'Elige una etiqueta';
@@ -328,7 +376,7 @@ export const RUN_STATUS = {
     pending: { label: 'Arrancando', class: 'bg-sky-100 text-sky-700' },
     waiting_input: { label: 'Esperando al cliente', class: 'bg-sky-100 text-sky-700' },
     waiting_timer: { label: 'En una espera', class: 'bg-slate-100 text-slate-700' },
-    waiting_task: { label: 'Leyendo un comprobante', class: 'bg-fuchsia-100 text-fuchsia-700' },
+    waiting_task: { label: 'Esperando a la IA', class: 'bg-fuchsia-100 text-fuchsia-700' },
     completed: { label: 'Resuelta por el bot', class: 'bg-emerald-100 text-emerald-700' },
     handed_off: { label: 'Pasó al equipo', class: 'bg-orange-100 text-orange-700' },
     cancelled: { label: 'Cortada', class: 'bg-gray-100 text-gray-600' },
@@ -339,11 +387,16 @@ export const RUN_STATUS = {
 export function outcomeLabel(step) {
     const outcome = step.outcome ?? '';
     if (outcome.startsWith('opt_')) return `Eligió «${step.detail?.opcion ?? outcome.slice(4)}»`;
+    if (outcome.startsWith('exit_')) return `Salió por «${step.detail?.salida ?? outcome.slice(5)}»`;
+    if (outcome === 'error' && step.node_type === 'code') return 'Error en el código';
     return {
         next: 'Siguió',
         waiting_input: 'Esperando respuesta',
         waiting_timer: 'En espera',
-        waiting_task: 'Leyendo el comprobante',
+        waiting_task: step.node_type === 'ai_agent' ? 'Esperando la respuesta de la IA' : 'Leyendo el comprobante',
+        human: 'El agente pasó a un asesor',
+        done: 'El agente resolvió',
+        unavailable: 'IA no disponible',
         registered: 'Pago registrado',
         review: 'Para revisión del equipo',
         no_match: 'No entendió',
@@ -356,3 +409,80 @@ export function outcomeLabel(step) {
         handoff: 'Traspaso al equipo',
     }[outcome] ?? (ENDED_REASONS[outcome] ?? outcome);
 }
+
+// ── Bloque «Código» ───────────────────────────────────────────────────────────
+
+/**
+ * Las variables del flujo que escribe el código (vars.x = …). Espejo de
+ * Interpreter::writtenNames(): lectura del texto, no ejecución.
+ */
+export function codeWrittenNames(code) {
+    const names = new Set();
+    const re = /\bvars\s*(?:\.\s*([A-Za-z_$][A-Za-z0-9_$]*)|\[\s*(['"])([^'"\\]+)\2\s*\])\s*(?:[+\-*/%]?=(?!=)|\+\+|--)/g;
+    for (const m of String(code ?? '').matchAll(re)) names.add(m[1] || m[3]);
+    return [...names].filter((n) => /^[a-z][a-z0-9_]{0,39}$/.test(n));
+}
+
+/** Ejemplos para arrancar (el primero es el código de un bloque nuevo). */
+export const CODE_EXAMPLES = [
+    {
+        label: 'Calcular la mora de la deuda',
+        exits: [],
+        code: `// Usa «Datos del cliente» antes de este bloque.
+// Las variables del flujo siempre son texto: numero() las vuelve número.
+const deuda = numero(vars.cliente.saldo)
+
+let mora = 0
+if (deuda > 100000) {
+  mora = deuda * 0.05
+}
+
+// Lo que dejes en vars.* lo puedes usar después como {{mora}} o {{total}}.
+vars.mora = moneda(mora)
+vars.total = moneda(deuda + mora)
+`,
+    },
+    {
+        label: 'Elegir salida según el plan',
+        exits: ['Premium', 'No existe'],
+        code: `// Crea las salidas «Premium» y «No existe» abajo.
+// Lo que devuelves con return es el nombre de la salida.
+const megas = numero(vars.respuesta)
+const precios = { 20: 60000, 50: 90000, 100: 120000 }
+
+if (!precios[megas]) return "No existe"
+
+vars.precio = moneda(precios[megas])
+vars.plan = \`\${megas} megas\`
+
+return megas >= 100 ? "Premium" : "Siguiente"
+`,
+    },
+    {
+        label: 'Limpiar lo que escribió el cliente',
+        exits: [],
+        code: `// Deja la cédula solo con números y el nombre bien escrito.
+const cedula = String(vars.respuesta).replaceAll(".", "").replaceAll(" ", "")
+vars.cedula = cedula
+
+const nombre = vars.contacto.nombre.trim().toLowerCase()
+let bonito = []
+for (const palabra of nombre.split(" ")) {
+  if (palabra) bonito.push(palabra.charAt(0).toUpperCase() + palabra.slice(1))
+}
+vars.nombre_bonito = bonito.join(" ")
+log("cédula:", cedula)
+`,
+    },
+    {
+        label: 'Horario y día especial',
+        exits: ['Festivo', 'Fuera de horario'],
+        code: `// fecha.hora viene como "14:30" y fecha.dia como "lunes".
+const hora = numero(vars.fecha.hora.split(":")[0])
+const festivos = ["25/12/2026", "01/01/2027"]
+
+if (festivos.includes(vars.fecha.hoy)) return "Festivo"
+if (vars.fecha.dia === "domingo" || hora < 8 || hora >= 18) return "Fuera de horario"
+`,
+    },
+];

@@ -63,7 +63,7 @@ Sobre esa base hay cuatro capas de valor:
 | Documento | Estado |
 |---|---|
 | [core-brain-plan.md](core-brain-plan.md) | Plan de diseño original del Core Brain. Histórico; ver [core-brain.md](core-brain.md) para el estado actual |
-| [converza-schemas.sql](converza-schemas.sql) | Creación de los schemas `converza` / `converza_dev` en Postgres |
+| [converza-schemas.sql](converza-schemas.sql) | Creación del schema `converza` en Postgres (`converza_dev` se retiró el 19/11/2026) |
 | [converza-roles-hardening.sql](converza-roles-hardening.sql) | Endurecimiento de roles de base de datos |
 | [ispwatch-readonly.sql](ispwatch-readonly.sql) | Rol `converza_reader` con permisos SELECT-only sobre ispwatch |
 

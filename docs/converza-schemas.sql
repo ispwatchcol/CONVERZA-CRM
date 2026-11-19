@@ -5,10 +5,13 @@
 -- ============================================================================
 
 -- converza:      schema productivo. Apunta DB_SEARCH_PATH=converza en .env de prod.
--- converza_dev:  schema de desarrollo local. Apunta DB_SEARCH_PATH=converza_dev en .env local.
+-- converza_dev:  RETIRADO el 2026-11-19 (nadie lo usa; no se migra más). Era el
+--                schema de desarrollo local. Tras la mudanza del 2026-11-02 al
+--                Supabase propio quedó solo en el proyecto viejo. Si se recrea el
+--                ambiente, basta con `converza`.
 
 CREATE SCHEMA IF NOT EXISTS converza;
-CREATE SCHEMA IF NOT EXISTS converza_dev;
+-- CREATE SCHEMA IF NOT EXISTS converza_dev;   -- retirado 2026-11-19
 
 -- Verificar:
 -- SELECT schema_name FROM information_schema.schemata

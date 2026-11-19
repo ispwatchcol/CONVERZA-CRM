@@ -2,9 +2,6 @@
 
 namespace App\Services\Ai;
 
-use Illuminate\Http\Client\ConnectionException;
-use Illuminate\Support\Facades\Http;
-
 /**
  * Un proveedor que habla la «Responses API»: POST {base_url}/responses. La
  * definió OpenAI y xAI la implementa igual, así que los dos comparten esta
@@ -15,25 +12,19 @@ use Illuminate\Support\Facades\Http;
  *
  *   - `store: false`. Con `true`, el proveedor guarda la entrada y la respuesta
  *     (30 días) para poder retomarlas; aquí la entrada es la foto de un
- *     comprobante (con nombres y cuentas) y no hay nada que retomar.
+ *     comprobante (con nombres y cuentas) o una conversación con un cliente, y
+ *     no hay nada que retomar.
  *   - La imagen viaja como data URL en base64: los medios viven detrás de
  *     sesión, sin URL pública que el proveedor pueda bajar.
  *   - El costo sale de `usage.cost_in_usd_ticks` (10^10 ticks = 1 USD) cuando
  *     el proveedor lo informa (xAI). Si no (OpenAI), queda en null y AiGateway
  *     lo estima con los precios de config.
+ *   - `reasoning` es opcional: un modelo que no razona (gpt-4.1, grok-4) lo
+ *     rechaza con 400 y la petición se repite sin él.
  */
-abstract class ResponsesApiProvider implements AiProvider
+abstract class ResponsesApiProvider extends HttpAiProvider
 {
     private const TICKS_PER_USD = 10_000_000_000;
-
-    /** El nombre del proveedor y de su bloque en config/ai.php. */
-    abstract public function name(): string;
-
-    /** @param string|null $apiKey La llave de LA EMPRESA. No hay llave de plataforma. */
-    public function __construct(private readonly ?string $apiKey = null) {}
-
-    /** Para los mensajes de error. */
-    abstract protected function label(): string;
 
     /**
      * El JSON schema tal como lo acepta este proveedor.
@@ -46,26 +37,20 @@ abstract class ResponsesApiProvider implements AiProvider
         return $schema;
     }
 
-    public function isConfigured(): bool
-    {
-        return filled($this->apiKey) && filled(config("ai.{$this->name()}.base_url"));
-    }
-
     public function respond(AiRequest $request): AiResponse
     {
-        $config = (array) config("ai.{$this->name()}");
-        $effort = trim((string) ($config['reasoning_effort'] ?? ''));
+        $model = (string) ($request->model ?: $this->model());
 
         $payload = [
-            'model'             => (string) $config['model'],
+            'model'             => $model,
             'instructions'      => $request->instructions,
             'input'             => array_map(fn (array $message) => $this->message($message), $request->messages),
             'store'             => false,
             'max_output_tokens' => $request->maxOutputTokens,
         ];
 
-        if ($effort !== '') {
-            $payload['reasoning'] = ['effort' => $effort];
+        if ($this->effort() !== '') {
+            $payload['reasoning'] = ['effort' => $this->effort()];
         }
 
         if ($request->schema !== null) {
@@ -77,29 +62,15 @@ abstract class ResponsesApiProvider implements AiProvider
             ]];
         }
 
-        try {
-            $response = Http::withToken((string) $this->apiKey)
-                ->acceptJson()
-                ->asJson()
-                ->connectTimeout(10)
-                ->timeout(max(5, (int) ($config['timeout'] ?? 60)))
-                ->post(rtrim((string) $config['base_url'], '/') . '/responses', $payload);
-        } catch (ConnectionException $e) {
-            throw new AiProviderException("Sin conexión con {$this->label()}: " . mb_substr($e->getMessage(), 0, 200), retryable: true);
-        }
+        [$body] = $this->post('/responses', $payload, function (array $payload): ?array {
+            if (! isset($payload['reasoning'])) {
+                return null;
+            }
 
-        if (! $response->successful()) {
-            $status = $response->status();
-            $detail = $response->json('error.message') ?? $response->json('error') ?? $response->body();
+            unset($payload['reasoning']);
 
-            throw new AiProviderException(
-                "{$this->label()} respondió {$status}: " . mb_substr(is_string($detail) ? $detail : (string) json_encode($detail), 0, 200),
-                retryable: $status === 429 || $status >= 500,
-                status: $status,
-            );
-        }
-
-        $body = (array) $response->json();
+            return $payload;
+        });
 
         // `incomplete` = se cortó (p. ej. por max_output_tokens) y un JSON a
         // medias no sirve. Reintentar con lo mismo daría lo mismo.
@@ -114,9 +85,9 @@ abstract class ResponsesApiProvider implements AiProvider
         $json = null;
 
         if ($request->schema !== null) {
-            $json = json_decode($text, true);
+            $json = $this->decodeJson($text);
 
-            if (! is_array($json)) {
+            if ($json === null) {
                 throw new AiProviderException("{$this->label()} devolvió algo que no es el JSON pedido.", retryable: true);
             }
         }
@@ -127,7 +98,7 @@ abstract class ResponsesApiProvider implements AiProvider
             text: $text,
             json: $json,
             provider: $this->name(),
-            model: (string) ($body['model'] ?? $config['model']),
+            model: (string) ($body['model'] ?? $model),
             inputTokens: (int) ($usage['input_tokens'] ?? 0),
             outputTokens: (int) ($usage['output_tokens'] ?? 0),
             reasoningTokens: (int) ($usage['output_tokens_details']['reasoning_tokens'] ?? 0),
@@ -141,21 +112,18 @@ abstract class ResponsesApiProvider implements AiProvider
     /** @param array{role: string, content: string|list<array<string, string>>} $message */
     private function message(array $message): array
     {
-        if (is_string($message['content'])) {
-            return ['role' => $message['role'], 'content' => $message['content']];
-        }
-
         return [
             'role'    => $message['role'],
-            'content' => array_map(fn (array $part) => ($part['type'] ?? 'text') === 'image'
-                ? [
+            'content' => $this->parts(
+                $message,
+                fn (string $text) => ['type' => $message['role'] === 'assistant' ? 'output_text' : 'input_text', 'text' => $text],
+                fn (array $part) => [
                     'type'      => 'input_image',
                     'image_url' => 'data:' . $part['mime'] . ';base64,' . $part['base64'],
                     // Un comprobante es letra chica: valores y referencias.
                     'detail'    => 'high',
-                ]
-                : ['type' => 'input_text', 'text' => (string) ($part['text'] ?? '')],
-                $message['content']),
+                ],
+            ),
         ];
     }
 

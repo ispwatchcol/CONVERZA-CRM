@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\AiAgent;
 use App\Models\AiUsageLog;
 use App\Models\BotFlow;
 use App\Models\BotSetting;
@@ -11,7 +12,9 @@ use App\Models\Template;
 use App\Models\Tenant;
 use App\Models\TenantNotificationRoute;
 use App\Services\Ai\AiGateway;
+use App\Services\Ai\AiProviderException;
 use App\Services\Ai\AiProviders;
+use App\Services\Ai\PublicUrl;
 use App\Services\Ispwatch\IspwatchRepository;
 use App\Services\Notifications\EventCatalog;
 use App\Services\WhatsAppService;
@@ -62,6 +65,10 @@ class SettingsController extends Controller
             'enabled'         => (bool) $tenant->ai_enabled,
             // La llave nunca viaja: solo si existe, de qué proveedor y cuántos caracteres termina.
             'provider'        => $tenant->ai_provider,
+            'providers'       => AiProviders::catalog(),
+            'model'           => $tenant->ai_model,
+            'base_url'        => $tenant->ai_base_url,
+            'agents'          => AiAgent::where('tenant_id', $tenant->id)->count(),
             'has_key'         => $tenant->hasAiKey(),
             'key_hint'        => $tenant->hasAiKey() ? '••••' . mb_substr((string) $tenant->ai_api_key, -4) : null,
             'unavailable'     => $ai->unavailableReason($tenant),
@@ -77,16 +84,18 @@ class SettingsController extends Controller
     }
 
     /**
-     * «Probar llave»: le pregunta al proveedor por su lista de modelos (no cuesta
-     * nada) con la llave que viene en el formulario o, si no viene, la guardada.
+     * «Probar llave y ver modelos»: le pregunta al proveedor por su lista de
+     * modelos (no cuesta nada) con la llave que viene en el formulario o, si no
+     * viene, la guardada. La lista es la que la empresa usa para elegir modelo.
      */
     public function testAi(Request $request, AiProviders $providers)
     {
         $tenant = app('tenant');
 
         $data = $request->validate([
-            'ai_provider' => ['nullable', 'string', Rule::in(AiProviders::NAMES)],
+            'ai_provider' => ['nullable', 'string', Rule::in(AiProviders::names())],
             'ai_api_key'  => ['nullable', 'string', 'max:400'],
+            'ai_base_url' => ['nullable', 'string', 'max:255'],
         ]);
 
         $name = $data['ai_provider'] ?? $tenant->ai_provider;
@@ -96,18 +105,34 @@ class SettingsController extends Controller
             return response()->json(['ok' => false, 'message' => 'Elige el proveedor y escribe tu llave.'], 422);
         }
 
-        try {
-            $response = Http::withToken($key)->acceptJson()->timeout(15)
-                ->get(rtrim((string) config("ai.{$name}.base_url"), '/') . '/models');
-        } catch (\Throwable) {
-            return response()->json(['ok' => false, 'message' => 'No se pudo conectar con el proveedor. Intenta de nuevo en un momento.']);
+        $baseUrl = null;
+        if ($name === 'custom') {
+            $baseUrl = trim((string) ($data['ai_base_url'] ?? '')) ?: $tenant->ai_base_url;
+
+            if (($problem = PublicUrl::problem($baseUrl)) !== null) {
+                return response()->json(['ok' => false, 'message' => $problem], 422);
+            }
         }
 
-        return response()->json(match (true) {
-            $response->successful()                       => ['ok' => true, 'message' => 'La llave es válida ✓'],
-            in_array($response->status(), [401, 403], true) => ['ok' => false, 'message' => 'El proveedor rechazó la llave: revisa que esté completa y sea de ' . ($name === 'openai' ? 'OpenAI' : 'xAI') . '.'],
-            default                                       => ['ok' => false, 'message' => 'El proveedor respondió ' . $response->status() . '. Intenta de nuevo.'],
-        });
+        try {
+            $models = $providers->make($name, $key, null, $baseUrl)->models();
+        } catch (AiProviderException $e) {
+            $label = (string) config("ai.{$name}.label", $name);
+
+            return response()->json(match (true) {
+                $e->status === null                    => ['ok' => false, 'message' => 'No se pudo conectar con el proveedor. Intenta de nuevo en un momento.'],
+                in_array($e->status, [401, 403], true) => ['ok' => false, 'message' => "El proveedor rechazó la llave: revisa que esté completa y sea de {$label}."],
+                default                                => ['ok' => false, 'message' => "El proveedor respondió {$e->status}. Intenta de nuevo."],
+            });
+        }
+
+        return response()->json([
+            'ok'      => true,
+            'message' => $models === []
+                ? 'La llave es válida ✓ (el proveedor no informó modelos: escribe el nombre del modelo a mano)'
+                : 'La llave es válida ✓ — ' . count($models) . ' modelos disponibles',
+            'models'  => $models,
+        ]);
     }
 
     /** Formas de pago del catálogo de ispwatch, para enlazar los medios de pago. */
@@ -139,11 +164,43 @@ class SettingsController extends Controller
         $data = $request->validate([
             'ai_enabled'               => ['required', 'boolean'],
             'receipts_auto_max_amount' => ['nullable', 'numeric', 'min:1000', 'max:100000000'],
-            'ai_provider'              => ['nullable', 'string', Rule::in(AiProviders::NAMES)],
+            'ai_provider'              => ['nullable', 'string', Rule::in(AiProviders::names())],
             'ai_api_key'               => ['nullable', 'string', 'max:400'],
             'ai_api_key_clear'         => ['nullable', 'boolean'],
             'ai_monthly_budget_usd'    => ['nullable', 'numeric', 'min:0', 'max:100000'],
+            // El modelo, de la lista que dio «Probar llave» (o escrito a mano). Vacío = el del proveedor por defecto.
+            'ai_model'                 => ['nullable', 'string', 'regex:' . AiAgentController::MODEL_PATTERN],
+            'ai_base_url'              => ['nullable', 'string', 'max:255'],
+        ], [
+            'ai_model.regex' => 'Ese no parece el nombre de un modelo. Elígelo de la lista.',
         ]);
+
+        $provider = $data['ai_provider'] ?? $tenant->ai_provider;
+
+        if (array_key_exists('ai_model', $data)) {
+            $data['ai_model'] = filled($data['ai_model']) ? trim($data['ai_model']) : null;
+        }
+
+        // La URL solo existe para «otro compatible», y tiene que ser pública: si
+        // no, una empresa podría hacer que el servidor le pegue a la red interna.
+        if ($provider === 'custom') {
+            $data['ai_base_url'] = rtrim(trim((string) ($data['ai_base_url'] ?? $tenant->ai_base_url)), '/');
+
+            if (($problem = PublicUrl::problem($data['ai_base_url'])) !== null) {
+                return back()->withErrors(['ai_base_url' => $problem])->withInput();
+            }
+
+            // El modelo que queda: el que vino, o el guardado si no cambió de proveedor.
+            $model = array_key_exists('ai_model', $data)
+                ? $data['ai_model']
+                : ($provider === $tenant->ai_provider ? $tenant->ai_model : null);
+
+            if (blank($model)) {
+                return back()->withErrors(['ai_model' => 'Con «Otro compatible con OpenAI» tienes que elegir o escribir el modelo.'])->withInput();
+            }
+        } else {
+            $data['ai_base_url'] = null;
+        }
 
         if (! empty($data['ai_api_key_clear'])) {
             $data['ai_api_key'] = null;
@@ -156,9 +213,15 @@ class SettingsController extends Controller
 
         // Cambiar de proveedor deja la llave vieja sin sentido (es de otro): se
         // borra salvo que venga una nueva en el mismo envío.
-        if (array_key_exists('ai_provider', $data) && $data['ai_provider'] !== $tenant->ai_provider
-            && ! array_key_exists('ai_api_key', $data)) {
-            $data['ai_api_key'] = null;
+        if (array_key_exists('ai_provider', $data) && $data['ai_provider'] !== $tenant->ai_provider) {
+            if (! array_key_exists('ai_api_key', $data)) {
+                $data['ai_api_key'] = null;
+            }
+
+            // Y el modelo elegido era de la lista del otro proveedor.
+            if (! filled($data['ai_model'] ?? null)) {
+                $data['ai_model'] = null;
+            }
         }
 
         if (($data['ai_enabled'] ?? false) && ! ($data['ai_provider'] ?? $tenant->ai_provider)) {

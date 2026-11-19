@@ -28,6 +28,8 @@ class Tenant extends Model
         'ai_monthly_budget_usd',
         'ai_provider',
         'ai_api_key',
+        'ai_model',
+        'ai_base_url',
         'receipts_auto_max_amount',
         'ispwatch_api_token',
     ];
@@ -60,7 +62,24 @@ class Tenant extends Model
     /** ¿Cargó la empresa su llave de IA? Valor crudo, para no descifrar (ver hasWhatsAppConfigured). */
     public function hasAiKey(): bool
     {
-        return filled($this->getRawOriginal('ai_api_key')) && in_array($this->ai_provider, ['xai', 'openai'], true);
+        return filled($this->getRawOriginal('ai_api_key'))
+            && in_array($this->ai_provider, \App\Services\Ai\AiProviders::names(), true)
+            // «Otro compatible» sin URL no tiene a quién llamar.
+            && ($this->ai_provider !== 'custom' || filled($this->ai_base_url));
+    }
+
+    /** El modelo con el que la empresa usa la IA: el que eligió o el de su proveedor por defecto. */
+    public function aiModel(): ?string
+    {
+        $model = trim((string) $this->ai_model);
+
+        return $model !== '' ? $model : (config("ai.{$this->ai_provider}.model") ?: null);
+    }
+
+    /** Los agentes IA de la empresa (Agentes IA). */
+    public function aiAgents(): HasMany
+    {
+        return $this->hasMany(AiAgent::class);
     }
 
     /** Dónde le pagan los clientes al ISP (Configuración → Medios de pago). */

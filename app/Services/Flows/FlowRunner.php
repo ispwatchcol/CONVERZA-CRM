@@ -2,6 +2,7 @@
 
 namespace App\Services\Flows;
 
+use App\Jobs\RunAiAgentTurn;
 use App\Jobs\RunBotFlow;
 use App\Models\BotFlowRun;
 use App\Models\BotFlowStep;
@@ -12,6 +13,7 @@ use App\Models\PaymentReport;
 use App\Models\Tenant;
 use App\Services\Assignment\ConversationAssigner;
 use App\Services\Flows\IO\LiveFlowIO;
+use App\Services\Flows\Nodes\AgentNode;
 use App\Services\Flows\Nodes\ReceiptNode;
 use App\Services\Flows\Nodes\StartNode;
 use App\Services\Ispwatch\IspwatchRepository;
@@ -346,6 +348,12 @@ final class FlowRunner
     private function queueTask(Tenant $tenant, array $task): void
     {
         try {
+            if ($task['kind'] === AgentNode::TASK) {
+                RunAiAgentTurn::dispatch($tenant->id, (int) $task['id']);
+
+                return;
+            }
+
             if ($task['kind'] !== ReceiptNode::TASK) {
                 Log::warning('Flujo: tarea de tipo desconocido', $task);
 

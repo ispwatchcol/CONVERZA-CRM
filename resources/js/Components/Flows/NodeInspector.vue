@@ -2,9 +2,10 @@
 // Panel de propiedades del bloque seleccionado. Edita `node.data` en el lugar:
 // el nodo es el del store de Vue Flow, así que el lienzo se actualiza solo y el
 // editor detecta el cambio para marcar "sin guardar".
-import { computed, watch } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
+import axios from 'axios';
 import FlowTextarea from './FlowTextarea.vue';
-import { NODE_TYPES, OPERATOR_OPTIONS, WEEK_DAYS, newId } from './nodeCatalog';
+import { CODE_EXAMPLES, NODE_TYPES, OPERATOR_OPTIONS, WEEK_DAYS, codeWrittenNames, newId } from './nodeCatalog';
 
 const props = defineProps({
     node: { type: Object, required: true },
@@ -49,7 +50,86 @@ watch(() => props.node.id, () => {
         d.use_recent_image ??= true;
         d.auto_register ??= false;
     }
+    if (props.node.type === 'ai_agent') {
+        d.greeting ??= '';
+        d.max_turns ??= 10;
+    }
+    if (props.node.type === 'code') {
+        d.code ??= '';
+        d.exits ??= [];
+    }
 }, { immediate: true });
+
+// ── Código ───────────────────────────────────────────────────────────────────
+const codeTest = ref(null);
+const codeTesting = ref(false);
+const codeHelp = ref(false);
+const codeSample = ref('');
+// El resultado de «Probar código» es de un bloque: al cambiar de bloque se borra.
+watch(() => props.node.id, () => { codeTest.value = null; });
+const writtenVars = computed(() => codeWrittenNames(data.value.code));
+
+// Las variables que lee el código (vars.x / vars["x.y"] / vars.grupo.x), para
+// prellenar los valores de prueba.
+const readVars = computed(() => {
+    const names = new Set();
+    for (const m of String(data.value.code ?? '').matchAll(/\bvars\s*(?:\.\s*([a-z][a-z0-9_]*)(?:\s*\.\s*([a-z][a-z0-9_]*))?|\[\s*(['"])([^'"]+)\3\s*\])/g)) {
+        const name = m[4] ?? (m[2] && ['contacto', 'empresa', 'fecha', 'cliente', 'pago', 'agente', 'codigo'].includes(m[1]) ? `${m[1]}.${m[2]}` : m[1]);
+        if (name && !writtenVars.value.includes(name)) names.add(name);
+    }
+    return [...names].slice(0, 20);
+});
+const sampleValues = ref({});
+
+function onCodeKeydown(event) {
+    if (event.key !== 'Tab') return;
+    event.preventDefault();
+    const el = event.target;
+    const start = el.selectionStart;
+    data.value.code = data.value.code.slice(0, start) + '  ' + data.value.code.slice(el.selectionEnd);
+    nextTick(() => { el.selectionStart = el.selectionEnd = start + 2; });
+}
+
+function loadExample() {
+    const example = CODE_EXAMPLES.find((e) => e.label === codeSample.value);
+    codeSample.value = '';
+    if (!example) return;
+    if (data.value.code.trim() && !confirm('¿Reemplazar el código actual por el ejemplo?')) return;
+    data.value.code = example.code;
+    for (const name of example.exits) {
+        if (!data.value.exits.some((x) => String(x.name).toLowerCase() === name.toLowerCase()) && data.value.exits.length < 5) {
+            data.value.exits.push({ id: newId('x'), name });
+        }
+    }
+}
+
+function addExit() {
+    if (data.value.exits.length >= 5) return;
+    data.value.exits.push({ id: newId('x'), name: `Salida ${data.value.exits.length + 1}` });
+}
+
+async function runCode() {
+    codeTesting.value = true;
+    codeTest.value = null;
+    try {
+        const variables = {};
+        for (const name of readVars.value) variables[name] = String(sampleValues.value[name] ?? '');
+        const { data: result } = await axios.post(route('flows.code.test'), {
+            code: data.value.code,
+            variables,
+            exits: data.value.exits.map((x) => x.name),
+        });
+        codeTest.value = result;
+    } catch (e) {
+        codeTest.value = { ok: false, error: e.response?.data?.message ?? 'No se pudo probar el código.' };
+    } finally {
+        codeTesting.value = false;
+    }
+}
+
+// ── Agente IA ────────────────────────────────────────────────────────────────
+const agents = computed(() => props.catalog.agents ?? []);
+const chosenAgent = computed(() => agents.value.find((a) => a.id === Number(data.value.agent_id)) ?? null);
 
 // ── Comprobante de pago ──────────────────────────────────────────────────────
 const payments = computed(() => props.catalog.payments ?? {});
@@ -495,6 +575,142 @@ const maxWait = computed(() => props.catalog.limits?.max_wait_minutes ?? 1380);
                 <p class="text-[11px] text-gray-500 mt-2">
                     El cliente nunca ve por qué un comprobante fue a revisión: eso queda para tu equipo en «Pagos reportados».
                 </p>
+            </div>
+        </template>
+
+        <!-- ═══ CÓDIGO ═══ -->
+        <template v-else-if="node.type === 'code'">
+            <div class="rounded-xl bg-zinc-50 border border-zinc-200 p-3 text-[11px] text-zinc-700">
+                JavaScript en una <strong>caja cerrada</strong>: lee las variables del flujo (<code>vars</code>), deja las suyas
+                (<code>vars.total = …</code>) y elige la salida con <code>return "nombre"</code>. No puede usar internet, archivos
+                ni nada del servidor, y tiene topes de tiempo y tamaño.
+            </div>
+
+            <div>
+                <div class="flex items-center justify-between mb-1">
+                    <label class="block text-sm font-medium text-gray-700">Código</label>
+                    <select v-model="codeSample" @change="loadExample" class="text-[11px] border border-gray-200 rounded-lg px-2 py-1">
+                        <option value="">Insertar un ejemplo…</option>
+                        <option v-for="e in CODE_EXAMPLES" :key="e.label" :value="e.label">{{ e.label }}</option>
+                    </select>
+                </div>
+                <textarea v-model="data.code" rows="16" spellcheck="false" @keydown="onCodeKeydown"
+                          class="w-full px-3 py-2 border border-gray-200 rounded-xl text-[12px] leading-5 font-mono bg-zinc-950 text-zinc-100 focus:ring-2 focus:ring-accent/30"></textarea>
+                <p class="text-[11px] text-gray-500 mt-1">{{ (data.code ?? '').length }}/10.000 caracteres · Tab = 2 espacios</p>
+                <p v-if="writtenVars.length" class="text-[11px] text-gray-600 mt-1">
+                    Deja para los bloques siguientes:
+                    <code v-for="n in writtenVars" :key="n" class="text-accent mr-1" v-text="token(n)"></code>
+                </p>
+            </div>
+
+            <div>
+                <p class="text-sm font-medium text-gray-700 mb-1">Salidas propias</p>
+                <p class="text-[11px] text-gray-500 mb-2">
+                    Si el código hace <code>return "Nombre"</code> con el nombre de una de estas, sigue por ella. Si no devuelve
+                    nada (o algo que no está aquí), por <strong>Siguiente</strong>; si falla, por <strong>Error</strong>.
+                </p>
+                <div v-for="(exit, i) in data.exits" :key="exit.id" class="flex items-center gap-2 mb-1.5">
+                    <input v-model="exit.name" type="text" maxlength="40" class="flex-1 px-3 py-1.5 border border-gray-200 rounded-lg text-sm" />
+                    <button type="button" class="text-gray-400 hover:text-red-500 text-sm px-1" title="Quitar" @click="data.exits.splice(i, 1)">✕</button>
+                </div>
+                <button v-if="data.exits.length < 5" type="button" class="text-[12px] text-accent hover:underline" @click="addExit">+ Agregar salida</button>
+            </div>
+
+            <div class="rounded-xl border border-gray-200 p-3 space-y-2">
+                <p class="text-xs font-semibold text-gray-700">Probar el código</p>
+                <template v-if="readVars.length">
+                    <p class="text-[11px] text-gray-500">Valores de ejemplo para las variables que lee (siempre texto, como en el flujo):</p>
+                    <div v-for="name in readVars" :key="name" class="grid grid-cols-5 gap-2 items-center">
+                        <code class="col-span-2 text-[11px] text-gray-600 truncate" :title="name">{{ name }}</code>
+                        <input v-model="sampleValues[name]" type="text" class="col-span-3 px-2 py-1 border border-gray-200 rounded-lg text-xs" placeholder="(vacío)" />
+                    </div>
+                </template>
+                <button type="button" :disabled="codeTesting || !data.code?.trim()" @click="runCode"
+                        class="px-3 py-1.5 bg-zinc-800 text-white rounded-lg text-xs font-semibold disabled:opacity-50">
+                    {{ codeTesting ? 'Ejecutando…' : '▶ Probar código' }}
+                </button>
+                <div v-if="codeTest" class="rounded-lg p-2 text-[11px] space-y-1" :class="codeTest.ok ? 'bg-emerald-50 text-emerald-900' : 'bg-red-50 text-red-800'">
+                    <p class="font-semibold">Sale por: «{{ codeTest.exit }}»<span v-if="codeTest.ok && codeTest.returned"> (devolvió «{{ codeTest.returned }}»)</span></p>
+                    <p v-if="!codeTest.ok">{{ codeTest.error }}</p>
+                    <template v-else>
+                        <p v-for="(value, name) in codeTest.variables" :key="name"><code v-text="token(name)"></code> = {{ value === '' ? '(vacío)' : value }}</p>
+                        <p v-if="!Object.keys(codeTest.variables ?? {}).length" class="text-emerald-700">No dejó variables.</p>
+                        <div v-if="codeTest.logs?.length" class="pt-1 border-t border-emerald-200">
+                            <p v-for="(line, i) in codeTest.logs" :key="i" class="font-mono text-gray-700">› {{ line }}</p>
+                        </div>
+                        <p class="text-emerald-700/70">{{ codeTest.steps }} pasos</p>
+                    </template>
+                </div>
+            </div>
+
+            <div class="rounded-xl bg-gray-50 p-3">
+                <button type="button" class="text-xs font-semibold text-gray-700 w-full text-left" @click="codeHelp = !codeHelp">
+                    {{ codeHelp ? '▾' : '▸' }} Qué se puede usar
+                </button>
+                <div v-if="codeHelp" class="mt-2 space-y-2 text-[11px] text-gray-600">
+                    <p><strong>Variables del flujo</strong>: <code>vars.respuesta</code>, <code>vars.contacto.nombre</code>, <code>vars["cliente.saldo"]</code>. Siempre son <em>texto</em>: <code>numero(vars.cliente.saldo)</code> entiende «$50.000».</p>
+                    <p><strong>Dejar una variable</strong>: <code>vars.total = 5</code> (minúsculas, números y _). Luego úsala como <code v-text="token('total')"></code>.</p>
+                    <p><strong>Lenguaje</strong>: <code>let</code>, <code>const</code>, <code>if / else</code>, <code>for (let i = 0; …)</code>, <code>for (const x of lista)</code>, <code>while</code>, <code>break</code>, <code>return</code>, <code>`Hola ${'{'}nombre{'}'}`</code>, listas <code>[ ]</code>, objetos <code>{ }</code>, <code>? :</code>, <code>??</code>, <code>?.</code>.</p>
+                    <p><strong>Textos</strong>: length, toUpperCase, toLowerCase, trim, includes, startsWith, endsWith, indexOf, slice, substring, split, replace, replaceAll, padStart, charAt, repeat.</p>
+                    <p><strong>Listas</strong>: length, push, pop, includes, indexOf, join, slice, concat, reverse, sort. <strong>Objetos</strong>: <code>Object.keys</code>, <code>Object.values</code>.</p>
+                    <p><strong>Funciones</strong>: <code>numero()</code>, <code>moneda(50000)</code> → «$50.000», <code>sinTildes()</code>, <code>Number()</code>, <code>String()</code>, <code>parseInt()</code>, <code>Math.round/floor/ceil/min/max/abs/pow</code>, <code>JSON.stringify/parse</code>, <code>log()</code> (sale en la traza y en «Probar»).</p>
+                    <p><strong>No hay</strong> (por seguridad): funciones propias ni flechas, <code>fetch</code>, <code>new</code>, <code>import</code>, <code>try</code>. Topes: 20.000 pasos, 250 ms, textos de 20.000 caracteres, listas de 1.000, 20 variables.</p>
+                </div>
+            </div>
+        </template>
+
+        <!-- ═══ AGENTE IA ═══ -->
+        <template v-else-if="node.type === 'ai_agent'">
+            <p v-if="!payments.aiEnabled" class="text-xs text-amber-800 bg-amber-50 rounded-lg px-3 py-2">
+                La IA no está lista para tu empresa (Configuración → Pagos e IA): mientras tanto este bloque sale siempre por «IA no disponible».
+            </p>
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Agente</label>
+                <select v-model.number="data.agent_id" class="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm">
+                    <option :value="null" disabled>Elige un agente…</option>
+                    <option v-for="a in agents" :key="a.id" :value="a.id">{{ a.name }}{{ a.is_active ? '' : ' (apagado)' }}</option>
+                </select>
+                <p class="text-[11px] text-gray-500 mt-1">
+                    <template v-if="!agents.length">Todavía no tienes agentes. </template>
+                    Su prompt y su modelo se configuran en <a :href="route('ai-agents.index')" target="_blank" class="text-accent hover:underline">Agentes IA ↗</a>.
+                    <template v-if="chosenAgent?.model"> Este usa el modelo <code>{{ chosenAgent.model }}</code>.</template>
+                </p>
+                <p v-if="chosenAgent && !chosenAgent.is_active" class="text-[11px] text-amber-800 bg-amber-50 rounded-lg px-2 py-1.5 mt-1">
+                    Ese agente está apagado: actívalo en Agentes IA o el flujo no se puede publicar.
+                </p>
+            </div>
+
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Saludo (opcional)</label>
+                <FlowTextarea v-model="data.greeting" :variables="variables" :rows="2" />
+                <p class="text-[11px] text-gray-500 mt-1">
+                    Si lo escribes, el bot lo dice y espera al cliente (no gasta IA). En blanco, el agente contesta de una vez el mensaje con el que el cliente abrió el chat.
+                </p>
+            </div>
+
+            <div class="grid grid-cols-3 gap-3 items-end">
+                <div class="col-span-2">
+                    <label class="block text-xs font-medium text-gray-700 mb-1">Tope de respuestas del agente</label>
+                    <p class="text-[11px] text-gray-500">Alcanzado, la conversación sale por «Pasar a un asesor». Evita charlas sin fin.</p>
+                </div>
+                <input v-model.number="data.max_turns" type="number" min="1" max="30" class="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm" />
+            </div>
+
+            <div class="rounded-xl bg-gray-50 p-3 space-y-1.5 text-[11px] text-gray-600">
+                <p class="text-xs font-semibold text-gray-700">Salidas</p>
+                <p><strong>Pasar a un asesor</strong>: el cliente pidió una persona, es una queja o un tema delicado, el agente no supo, o se llegó al tope. Conéctala a «Pasar a un asesor» (con el mensaje vacío: el agente ya se despidió).</p>
+                <p><strong>Conversación resuelta</strong>: el cliente se despidió o quedó resuelto.</p>
+                <p><strong>IA no disponible</strong>: apagada, sin llave o sin presupuesto, o el proveedor falló o tardó más de 3 minutos.</p>
+                <p class="pt-1">El agente solo conversa: no registra pagos ni cambia nada. Si te mandan un comprobante, ponle en el prompt que pida usar la opción de pagos de tu menú.</p>
+            </div>
+
+            <div class="rounded-xl bg-gray-50 p-3">
+                <p class="text-xs font-semibold text-gray-700 mb-2">Después de este bloque puedes usar:</p>
+                <ul class="space-y-1">
+                    <li v-for="v in variables.filter(v => v.name.startsWith('agente.'))" :key="v.name" class="text-[11px] text-gray-600">
+                        <code class="text-accent" v-text="token(v.name)"></code> — {{ v.description }}
+                    </li>
+                </ul>
             </div>
         </template>
 

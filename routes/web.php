@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\AiAgentController;
 use App\Http\Controllers\Auth\LoginController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\ContactController;
@@ -170,6 +171,8 @@ Route::middleware('auth')->group(function () {
     Route::middleware('role:admin')->prefix('flows')->name('flows.')->group(function () {
         Route::get('/', [FlowController::class, 'index'])->name('index');
         Route::post('/', [FlowController::class, 'store'])->name('store');
+        // «Probar código» del bloque Código: corre en la caja cerrada, no toca nada.
+        Route::post('/code/test', [FlowController::class, 'testCode'])->middleware('throttle:60,1')->name('code.test');
         Route::get('/{flow}/edit', [FlowController::class, 'edit'])->whereNumber('flow')->name('edit');
         Route::put('/{flow}', [FlowController::class, 'update'])->whereNumber('flow')->name('update');
         Route::post('/{flow}/validate', [FlowController::class, 'validateDraft'])->whereNumber('flow')->name('validate');
@@ -178,7 +181,8 @@ Route::middleware('auth')->group(function () {
         Route::post('/{flow}/duplicate', [FlowController::class, 'duplicate'])->whereNumber('flow')->name('duplicate');
         Route::delete('/{flow}', [FlowController::class, 'destroy'])->whereNumber('flow')->name('destroy');
         Route::post('/{flow}/versions/{version}/restore', [FlowController::class, 'restore'])->whereNumber(['flow', 'version'])->name('versions.restore');
-        Route::post('/{flow}/simulate', [FlowController::class, 'simulate'])->whereNumber('flow')->name('simulate');
+        // Con un bloque «Agente IA», simular llama a la IA de verdad (cuesta): con tope.
+        Route::post('/{flow}/simulate', [FlowController::class, 'simulate'])->whereNumber('flow')->middleware('throttle:60,1')->name('simulate');
         Route::get('/{flow}/runs', [FlowController::class, 'runs'])->whereNumber('flow')->name('runs');
     });
 
@@ -286,6 +290,15 @@ Route::middleware('auth')->group(function () {
     Route::middleware('role:admin')->group(function () {
         Route::put('/settings/ai', [SettingsController::class, 'updateAi'])->name('settings.ai.update');
         Route::post('/settings/ai/test', [SettingsController::class, 'testAi'])->middleware('throttle:12,1')->name('settings.ai.test');
+
+        // Agentes IA (docs/agente-ia.md §11): el prompt de cada agente y su chat de prueba.
+        Route::get('/ai-agents', [AiAgentController::class, 'index'])->name('ai-agents.index');
+        Route::get('/ai-agents/models', [AiAgentController::class, 'models'])->middleware('throttle:20,1')->name('ai-agents.models');
+        Route::post('/ai-agents', [AiAgentController::class, 'store'])->name('ai-agents.store');
+        Route::put('/ai-agents/{agent}', [AiAgentController::class, 'update'])->whereNumber('agent')->name('ai-agents.update');
+        Route::delete('/ai-agents/{agent}', [AiAgentController::class, 'destroy'])->whereNumber('agent')->name('ai-agents.destroy');
+        // Llama a la IA de verdad con la llave de la empresa: con tope.
+        Route::post('/ai-agents/test', [AiAgentController::class, 'test'])->middleware('throttle:30,1')->name('ai-agents.test');
         Route::post('/settings/payment-channels', [PaymentChannelController::class, 'store'])->name('settings.payment-channels.store');
         Route::post('/settings/payment-channels/import', [PaymentChannelController::class, 'import'])->name('settings.payment-channels.import');
         Route::put('/settings/payment-channels/{channel}', [PaymentChannelController::class, 'update'])->whereNumber('channel')->name('settings.payment-channels.update');

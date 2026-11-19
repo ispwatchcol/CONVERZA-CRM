@@ -18,7 +18,7 @@ import '@vue-flow/minimap/dist/style.css';
 import FlowNode from '@/Components/Flows/FlowNode.vue';
 import NodeInspector from '@/Components/Flows/NodeInspector.vue';
 import FlowSimulator from '@/Components/Flows/FlowSimulator.vue';
-import { NODE_TYPES, PALETTE, defaultData, newId, outputsOf } from '@/Components/Flows/nodeCatalog';
+import { NODE_TYPES, PALETTE, codeWrittenNames, defaultData, newId, outputsOf } from '@/Components/Flows/nodeCatalog';
 
 const props = defineProps({
     flow: { type: Object, required: true },
@@ -238,13 +238,22 @@ const variables = computed(() => {
     const list = [];
     const push = (v) => { if (!seen.has(v.name)) { seen.add(v.name); list.push(v); } };
 
-    props.catalog.variables.filter((v) => !v.name.startsWith('cliente.') && !v.name.startsWith('pago.')).forEach(push);
+    props.catalog.variables.filter((v) => !['cliente.', 'pago.', 'agente.', 'codigo.'].some((p) => v.name.startsWith(p))).forEach(push);
 
     for (const n of getNodes.value) {
         if (n.type === 'question' && n.data?.save_as) {
             const question = String(n.data.text ?? '').slice(0, 40);
             push({ name: n.data.save_as, description: `Respuesta a «${question}${question.length >= 40 ? '…' : ''}»`, group: 'Respuestas guardadas' });
         }
+        if (n.type === 'code') {
+            for (const name of codeWrittenNames(n.data?.code)) {
+                push({ name, description: 'La deja un bloque «Código»', group: 'Del bloque Código' });
+            }
+        }
+    }
+
+    if (getNodes.value.some((n) => n.type === 'code')) {
+        props.catalog.variables.filter((v) => v.name.startsWith('codigo.')).forEach(push);
     }
 
     // Los datos de ispwatch solo existen si el flujo tiene un bloque que los busque.
@@ -255,6 +264,11 @@ const variables = computed(() => {
     // Igual los del comprobante: solo después de un bloque «Comprobante de pago».
     if (getNodes.value.some((n) => n.type === 'receipt')) {
         props.catalog.variables.filter((v) => v.name.startsWith('pago.')).forEach(push);
+    }
+
+    // Y los del agente, después de un bloque «Agente IA».
+    if (getNodes.value.some((n) => n.type === 'ai_agent')) {
+        props.catalog.variables.filter((v) => v.name.startsWith('agente.')).forEach(push);
     }
 
     return list;

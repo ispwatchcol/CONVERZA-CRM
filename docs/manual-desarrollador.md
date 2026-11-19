@@ -93,8 +93,10 @@ DB::beginTransaction();
 DB::rollBack();
 ```
 
-Si quieres un entorno seguro, apunta `DB_SEARCH_PATH=converza_dev` (schema de
-desarrollo, mismo servidor) y confirma con:
+Si quieres un entorno seguro, no hay un schema de desarrollo en Postgres
+(`converza_dev` se retiró el 19/11/2026, ver §4): usa las pruebas (SQLite en
+memoria) o la copia aislada con SQLite (`APP_ENV=demolocal`). Para confirmar a qué
+schema apunta tu `.env`:
 
 ```powershell
 php artisan tinker --execute="echo config('database.connections.pgsql.search_path');"
@@ -115,7 +117,7 @@ php artisan tinker --execute="echo config('database.connections.pgsql.search_pat
 | Variable | Valor |
 |---|---|
 | `DB_CONNECTION` | `pgsql` |
-| `DB_SEARCH_PATH` | `converza_dev` (local) / `converza` (prod) |
+| `DB_SEARCH_PATH` | `converza` (el único schema que se mantiene; `converza_dev` se retiró el 19/11/2026) |
 | `DB_SSLMODE` | `require` en Supabase |
 
 **Base de datos externa (ispwatch, read-only)**
@@ -166,31 +168,28 @@ Ver [config/campaigns.php](../config/campaigns.php).
 
 ---
 
-## 4. Migraciones — la regla que más se olvida
+## 4. Migraciones
 
-> **Las migraciones deben correrse en LOS DOS schemas de Postgres: `converza` y
-> `converza_dev`.**
+> **Desde el 19/11/2026 las migraciones van solo al schema `converza`, y las corre
+> el deploy.** El schema `converza_dev` quedó **retirado**: nadie lo usa, no se
+> migra más y queda atrás a propósito.
 
-Laravel guarda la tabla `migrations` **por schema**. Correr `php artisan migrate`
-solo aplica al schema del `DB_SEARCH_PATH` activo. Si olvidas el otro, ese
-entorno queda con tablas faltantes y errores del tipo
-`relation "campaign_steps" does not exist`.
+Laravel guarda la tabla `migrations` **por schema** y `php artisan migrate` solo
+aplica al del `DB_SEARCH_PATH` activo. Hasta noviembre de 2026 había un segundo
+schema, `converza_dev`, y la regla era correr cada migración en los dos (se
+olvidó varias veces: de ahí el comentario «CORRER EN AMBOS schemas» que todavía
+traen las migraciones viejas; ya no aplica). Con la mudanza a un Supabase propio
+(02/11/2026), `converza` se fue al proyecto nuevo y `converza_dev` quedó en el
+viejo; el 19/11/2026 se decidió no mantenerlo más.
 
-Por eso todas las migraciones nuevas llevan este comentario:
+Para probar sin tocar producción no hace falta un schema de desarrollo: las
+pruebas corren en SQLite en memoria (`php artisan test`), y para ver una
+pantalla hay una copia aislada con SQLite (`APP_ENV=demolocal` + `.env.demolocal`,
+servida con `php -S` desde `public/`, nunca con `artisan serve`).
 
-```php
-// CORRER EN AMBOS schemas: converza y converza_dev (override DB_SEARCH_PATH).
-```
-
-Cómo hacerlo:
-
-```powershell
-# schema de desarrollo
-$env:DB_SEARCH_PATH="converza_dev"; php artisan migrate
-
-# schema de producción
-$env:DB_SEARCH_PATH="converza";     php artisan migrate
-```
+Si algún día vuelve a haber un entorno de desarrollo en Postgres, hay que migrarlo
+aparte con `DB_SEARCH_PATH=<schema> php artisan migrate --force` (con la config
+**sin** cachear: en el droplet, `config:clear` antes y `config:cache` después).
 
 En producción el deploy corre `php artisan migrate --force` con el
 `DB_SEARCH_PATH` del `.env` del droplet (`converza`).
@@ -199,7 +198,8 @@ En producción el deploy corre `php artisan migrate --force` con el
 
 - Nombre: `AAAA_MM_DD_NNNNNN_descripcion.php`.
 - Clase anónima (`return new class extends Migration`), estilo Laravel 11+.
-- Incluye siempre el comentario de los dos schemas.
+- Ya no lleva el comentario «CORRER EN AMBOS schemas» (ver arriba): basta con que
+  la corra el deploy.
 - `down()` real, no vacío.
 - Si la migración hace **backfill** de datos, que sea **idempotente**: comprobar
   antes de insertar. Ejemplo modelo:
@@ -695,7 +695,7 @@ Detalle completo, setup inicial del servidor y fallback manual en
 | Síntoma | Causa | Solución |
 |---|---|---|
 | El webhook llega pero nada aparece en el chat | La cola no corre | `composer dev` en vez de `npm run dev` |
-| `relation "X" does not exist` | Migración corrida en un solo schema | Correr en `converza` **y** `converza_dev` |
+| `relation "X" does not exist` | La migración no corrió (o el `.env` apunta a otro schema, p. ej. el retirado `converza_dev`) | Revisar `DB_SEARCH_PATH=converza` y `php artisan migrate:status` |
 | El chat muestra datos de otro tenant | Job sin rebindar el tenant | Aplicar el patrón forget/bind/finally |
 | El sidebar de ispwatch muestra datos viejos | Cache de 60 s | `php artisan cache:clear` |
 | Enviar imagen da 500 en producción | `storage/app/public` sin permisos de `www-data` | Ver [operaciones.md](operaciones.md#permisos-de-storage) |

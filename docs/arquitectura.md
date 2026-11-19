@@ -22,7 +22,7 @@
 | Frontend | Vue 3 + Inertia.js 2 + Tailwind 4 | SPA sin API separada: el controlador devuelve props |
 | Build | Vite 7 | `npm run build` genera `public/build` |
 | Rutas en JS | Ziggy | `route('chat.index')` disponible en Vue |
-| Base de datos | **PostgreSQL** (Supabase) | Schema dedicado: `converza` (prod) / `converza_dev` (local) |
+| Base de datos | **PostgreSQL** (Supabase) | Schema dedicado: `converza` (`converza_dev` se retiró el 19/11/2026) |
 | Base externa | PostgreSQL de ispwatch, schema `public` | Conexión separada, **read-only** |
 | Colas | Redis en producción | 2 workers de la cola `default` + 1 de la cola `ai` vía Supervisor |
 | Cache / sesión | Redis en producción, `database` en local | La presencia depende del cache |
@@ -415,6 +415,7 @@ del droplet de 1 GB es la memoria, no la CPU (la cuenta está en
 
 | Job | Disparado por | Qué hace |
 |---|---|---|
+| [`RunAiAgentTurn`](../app/Jobs/RunAiAgentTurn.php) | Bloque «Agente IA» (vía `FlowRunner`, al soltar el lock) | Cola `ai`. Le pide al agente IA de la empresa la siguiente respuesta (su prompt, su proveedor, su modelo), la guarda en `ai_agent_turns` y despierta al flujo para que la envíe. No le escribe al cliente: se reintenta una vez si el error es pasajero |
 | [`ProcessPaymentReport`](../app/Jobs/ProcessPaymentReport.php) | Bloque «Comprobante de pago» (vía `FlowRunner`, al soltar el lock) · botón «Leer comprobante» del chat · «Registrar en ispwatch» | Lee el comprobante con IA, lo verifica, decide y, si toca, le pide el registro a ispwatch. Al terminar despierta al flujo que esperaba |
 
 Cola propia (`config('ai.queue')`) y programa propio de Supervisor
