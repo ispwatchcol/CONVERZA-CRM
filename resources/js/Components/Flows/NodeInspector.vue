@@ -49,7 +49,15 @@ watch(() => props.node.id, () => {
         d.use_recent_image ??= true;
         d.auto_register ??= false;
     }
+    if (props.node.type === 'ai_agent') {
+        d.greeting ??= '';
+        d.max_turns ??= 10;
+    }
 }, { immediate: true });
+
+// ── Agente IA ────────────────────────────────────────────────────────────────
+const agents = computed(() => props.catalog.agents ?? []);
+const chosenAgent = computed(() => agents.value.find((a) => a.id === Number(data.value.agent_id)) ?? null);
 
 // ── Comprobante de pago ──────────────────────────────────────────────────────
 const payments = computed(() => props.catalog.payments ?? {});
@@ -495,6 +503,61 @@ const maxWait = computed(() => props.catalog.limits?.max_wait_minutes ?? 1380);
                 <p class="text-[11px] text-gray-500 mt-2">
                     El cliente nunca ve por qué un comprobante fue a revisión: eso queda para tu equipo en «Pagos reportados».
                 </p>
+            </div>
+        </template>
+
+        <!-- ═══ AGENTE IA ═══ -->
+        <template v-else-if="node.type === 'ai_agent'">
+            <p v-if="!payments.aiEnabled" class="text-xs text-amber-800 bg-amber-50 rounded-lg px-3 py-2">
+                La IA no está lista para tu empresa (Configuración → Pagos e IA): mientras tanto este bloque sale siempre por «IA no disponible».
+            </p>
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Agente</label>
+                <select v-model.number="data.agent_id" class="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm">
+                    <option :value="null" disabled>Elige un agente…</option>
+                    <option v-for="a in agents" :key="a.id" :value="a.id">{{ a.name }}{{ a.is_active ? '' : ' (apagado)' }}</option>
+                </select>
+                <p class="text-[11px] text-gray-500 mt-1">
+                    <template v-if="!agents.length">Todavía no tienes agentes. </template>
+                    Su prompt y su modelo se configuran en <a :href="route('ai-agents.index')" target="_blank" class="text-accent hover:underline">Agentes IA ↗</a>.
+                    <template v-if="chosenAgent?.model"> Este usa el modelo <code>{{ chosenAgent.model }}</code>.</template>
+                </p>
+                <p v-if="chosenAgent && !chosenAgent.is_active" class="text-[11px] text-amber-800 bg-amber-50 rounded-lg px-2 py-1.5 mt-1">
+                    Ese agente está apagado: actívalo en Agentes IA o el flujo no se puede publicar.
+                </p>
+            </div>
+
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Saludo (opcional)</label>
+                <FlowTextarea v-model="data.greeting" :variables="variables" :rows="2" />
+                <p class="text-[11px] text-gray-500 mt-1">
+                    Si lo escribes, el bot lo dice y espera al cliente (no gasta IA). En blanco, el agente contesta de una vez el mensaje con el que el cliente abrió el chat.
+                </p>
+            </div>
+
+            <div class="grid grid-cols-3 gap-3 items-end">
+                <div class="col-span-2">
+                    <label class="block text-xs font-medium text-gray-700 mb-1">Tope de respuestas del agente</label>
+                    <p class="text-[11px] text-gray-500">Alcanzado, la conversación sale por «Pasar a un asesor». Evita charlas sin fin.</p>
+                </div>
+                <input v-model.number="data.max_turns" type="number" min="1" max="30" class="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm" />
+            </div>
+
+            <div class="rounded-xl bg-gray-50 p-3 space-y-1.5 text-[11px] text-gray-600">
+                <p class="text-xs font-semibold text-gray-700">Salidas</p>
+                <p><strong>Pasar a un asesor</strong>: el cliente pidió una persona, es una queja o un tema delicado, el agente no supo, o se llegó al tope. Conéctala a «Pasar a un asesor» (con el mensaje vacío: el agente ya se despidió).</p>
+                <p><strong>Conversación resuelta</strong>: el cliente se despidió o quedó resuelto.</p>
+                <p><strong>IA no disponible</strong>: apagada, sin llave o sin presupuesto, o el proveedor falló o tardó más de 3 minutos.</p>
+                <p class="pt-1">El agente solo conversa: no registra pagos ni cambia nada. Si te mandan un comprobante, ponle en el prompt que pida usar la opción de pagos de tu menú.</p>
+            </div>
+
+            <div class="rounded-xl bg-gray-50 p-3">
+                <p class="text-xs font-semibold text-gray-700 mb-2">Después de este bloque puedes usar:</p>
+                <ul class="space-y-1">
+                    <li v-for="v in variables.filter(v => v.name.startsWith('agente.'))" :key="v.name" class="text-[11px] text-gray-600">
+                        <code class="text-accent" v-text="token(v.name)"></code> — {{ v.description }}
+                    </li>
+                </ul>
             </div>
         </template>
 

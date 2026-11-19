@@ -47,6 +47,7 @@ const groups = [
             { id: 'bot',        title: 'Bot de atención' },
             { id: 'flujos',     title: 'Flujos del bot' },
             { id: 'pagos',      title: 'Pagos con IA' },
+            { id: 'agentes',    title: 'Agentes IA' },
         ],
     },
     {
@@ -892,6 +893,7 @@ vence el {{fecha_vencimiento}}.</pre>
                                     <tr><td class="py-2 pr-3 font-medium text-gray-800">Condición</td><td class="py-2">Sí / No según lo que respondió el cliente, sus etiquetas o el horario (por ejemplo, fuera de horario dejar un mensaje).</td></tr>
                                     <tr><td class="py-2 pr-3 font-medium text-gray-800 whitespace-nowrap">Datos del cliente</td><td class="py-2">Busca al cliente en ispwatch por su teléfono: estado del servicio, facturas pendientes, cuánto debe y cuándo vence. Solo lee.</td></tr>
                                     <tr><td class="py-2 pr-3 font-medium text-gray-800 whitespace-nowrap">Comprobante de pago</td><td class="py-2">Pide la foto del comprobante (o usa la que el cliente ya mandó), la lee con inteligencia artificial y, si lo activas y pasa todas las verificaciones, registra el pago en ispwatch. Ver <a href="#pagos" class="text-accent hover:underline">Pagos con IA</a>.</td></tr>
+                                    <tr><td class="py-2 pr-3 font-medium text-gray-800 whitespace-nowrap">Agente IA</td><td class="py-2">Conversa con el cliente usando uno de tus agentes de inteligencia artificial (su prompt y su modelo) hasta que pida una persona, quede resuelto o la IA no esté disponible: tiene una salida para cada caso. Ver <a href="#agentes" class="text-accent hover:underline">Agentes IA</a>.</td></tr>
                                     <tr><td class="py-2 pr-3 font-medium text-gray-800">Etiquetar</td><td class="py-2">Pone o quita una etiqueta del contacto.</td></tr>
                                     <tr><td class="py-2 pr-3 font-medium text-gray-800">Espera</td><td class="py-2">Pausa unos minutos antes de seguir.</td></tr>
                                     <tr><td class="py-2 pr-3 font-medium text-gray-800 whitespace-nowrap">Pasar a un asesor</td><td class="py-2">Entrega la conversación a tu equipo (o a un equipo en particular), la asigna si tienes la auto-asignación activa y le deja al asesor una nota con todo lo que respondió el cliente.</td></tr>
@@ -943,7 +945,7 @@ vence el {{fecha_vencimiento}}.</pre>
 
                         <h3 class="font-semibold text-gray-800 mt-4 mb-2">Para empezar (administrador)</h3>
                         <ol class="space-y-2 text-sm text-gray-600 list-decimal list-inside">
-                            <li>En <em>Configuración → Inteligencia artificial</em>, enciende la lectura de comprobantes. Eliges tu proveedor (OpenAI o xAI) y pegas <strong>tu propia API key</strong> (la creas en tu cuenta del proveedor; el consumo, unos US$ 0,003 por comprobante, se te cobra a ti y la llave se guarda cifrada). Usa «Probar llave» para comprobarla. La foto del comprobante se envía a ese proveedor solo para leerla y no queda guardada allá; enciéndela si tu política de tratamiento de datos lo permite.</li>
+                            <li>En <em>Configuración → Pagos e IA</em>, enciende la inteligencia artificial. Eliges tu proveedor (OpenAI, Claude, Gemini, Grok, DeepSeek, Groq, OpenRouter, Mistral u otro compatible) y pegas <strong>tu propia API key</strong> (la creas en tu cuenta del proveedor; el consumo, desde unos US$ 0,003 por comprobante según el modelo, se te cobra a ti y la llave se guarda cifrada). Toca «Probar llave y ver modelos» y elige el <strong>modelo</strong> de la lista: para comprobantes tiene que ser uno que lea imágenes. La foto del comprobante se envía a ese proveedor solo para leerla; enciéndela si tu política de tratamiento de datos lo permite.</li>
                             <li>En <em>Configuración → Medios de pago</em>, usa <em>Traer de ispwatch</em> y complétale a cada medio su <strong>número de cuenta</strong> y a nombre de quién. Con el número, Converza comprueba que el pago haya ido a una cuenta tuya; sin él, ningún pago se registra solo.</li>
                             <li>Opcional: en un flujo, agrega el bloque <em>Comprobante de pago</em>. Antes, un <em>Mensaje</em> con <code v-pre class="bg-gray-100 px-1.5 py-0.5 rounded text-xs">{{empresa.medios_pago}}</code> le dice al cliente dónde pagar.</li>
                         </ol>
@@ -989,6 +991,33 @@ vence el {{fecha_vencimiento}}.</pre>
                             referencia creíbles) solo se detecta comparando con el extracto de tu banco. Los pagos que registra el
                             bot quedan marcados en ispwatch como «Reportado por WhatsApp», para que los concilies.
                         </div>
+                    </section>
+
+                    <!-- ─────── Agentes IA ─────── -->
+                    <section id="agentes" class="bg-white rounded-xl border border-gray-200 p-6 scroll-mt-4">
+                        <h2 class="text-xl font-bold text-gray-900 mb-3">Agentes IA</h2>
+                        <p class="text-gray-600 mb-4">
+                            Un agente IA conversa con tus clientes por WhatsApp con lo que tú le escribas: qué vendes, precios, horarios,
+                            cómo pagar y qué no debe prometer. Usa tu proveedor de IA y el modelo que elijas, y cuando el cliente pide una
+                            persona o el agente no sabe algo, le pasa la conversación a tu equipo.
+                        </p>
+
+                        <h3 class="font-semibold text-gray-800 mt-4 mb-2">Para empezar (administrador)</h3>
+                        <ol class="space-y-2 text-sm text-gray-600 list-decimal list-inside">
+                            <li>En <em>Configuración → Pagos e IA</em>: enciende la IA, elige tu proveedor, pega tu API key y elige el modelo de la lista (ver <a href="#pagos" class="text-accent hover:underline">Pagos con IA</a>).</li>
+                            <li>En el menú <em>Agentes IA</em>, toca <em>Nuevo agente</em>. Trae un ejemplo: cámbialo por tus planes, precios, horarios y reglas. Puedes usar variables como <code v-pre class="bg-gray-100 px-1.5 py-0.5 rounded text-xs">{{empresa.medios_pago}}</code>. Si quieres, elige para este agente otro modelo que el de tu empresa.</li>
+                            <li>Pruébalo en el chat de la derecha escribiendo como si fueras un cliente. Usa lo que está en el formulario aunque no lo hayas guardado. Cada mensaje de prueba usa tu IA (cuesta como una conversación real) y no se envía nada por WhatsApp.</li>
+                            <li>En <em>Flujos del bot</em>, agrega el bloque <em>Agente IA</em>, elige tu agente y conecta sus tres salidas: <strong>Pasar a un asesor</strong> (a un bloque «Pasar a un asesor» sin mensaje: el agente ya se despidió), <strong>Conversación resuelta</strong> (a «Fin») e <strong>IA no disponible</strong> (a «Pasar a un asesor» con un mensaje). Pruébalo en el simulador y publica.</li>
+                        </ol>
+
+                        <h3 class="font-semibold text-gray-800 mt-5 mb-2">Lo que hace y lo que no</h3>
+                        <ul class="space-y-1.5 text-sm text-gray-600 list-disc list-inside">
+                            <li>Responde con mensajes cortos, en el estilo de WhatsApp, y solo con lo que está en su prompt: si no sabe, lo dice y pasa a tu equipo. No inventa precios ni datos de la cuenta del cliente.</li>
+                            <li>Pasa a un asesor si el cliente lo pide, si es una queja o un tema delicado (cobros, cancelaciones), o si llega al tope de respuestas del bloque (10 por defecto).</li>
+                            <li>Solo conversa: no registra pagos, no etiqueta ni asigna. Para datos del cliente (saldo, estado del servicio), pon un bloque <em>Datos del cliente</em> antes y usa sus variables en el prompt.</li>
+                            <li>No ve fotos ni escucha audios: sabe que llegaron y puede pedir que se los escriban.</li>
+                            <li>Si un asesor toma la conversación o le escribe al cliente, el agente se calla, como cualquier flujo.</li>
+                        </ul>
                     </section>
 
                     <!-- ─────── Staff y equipos ─────── -->
@@ -1095,9 +1124,10 @@ vence el {{fecha_vencimiento}}.</pre>
 
                         <h3 class="font-semibold text-gray-800 mt-5 mb-2">Inteligencia artificial y medios de pago</h3>
                         <p class="text-sm text-gray-600">
-                            Solo admin. Encender la lectura de comprobantes con IA, ver el consumo del mes, fijar el tope por
-                            comprobante para registrar sin revisión, y cargar tus medios de pago con su número de cuenta. Ver
-                            <a href="#pagos" class="text-accent hover:underline">Pagos con IA</a>.
+                            Solo admin. Encender la IA, elegir tu proveedor, tu llave y tu modelo, ver el consumo del mes, fijar
+                            el tope por comprobante para registrar sin revisión, y cargar tus medios de pago con su número de
+                            cuenta. Ver <a href="#pagos" class="text-accent hover:underline">Pagos con IA</a> y
+                            <a href="#agentes" class="text-accent hover:underline">Agentes IA</a>.
                         </p>
 
                         <h3 class="font-semibold text-gray-800 mt-5 mb-2">Integración ispwatch</h3>

@@ -2,6 +2,7 @@
 
 namespace App\Services\Flows\IO;
 
+use App\Services\Flows\AgentOutcome;
 use App\Services\Flows\CustomerLookup;
 use App\Services\Flows\ReceiptOutcome;
 use App\Services\Flows\SendResult;
@@ -70,6 +71,36 @@ interface FlowIO
      * a revisión humana (se venció el plazo de la tarea).
      */
     public function receipt(int $reportId, bool $giveUp = false): ?ReceiptOutcome;
+
+    /**
+     * Un agente IA de la empresa (Agentes IA), o null si no existe.
+     *
+     * @return array{id: int, name: string, instructions: string, model: ?string, active: bool}|null
+     */
+    public function agent(int $agentId): ?array;
+
+    /**
+     * Pide la siguiente respuesta del agente. Si la IA va a contestar en la cola
+     * vuelve `pending()`: el bloque espera la tarea (Step::waitTask).
+     *
+     * @param string $instructions El prompt completo, ya armado (AgentResponder::instructions).
+     * @param list<array{role: string, content: string}> $history
+     */
+    public function startAgentTurn(int $agentId, string $instructions, array $history, ?string $model): AgentOutcome;
+
+    /** En qué va una respuesta. Con `$giveUp`, si sigue pendiente se da por fallida (plazo vencido). */
+    public function agentTurn(int $turnId, bool $giveUp = false): ?AgentOutcome;
+
+    /** El id del último mensaje que mandó el cliente, o null. */
+    public function latestInboundId(): ?int;
+
+    /**
+     * Lo que el cliente escribió después de ese mensaje (mientras el agente
+     * pensaba la respuesta anterior), en orden.
+     *
+     * @return list<array{id: int, text: string, type: string}>
+     */
+    public function inboundAfter(int $messageId): array;
 
     /**
      * Entrega la conversación al equipo.

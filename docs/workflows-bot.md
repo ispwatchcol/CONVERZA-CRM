@@ -121,6 +121,7 @@ con sus textos y switches — el flujo semilla de CON-51) y "Empezar casi de cer
 | **Condición** | Reglas sobre variables, etiquetas del contacto u horario; todas o al menos una | Sí · No |
 | **Datos del cliente** | Busca al contacto en ispwatch por teléfono (solo lectura) y llena `{{cliente.*}}` | Encontrado · No encontrado |
 | **Comprobante de pago** | Pide la foto del comprobante (o usa la que el cliente ya mandó), la hace leer con IA en la cola `ai` y llena `{{pago.*}}`. Con «registrar sin revisión», si pasa todas las verificaciones ispwatch lo registra. Ver [agente-ia.md](agente-ia.md) | Pago registrado (solo con registro automático) · Para revisión del equipo · No mandó un comprobante |
+| **Agente IA** (`ai_agent`) | Conversa con el cliente con uno de los agentes de la empresa (Agentes IA: su prompt, su modelo), pidiendo cada respuesta a la cola `ai`. Saludo opcional, tope de respuestas (1-30). Deja `{{agente.respuesta}}` y `{{agente.salida}}`. Ver [agente-ia.md §14](agente-ia.md#14-el-agente-que-conversa-fase-3-primera-versión) | Pasar a un asesor · Conversación resuelta · IA no disponible |
 | **Etiquetar** | Pone o quita una etiqueta | Siguiente |
 | **Espera** | Pausa N minutos (máx. 23 h) | Siguiente |
 | **Pasar a un asesor** | Mensaje opcional, equipo opcional, auto-asignación y nota interna con lo que respondió el cliente | — |
@@ -137,11 +138,14 @@ cableado usa `str_contains` y por eso "ver" caía en "verificar".
 `saludo`, `fecha.*`, `mensaje_inicial`, `respuesta` y `opcion`; las de una
 Pregunta existen con el nombre que se les dé; las `cliente.*`, solo si el flujo
 tiene un bloque *Datos del cliente*; las `pago.*`, solo si tiene un bloque
-*Comprobante de pago*. El validador rechaza una variable que no existe en ningún
-lado (casi siempre es un error de tipeo).
+*Comprobante de pago*; las `agente.*`, solo si tiene un *Agente IA*. El validador
+rechaza una variable que no existe en ningún lado (casi siempre es un error de tipeo).
 
-**La IA en el bot** ya tiene su primer bloque (*Comprobante de pago*). El agente
-conversacional entra como un bloque más ([agente-ia.md §11](agente-ia.md#11-lo-que-sigue)).
+**La IA en el bot** tiene dos bloques: *Comprobante de pago* (transcribe, no
+decide) y, desde el 19/11/2026, *Agente IA*, que conversa
+([agente-ia.md §14](agente-ia.md#14-el-agente-que-conversa-fase-3-primera-versión)).
+En el simulador, el agente responde con la IA de verdad de la empresa (es lo que
+se prueba: el prompt); los comprobantes siguen simulándose sin IA.
 
 ### El simulador
 
@@ -223,7 +227,7 @@ columnas en [modelo-de-datos.md](modelo-de-datos.md).
 ### Tareas: lo lento va a otra cola
 
 Un bloque que necesita algo lento y de un tercero (hoy: leer un comprobante con
-IA) **no** lo hace dentro del job del flujo, que tiene el lock de la
+IA, o la respuesta de un Agente IA: tareas `receipt` y `agent`) **no** lo hace dentro del job del flujo, que tiene el lock de la
 conversación y no se reintenta. Devuelve `Step::waitTask(tipo, id, plazo)`:
 
 1. El motor deja la ejecución en **`waiting_task`** (un estado vivo más) con
@@ -337,9 +341,11 @@ acotada y rama de error obligatoria.
 
 - **No es n8n.** Un ISP que necesite una integración exótica la llama por el nodo
   HTTP (CON-50).
-- **No es un bot conversacional con IA… todavía.** La IA entró por un bloque
-  acotado (*Comprobante de pago*: transcribe, no decide). El agente que conversa
-  está diseñado en [agente-ia.md §11](agente-ia.md#11-lo-que-sigue).
+- **El bot conversacional con IA es un bloque, no el motor.** La IA entró por un
+  bloque acotado (*Comprobante de pago*: transcribe, no decide) y el agente que
+  conversa es otro (*Agente IA*, 19/11/2026): solo responde o pide salir; lo que
+  pasa después lo deciden los bloques conectados a sus salidas
+  ([agente-ia.md §14](agente-ia.md#14-el-agente-que-conversa-fase-3-primera-versión)).
 - **No reemplaza a Campañas.** Los flujos reaccionan a lo que escribe el cliente;
   el contacto masivo saliente tiene su herramienta, con audiencia, pacing y opt-out.
 

@@ -445,10 +445,12 @@ Sin priorizar; van aquí para no perderlas.
   `IntentDetector` ya la resolvió el Workspace de flujos (cada ISP define sus
   opciones y palabras clave sin deploy, ver [workflows-bot.md](workflows-bot.md)).
   La infraestructura de IA ya existe desde el 25/10/2026 (comprobantes de pago,
-  [agente-ia.md](agente-ia.md)); lo que queda es el **agente conversacional**,
-  diseñado como bloque «Agente IA» con herramientas de solo lectura
-  ([agente-ia.md §11, Fase 3](agente-ia.md#11-lo-que-sigue)). La clasificación del
-  Menú con un LLM pasa a ser un caso particular de ese bloque.
+  [agente-ia.md](agente-ia.md)). **El agente conversacional ya existe** desde el
+  19/11/2026: bloque «Agente IA» con el prompt, el proveedor y el modelo que elige
+  cada empresa ([agente-ia.md §14](agente-ia.md#14-el-agente-que-conversa-fase-3-primera-versión)).
+  Falta darle **herramientas de solo lectura** (facturas, estado del servicio,
+  FAQ) — [agente-ia.md §11, Fase 3](agente-ia.md#11-lo-que-sigue). La
+  clasificación del Menú con un LLM pasa a ser un caso particular de ese bloque.
 - **Plantillas de cierre configurables** por tenant, para estandarizar las
   métricas de cierre.
 - **Programar mensajes individuales**, no solo campañas.

@@ -2,8 +2,14 @@
 
 namespace App\Services\Flows\IO;
 
+use App\Models\AiAgent;
+use App\Models\AiAgentTurn;
 use App\Models\PaymentReport;
 use App\Models\Tenant;
+use App\Services\Ai\Agents\AgentResponder;
+use App\Services\Ai\AiProviderException;
+use App\Services\Ai\AiUnavailable;
+use App\Services\Flows\AgentOutcome;
 use App\Services\Flows\CustomerLookup;
 use App\Services\Flows\ReceiptOutcome;
 use App\Services\Flows\SendResult;
@@ -23,6 +29,10 @@ use Carbon\CarbonImmutable;
  * Los comprobantes NO se leen con IA: el admin elige en el simulador qué
  * resultado probar («válido», «con problemas», «no es un comprobante»). Leer
  * una imagen de prueba costaría plata y no probaría el flujo mejor.
+ *
+ * El bloque «Agente IA» es la excepción: responde con la IA de verdad de la
+ * empresa (ver startAgentTurn), porque lo que se prueba es el prompt. Es la
+ * única escritura del simulador: la fila de costo en ai_usage_logs.
  */
 final class SimulatedFlowIO implements FlowIO
 {
@@ -35,6 +45,8 @@ final class SimulatedFlowIO implements FlowIO
     public array $effects = [];
 
     private ?ReceiptOutcome $lastReceipt = null;
+
+    private ?AgentOutcome $lastAgent = null;
 
     /**
      * @param array{name: ?string, phone: ?string} $contact
@@ -226,6 +238,58 @@ final class SimulatedFlowIO implements FlowIO
     public function receipt(int $reportId, bool $giveUp = false): ?ReceiptOutcome
     {
         return $this->lastReceipt;
+    }
+
+    public function agent(int $agentId): ?array
+    {
+        $agent = AiAgent::withoutGlobalScopes()->where('tenant_id', $this->tenant->id)->find($agentId);
+
+        return $agent ? [
+            'id'           => (int) $agent->id,
+            'name'         => (string) $agent->name,
+            'instructions' => (string) $agent->instructions,
+            'model'        => $agent->model,
+            'active'       => (bool) $agent->is_active,
+        ] : null;
+    }
+
+    /**
+     * A diferencia de los comprobantes, el agente SÍ se prueba con la IA de
+     * verdad: lo que se está probando es justamente el prompt. Se llama en el
+     * momento (sin cola) y cuesta lo mismo que una conversación real; queda en
+     * la bitácora de uso como `agent_sim`. Nada se envía por WhatsApp.
+     */
+    public function startAgentTurn(int $agentId, string $instructions, array $history, ?string $model): AgentOutcome
+    {
+        try {
+            $reply = app(AgentResponder::class)->reply($this->tenant, $instructions, $history, $model, purpose: 'agent_sim');
+            $outcome = new AgentOutcome(-1, AiAgentTurn::STATUS_DONE, $reply->text, $reply->action);
+            $this->effects[] = ['kind' => 'agent', 'status' => 'done', 'action' => $reply->action, 'model' => $reply->model];
+        } catch (AiUnavailable $e) {
+            $outcome = AgentOutcome::unavailable($e->reason);
+            $this->effects[] = ['kind' => 'agent', 'status' => 'unavailable', 'reason' => PaymentReport::REASONS[$e->reason] ?? $e->reason];
+        } catch (AiProviderException $e) {
+            $outcome = new AgentOutcome(-1, AiAgentTurn::STATUS_FAILED, reason: $e->getMessage());
+            $this->effects[] = ['kind' => 'agent', 'status' => 'failed', 'reason' => $e->getMessage()];
+        }
+
+        return $this->lastAgent = $outcome;
+    }
+
+    public function agentTurn(int $turnId, bool $giveUp = false): ?AgentOutcome
+    {
+        return $this->lastAgent;
+    }
+
+    /** El simulador no tiene bandeja: lo que el cliente escribe llega de a un mensaje. */
+    public function latestInboundId(): ?int
+    {
+        return null;
+    }
+
+    public function inboundAfter(int $messageId): array
+    {
+        return [];
     }
 
     public function handoff(?int $teamId, bool $assign, ?string $note): array

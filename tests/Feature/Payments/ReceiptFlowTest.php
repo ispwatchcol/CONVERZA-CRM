@@ -380,7 +380,12 @@ class ReceiptFlowTest extends PaymentsTestCase
         $report = $this->report();
         $this->assertSame(PaymentReport::STATUS_PENDING_REVIEW, $report->status);
         $this->assertSame('ia_error', $report->reason);
-        $this->assertCount(1, $this->requestsTo('https://api.x.ai/'));
+        // Un 400 se repite UNA vez sin lo opcional (`reasoning`: la empresa puede
+        // haber elegido un modelo que no razona); el job no lo reintenta más.
+        $requests = $this->requestsTo('https://api.x.ai/');
+        $this->assertCount(2, $requests);
+        $this->assertArrayHasKey('reasoning', $requests[0]->data());
+        $this->assertArrayNotHasKey('reasoning', $requests[1]->data());
         $this->assertSame('error', AiUsageLog::firstOrFail()->status);
     }
 

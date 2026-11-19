@@ -17,7 +17,7 @@ const props = defineProps({
     notificationRoutes: { type: Object, default: () => ({}) },
     // Bot: { enabled, state: 'off'|'active'|'out_of_schedule', schedule_summary }
     bot: { type: Object, default: () => ({ enabled: false, state: 'off', schedule_summary: null, active_flows: 0 }) },
-    // IA: { enabled, provider, has_key, key_hint, unavailable, reasons, spent_usd, budget_usd (null = sin tope), requests_month, auto_max_amount, can_register, ispwatch_linked, pending_reports }
+    // IA: { enabled, provider, providers[], model, base_url, agents, has_key, key_hint, unavailable, reasons, spent_usd, budget_usd (null = sin tope), requests_month, auto_max_amount, can_register, ispwatch_linked, pending_reports }
     ai: { type: Object, default: () => ({}) },
     // Medios de pago de la empresa y el catálogo de formas de pago de ispwatch.
     paymentChannels: { type: Array, default: () => [] },
@@ -99,7 +99,7 @@ const TABS = [
     { key: 'conexiones', label: 'Conexiones y API keys', hint: 'WhatsApp (token, Phone Number ID), ispwatch y perfil' },
     { key: 'atencion',   label: 'Atención',              hint: 'Asignación de chats y cierre automático' },
     { key: 'bot',        label: 'Bot y avisos',          hint: 'Bot de respuestas y avisos automáticos' },
-    { key: 'pagos',      label: 'Pagos e IA',            hint: 'Lectura de comprobantes con IA y medios de pago' },
+    { key: 'pagos',      label: 'Pagos e IA',            hint: 'Proveedor y modelo de IA, comprobantes y medios de pago' },
 ];
 const readStored = () => { try { return localStorage.getItem('converza-settings-tab'); } catch { return null; } };
 const fromUrl = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('tab') : null;
@@ -114,24 +114,35 @@ function setTab(key) {
     window.history.replaceState(window.history.state, '', url);
 }
 
-// ── Inteligencia artificial (comprobantes de pago) ───────────────────────────
+// ── Inteligencia artificial (comprobantes y agentes) ─────────────────────────
 // La llave de IA es de CADA empresa: se guarda cifrada y nunca vuelve al
-// navegador (solo se sabe si existe y sus últimos 4 caracteres).
-const AI_PROVIDERS = [
-    { value: 'openai', label: 'OpenAI', hint: 'platform.openai.com → API keys', placeholder: 'sk-proj-…' },
-    { value: 'xai', label: 'xAI (Grok)', hint: 'console.x.ai → API keys', placeholder: 'xai-…' },
-];
+// navegador (solo se sabe si existe y sus últimos 4 caracteres). El catálogo de
+// proveedores viene del servidor (config/ai.php); el de modelos, de la API del
+// proveedor con la llave de la empresa («Probar llave y ver modelos»).
+const AI_PROVIDERS = computed(() => props.ai?.providers?.length
+    ? props.ai.providers
+    : [{ value: 'openai', label: 'OpenAI', hint: 'platform.openai.com → API keys', placeholder: 'sk-proj-…', needs_base_url: false, default_model: null, vision: true }]);
 const aiForm = useForm({
     ai_enabled: props.ai?.enabled ?? false,
     ai_provider: props.ai?.provider ?? 'openai',
     ai_api_key: '',
     ai_api_key_clear: false,
+    ai_model: props.ai?.model ?? '',
+    ai_base_url: props.ai?.base_url ?? '',
     ai_monthly_budget_usd: props.ai?.budget_usd ?? '',
     receipts_auto_max_amount: props.ai?.auto_max_amount ?? 300000,
 });
-const aiProviderMeta = computed(() => AI_PROVIDERS.find((p) => p.value === aiForm.ai_provider) ?? AI_PROVIDERS[0]);
+const aiProviderMeta = computed(() => AI_PROVIDERS.value.find((p) => p.value === aiForm.ai_provider) ?? AI_PROVIDERS.value[0]);
 // Con otro proveedor, la llave guardada ya no sirve: hay que cargar una nueva.
 const aiKeyUsable = computed(() => props.ai?.has_key && aiForm.ai_provider === props.ai?.provider && !aiForm.ai_api_key_clear);
+// La lista de modelos es de un proveedor: al cambiarlo, se vacía y se vuelve a pedir.
+const aiModels = ref([]);
+watch(() => aiForm.ai_provider, (now, before) => {
+    if (now === before) return;
+    aiModels.value = [];
+    aiTest.value = null;
+    aiForm.ai_model = now === props.ai?.provider ? (props.ai?.model ?? '') : '';
+});
 function saveAi() {
     aiForm
         .transform((data) => ({
@@ -139,6 +150,8 @@ function saveAi() {
             ai_provider: data.ai_provider,
             ai_api_key: data.ai_api_key,
             ai_api_key_clear: !!data.ai_api_key_clear,
+            ai_model: String(data.ai_model ?? '').trim() || null,
+            ai_base_url: aiProviderMeta.value.needs_base_url ? (String(data.ai_base_url ?? '').trim() || null) : null,
             ai_monthly_budget_usd: data.ai_monthly_budget_usd === '' || data.ai_monthly_budget_usd == null ? null : Number(data.ai_monthly_budget_usd),
             receipts_auto_max_amount: data.receipts_auto_max_amount === '' || data.receipts_auto_max_amount == null
                 ? null
@@ -146,7 +159,7 @@ function saveAi() {
         }))
         .put(route('settings.ai.update'), {
             preserveScroll: true,
-            onSuccess: () => { aiForm.ai_api_key = ''; aiForm.ai_api_key_clear = false; aiTest.value = null; },
+            onSuccess: () => { aiForm.ai_api_key = ''; aiForm.ai_api_key_clear = false; },
         });
 }
 const aiTest = ref(null);
@@ -155,14 +168,28 @@ async function testAiKey() {
     aiTesting.value = true;
     aiTest.value = null;
     try {
-        const { data } = await axios.post(route('settings.ai.test'), { ai_provider: aiForm.ai_provider, ai_api_key: aiForm.ai_api_key });
+        const { data } = await axios.post(route('settings.ai.test'), {
+            ai_provider: aiForm.ai_provider,
+            ai_api_key: aiForm.ai_api_key,
+            ai_base_url: aiProviderMeta.value.needs_base_url ? aiForm.ai_base_url : null,
+        });
         aiTest.value = data;
+        aiModels.value = data.models ?? [];
     } catch (e) {
         aiTest.value = { ok: false, message: e.response?.data?.message ?? 'No se pudo probar la llave.' };
     } finally {
         aiTesting.value = false;
     }
 }
+// El modelo guardado puede no estar en la lista (se escribió a mano, o el
+// proveedor lo retiró): igual se muestra como opción para no perderlo.
+const aiModelOptions = computed(() => {
+    const list = [...aiModels.value];
+    const current = String(aiForm.ai_model ?? '').trim();
+    if (current && !list.some((m) => m.id === current)) list.unshift({ id: current, label: `${current} (actual)` });
+    return list;
+});
+const aiModelManual = ref(false);
 const aiUsagePercent = computed(() => {
     const budget = Number(props.ai?.budget_usd) || 0;
     return budget > 0 ? Math.min(100, Math.round((Number(props.ai?.spent_usd) || 0) / budget * 100)) : 0;
@@ -940,7 +967,7 @@ const waBadge = computed(() => {
                         </div>
                         <div>
                             <h3 class="text-base font-semibold text-gray-900">Inteligencia artificial</h3>
-                            <p class="text-xs text-gray-500">Lee los comprobantes de pago que mandan tus clientes por WhatsApp.</p>
+                            <p class="text-xs text-gray-500">Lee los comprobantes de pago y conversa con tus clientes (Agentes IA), con tu proveedor y tu modelo.</p>
                         </div>
                     </div>
 
@@ -950,12 +977,12 @@ const waBadge = computed(() => {
                             <div class="min-w-0">
                                 <p class="text-sm font-semibold flex items-center gap-2" :class="aiForm.ai_enabled ? 'text-fuchsia-900' : 'text-gray-700'">
                                     <span class="w-2 h-2 rounded-full" :class="aiForm.ai_enabled ? 'bg-fuchsia-500' : 'bg-gray-400'"></span>
-                                    {{ aiForm.ai_enabled ? 'Lectura de comprobantes ACTIVADA' : 'Lectura de comprobantes DESACTIVADA' }}
+                                    {{ aiForm.ai_enabled ? 'Inteligencia artificial ACTIVADA' : 'Inteligencia artificial DESACTIVADA' }}
                                 </p>
                                 <p class="text-xs mt-1" :class="aiForm.ai_enabled ? 'text-fuchsia-700' : 'text-gray-500'">
-                                    La foto del comprobante se envía a un proveedor de IA externo (OpenAI o xAI) solo para leerla: valor, fecha, referencia y a qué cuenta se pagó.
-                                    No queda guardada allá. Actívala si tu política de tratamiento de datos lo permite. Apagada, los comprobantes igual llegan a
-                                    «Pagos reportados», sin leer.
+                                    La foto del comprobante y, si usas un Agente IA, los mensajes de esa conversación se envían al proveedor de IA que elijas,
+                                    solo para responder. Actívala si tu política de tratamiento de datos lo permite. Apagada, los comprobantes igual llegan a
+                                    «Pagos reportados» sin leer, y los bloques «Agente IA» pasan la conversación al equipo.
                                 </p>
                             </div>
                             <button type="button" @click="aiForm.ai_enabled = !aiForm.ai_enabled"
@@ -972,8 +999,9 @@ const waBadge = computed(() => {
                             <div>
                                 <p class="text-sm font-semibold text-gray-800">Tu llave de IA</p>
                                 <p class="text-xs text-gray-500 mt-0.5">
-                                    Usas <strong>tu propia cuenta</strong> de OpenAI o xAI: el consumo se te cobra directo a ti (unos US$ 0,003 por
-                                    comprobante) y Converza nunca usa la llave de otra empresa. Se guarda cifrada y no se vuelve a mostrar.
+                                    Usas <strong>tu propia cuenta</strong> del proveedor que quieras (OpenAI, Claude, Gemini, Grok, DeepSeek, Groq, OpenRouter,
+                                    Mistral u otro compatible): el consumo se te cobra directo a ti y Converza nunca usa la llave de otra empresa. Se guarda
+                                    cifrada y no se vuelve a mostrar.
                                 </p>
                             </div>
                             <div class="grid md:grid-cols-3 gap-3">
@@ -996,10 +1024,17 @@ const waBadge = computed(() => {
                                     <p v-else class="text-[11px] text-gray-400 mt-1">La creas en {{ aiProviderMeta.hint }}.</p>
                                 </div>
                             </div>
+                            <div v-if="aiProviderMeta.needs_base_url">
+                                <label class="block text-xs font-medium text-gray-700 mb-1">URL de la API (compatible con OpenAI)</label>
+                                <input v-model="aiForm.ai_base_url" type="url" placeholder="https://api.tu-proveedor.com/v1"
+                                       class="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm font-mono">
+                                <p v-if="aiForm.errors.ai_base_url" class="text-[11px] text-red-600 mt-1">{{ aiForm.errors.ai_base_url }}</p>
+                                <p v-else class="text-[11px] text-gray-400 mt-1">La URL base, sin <code>/chat/completions</code>. Tiene que ser https y pública.</p>
+                            </div>
                             <div class="flex flex-wrap items-center gap-3">
                                 <button type="button" :disabled="aiTesting || (!aiForm.ai_api_key && !aiKeyUsable)" @click="testAiKey"
                                         class="px-3 py-2 border border-gray-200 rounded-xl text-xs font-medium text-gray-700 hover:bg-gray-50 transition disabled:opacity-50">
-                                    {{ aiTesting ? 'Probando…' : 'Probar llave' }}
+                                    {{ aiTesting ? 'Consultando…' : 'Probar llave y ver modelos' }}
                                 </button>
                                 <label v-if="aiKeyUsable" class="flex items-center gap-2 text-[11px] text-gray-600">
                                     <input v-model="aiForm.ai_api_key_clear" type="checkbox" class="rounded border-gray-300 text-red-500 focus:ring-red-400">
@@ -1007,6 +1042,39 @@ const waBadge = computed(() => {
                                 </label>
                                 <p v-if="aiTest" class="text-xs" :class="aiTest.ok ? 'text-emerald-700' : 'text-red-600'">{{ aiTest.message }}</p>
                             </div>
+
+                            <!-- El modelo: de la lista que da la API del proveedor con tu llave -->
+                            <div>
+                                <div class="flex items-center justify-between">
+                                    <label class="block text-xs font-medium text-gray-700 mb-1">Modelo</label>
+                                    <button v-if="aiModels.length" type="button" class="text-[11px] text-accent hover:underline" @click="aiModelManual = !aiModelManual">
+                                        {{ aiModelManual ? 'Elegir de la lista' : 'Escribirlo a mano' }}
+                                    </button>
+                                </div>
+                                <select v-if="aiModels.length && !aiModelManual" v-model="aiForm.ai_model" class="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm">
+                                    <option value="">Por defecto ({{ aiProviderMeta.default_model ?? 'elige uno' }})</option>
+                                    <option v-for="m in aiModelOptions" :key="m.id" :value="m.id">{{ m.label }}</option>
+                                </select>
+                                <input v-else v-model="aiForm.ai_model" type="text" autocomplete="off"
+                                       :placeholder="aiProviderMeta.default_model ? `Por defecto: ${aiProviderMeta.default_model}` : 'nombre-del-modelo'"
+                                       class="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm font-mono">
+                                <p v-if="aiForm.errors.ai_model" class="text-[11px] text-red-600 mt-1">{{ aiForm.errors.ai_model }}</p>
+                                <p v-else-if="!aiModels.length" class="text-[11px] text-gray-400 mt-1">Toca «Probar llave y ver modelos» para elegirlo de la lista de tu proveedor.</p>
+                                <p v-else class="text-[11px] text-gray-400 mt-1">
+                                    Es el modelo de los comprobantes y de los agentes que no elijan otro (Agentes IA).
+                                    <template v-if="!aiProviderMeta.vision"> Ojo: el modelo por defecto de {{ aiProviderMeta.label }} no lee imágenes; para comprobantes elige uno que sí («vision»).</template>
+                                </p>
+                            </div>
+                        </div>
+
+                        <div class="rounded-xl border border-violet-100 bg-violet-50 p-4 flex items-center justify-between gap-3">
+                            <div class="text-xs text-violet-900">
+                                <p class="font-semibold">Agentes IA<span v-if="ai.agents"> · {{ ai.agents }} creado{{ ai.agents === 1 ? '' : 's' }}</span></p>
+                                <p class="mt-0.5 text-violet-700">Escribe el prompt de tu agente, pruébalo en un chat y ponlo a conversar en un flujo con el bloque «Agente IA».</p>
+                            </div>
+                            <Link :href="route('ai-agents.index')" class="shrink-0 px-3 py-2 bg-white border border-violet-200 rounded-xl text-xs font-semibold text-violet-800 hover:bg-violet-100">
+                                Configurar agentes →
+                            </Link>
                         </div>
 
                         <p v-if="ai.enabled && ai.unavailable && ai.unavailable !== 'ia_apagada'" class="text-xs text-amber-800 bg-amber-50 rounded-lg px-3 py-2">
@@ -1016,7 +1084,7 @@ const waBadge = computed(() => {
                         <div class="grid md:grid-cols-2 gap-3">
                             <div class="rounded-xl border border-gray-100 p-4">
                                 <p class="text-sm font-medium text-gray-800">Uso de este mes</p>
-                                <p class="text-xs text-gray-500 mt-0.5">{{ ai.requests_month ?? 0 }} lecturas · ≈ US$ {{ Number(ai.spent_usd ?? 0).toFixed(2) }}<span v-if="ai.budget_usd"> de US$ {{ Number(ai.budget_usd).toFixed(2) }}</span> (estimado)</p>
+                                <p class="text-xs text-gray-500 mt-0.5">{{ ai.requests_month ?? 0 }} {{ (ai.requests_month ?? 0) === 1 ? 'llamada' : 'llamadas' }} a la IA · ≈ US$ {{ Number(ai.spent_usd ?? 0).toFixed(2) }}<span v-if="ai.budget_usd"> de US$ {{ Number(ai.budget_usd).toFixed(2) }}</span> (estimado)</p>
                                 <div v-if="ai.budget_usd" class="mt-2 h-1.5 rounded-full bg-gray-100 overflow-hidden">
                                     <div class="h-full rounded-full" :class="aiUsagePercent >= 90 ? 'bg-red-500' : 'bg-fuchsia-500'" :style="{ width: aiUsagePercent + '%' }"></div>
                                 </div>

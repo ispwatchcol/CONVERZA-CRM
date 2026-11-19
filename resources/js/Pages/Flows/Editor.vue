@@ -238,7 +238,7 @@ const variables = computed(() => {
     const list = [];
     const push = (v) => { if (!seen.has(v.name)) { seen.add(v.name); list.push(v); } };
 
-    props.catalog.variables.filter((v) => !v.name.startsWith('cliente.') && !v.name.startsWith('pago.')).forEach(push);
+    props.catalog.variables.filter((v) => !v.name.startsWith('cliente.') && !v.name.startsWith('pago.') && !v.name.startsWith('agente.')).forEach(push);
 
     for (const n of getNodes.value) {
         if (n.type === 'question' && n.data?.save_as) {
@@ -255,6 +255,11 @@ const variables = computed(() => {
     // Igual los del comprobante: solo después de un bloque «Comprobante de pago».
     if (getNodes.value.some((n) => n.type === 'receipt')) {
         props.catalog.variables.filter((v) => v.name.startsWith('pago.')).forEach(push);
+    }
+
+    // Y los del agente, después de un bloque «Agente IA».
+    if (getNodes.value.some((n) => n.type === 'ai_agent')) {
+        props.catalog.variables.filter((v) => v.name.startsWith('agente.')).forEach(push);
     }
 
     return list;

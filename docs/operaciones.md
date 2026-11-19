@@ -798,8 +798,8 @@ automático: quitar la credencial de ispwatch de la empresa en Admin → Tenants
 | `reason` | Qué pasó | Qué hacer |
 |---|---|---|
 | `ia_sin_respuesta` | El flujo esperó 5 min y la lectura no llegó | ¿Worker `converza-ai` corriendo? ¿Cola `ai` atascada? (comandos de §4.3). Si el worker estaba caído, al volver completa los datos del reporte |
-| `ia_error` | El proveedor falló y no se arregla reintentando | `ai_usage_logs.error` (abajo). Un 400 que menciona `reasoning` → `XAI_REASONING_EFFORT=` vacío; 401 → la llave |
-| `sin_llave` | La empresa no cargó su llave de IA (o no eligió proveedor) | Configuración → Pagos e IA → proveedor + API key → «Probar llave» |
+| `ia_error` | El proveedor falló y no se arregla reintentando | `ai_usage_logs.error` (abajo). Un 400 de un parámetro opcional (`reasoning`, schema) ya se repite solo sin él (desde el 19/11/2026); si sigue en 400, suele ser un **modelo que no lee imágenes** (DeepSeek, Groq) o que no existe → que la empresa elija otro en Configuración → Pagos e IA. 401 → la llave |
+| `sin_llave` | La empresa no cargó su llave de IA (o no eligió proveedor, o eligió «otro compatible» sin URL) | Configuración → Pagos e IA → proveedor + API key → «Probar llave y ver modelos» |
 | `presupuesto_agotado` | La empresa llegó al tope mensual que ella (o el superadmin) se puso | Subirlo o quitarlo (Configuración → Pagos e IA, o Admin → Tenants), o esperar al mes siguiente |
 | `ia_apagada` / `ia_apagada_global` | Apagada en la empresa / en Converza | Configuración de la empresa / `AI_ENABLED` |
 | `formato_no_soportado` | PDF u otro formato (la Fase 1 solo lee jpg/png) | Revisarlo a mano |
@@ -834,6 +834,26 @@ GROUP BY 1, 2 ORDER BY 3 DESC;
 SELECT tenant_id, count(*), round(sum(cost_usd)::numeric, 4) AS usd
 FROM ai_usage_logs WHERE created_at >= date_trunc('month', now())
 GROUP BY 1 ORDER BY 3 DESC;
+```
+
+#### 🟠 El Agente IA no responde o pasa todo a un asesor
+
+Lo primero: la traza del flujo (Flujos → Actividad): el paso del bloque «Agente
+IA» dice la salida (`agente.salida`) y el motivo.
+
+| `agente.salida` / motivo | Qué pasó | Qué hacer |
+|---|---|---|
+| `no_disponible` sin llamada en `ai_usage_logs` | IA apagada (empresa o `AI_ENABLED`), sin llave, tope agotado, o el agente está borrado/apagado | Configuración → Pagos e IA; Agentes IA → «Activo» |
+| `no_disponible` con `plazo_vencido` | La respuesta no llegó en 3 min (`AI_AGENT_TASK_TIMEOUT`) | Worker `converza-ai` caído o cola `ai` atascada (§4.3) |
+| `no_disponible` con error en `ai_agent_turns.reason` | El proveedor respondió error (401 llave, 404 modelo inexistente…) | Ver `reason` (abajo); que la empresa pruebe su llave y elija un modelo de la lista |
+| `tope` | Se alcanzó el tope de respuestas del bloque | Subirlo en el bloque (1-30) si es una conversación normal |
+| `asesor` | El agente pidió una persona (`[ASESOR]`) | Lo esperado ante quejas, temas delicados o lo que el prompt no cubre: ampliar el prompt |
+
+```bash
+# Las últimas respuestas de agente que fallaron
+sudo -u www-data php /var/www/converza-crm/artisan tinker --execute="
+App\Models\AiAgentTurn::withoutGlobalScopes()->whereIn('status',['failed','unavailable'])->latest('id')->limit(10)
+  ->get(['id','tenant_id','ai_agent_id','bot_flow_run_id','status','reason','created_at'])->each(fn (\$t) => print(json_encode(\$t).PHP_EOL));"
 ```
 
 #### 🟠 Un pago quedó registrado dos veces

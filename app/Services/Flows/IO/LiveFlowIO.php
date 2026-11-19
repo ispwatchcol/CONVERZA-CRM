@@ -2,6 +2,8 @@
 
 namespace App\Services\Flows\IO;
 
+use App\Models\AiAgent;
+use App\Models\AiAgentTurn;
 use App\Models\Contact;
 use App\Models\Conversation;
 use App\Models\Label;
@@ -9,7 +11,9 @@ use App\Models\Message;
 use App\Models\PaymentReport;
 use App\Models\Team;
 use App\Models\Tenant;
+use App\Services\Ai\AiGateway;
 use App\Services\Assignment\ConversationAssigner;
+use App\Services\Flows\AgentOutcome;
 use App\Services\Flows\CustomerLookup;
 use App\Services\Flows\ReceiptOutcome;
 use App\Services\Flows\SendResult;
@@ -249,6 +253,81 @@ final class LiveFlowIO implements FlowIO
         }
 
         return ReceiptOutcome::fromReport($report);
+    }
+
+    public function agent(int $agentId): ?array
+    {
+        $agent = AiAgent::withoutGlobalScopes()->where('tenant_id', $this->tenant->id)->find($agentId);
+
+        return $agent ? [
+            'id'           => (int) $agent->id,
+            'name'         => (string) $agent->name,
+            'instructions' => (string) $agent->instructions,
+            'model'        => $agent->model,
+            'active'       => (bool) $agent->is_active,
+        ] : null;
+    }
+
+    public function startAgentTurn(int $agentId, string $instructions, array $history, ?string $model): AgentOutcome
+    {
+        // Sin IA disponible (apagada, sin llave, sin presupuesto) no se encola
+        // nada: el bloque sale de una vez por «IA no disponible».
+        if (($reason = app(AiGateway::class)->unavailableReason($this->tenant)) !== null) {
+            return AgentOutcome::unavailable($reason);
+        }
+
+        $turn = AiAgentTurn::withoutGlobalScopes()->create([
+            'tenant_id'       => $this->tenant->id,
+            'ai_agent_id'     => $agentId,
+            'bot_flow_run_id' => $this->runId,
+            'conversation_id' => $this->conversation->id,
+            'status'          => AiAgentTurn::STATUS_PENDING,
+            'instructions'    => $instructions,
+            'messages'        => $history,
+        ]);
+
+        return AgentOutcome::fromTurn($turn);
+    }
+
+    public function agentTurn(int $turnId, bool $giveUp = false): ?AgentOutcome
+    {
+        $turn = AiAgentTurn::withoutGlobalScopes()->where('tenant_id', $this->tenant->id)->find($turnId);
+
+        if (! $turn) {
+            return null;
+        }
+
+        if ($giveUp && $turn->status === AiAgentTurn::STATUS_PENDING) {
+            $turn->forceFill(['status' => AiAgentTurn::STATUS_FAILED, 'reason' => 'plazo_vencido'])->save();
+        }
+
+        return AgentOutcome::fromTurn($turn);
+    }
+
+    public function latestInboundId(): ?int
+    {
+        $id = Message::withoutGlobalScopes()
+            ->where('tenant_id', $this->tenant->id)
+            ->where('conversation_id', $this->conversation->id)
+            ->where('status', 'received')
+            ->max('id');
+
+        return $id !== null ? (int) $id : null;
+    }
+
+    public function inboundAfter(int $messageId): array
+    {
+        return Message::withoutGlobalScopes()
+            ->where('tenant_id', $this->tenant->id)
+            ->where('conversation_id', $this->conversation->id)
+            ->where('status', 'received')
+            ->where('id', '>', $messageId)
+            ->where(fn ($q) => $q->whereNull('type')->orWhereNotIn('type', ['reaction', 'system']))
+            ->orderBy('id')
+            ->limit(10)
+            ->get(['id', 'body', 'type'])
+            ->map(fn (Message $m) => ['id' => (int) $m->id, 'text' => (string) $m->body, 'type' => (string) ($m->type ?: 'text')])
+            ->all();
     }
 
     public function handoff(?int $teamId, bool $assign, ?string $note): array

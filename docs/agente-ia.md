@@ -1,10 +1,18 @@
-# Agente IA — comprobantes de pago, y lo que sigue
+# Agente IA — comprobantes de pago, el agente que conversa, y lo que sigue
 
 > **Estado: Fase 1 IMPLEMENTADA** (rama `feat/comprobantes-con-ia`): lectura de
 > comprobantes con IA, verificación, «Pagos reportados», medios de pago y el
 > cliente de la API de ispwatch para registrar pagos. El registro automático
 > queda **inerte** hasta que ispwatch publique el endpoint del §7 (trabajo del
-> repo ISPWatch). Fases 2 a 4: diseño (§11).
+> repo ISPWatch).
+>
+> **Fase 3 IMPLEMENTADA en su primera versión** (rama `feat/agente-ia-configurable`,
+> 19/11/2026): la empresa elige **cualquier proveedor** (9, incluido «otro
+> compatible con OpenAI» con su URL) y **el modelo** de la lista que le da la API
+> de su proveedor con su llave; escribe el **prompt de sus agentes** en «Agentes
+> IA», los prueba en un chat y los pone a conversar con el bloque **«Agente IA»**
+> del Workspace (§14). Sin herramientas todavía: el agente conversa con lo que
+> dice su prompt y sale a un asesor cuando no sabe. Fases 2 y 4: §11.
 >
 > **Decisión:** 25/10/2026, a pedido de Axel ("que suba pagos automáticamente,
 > que la IA de xAI lea las imágenes, traer los medios de pago, datos del cliente
@@ -22,7 +30,8 @@ persona.
 |---|---|
 | Configuración | [config/ai.php](../config/ai.php), `services.ispwatch_api` en [config/services.php](../config/services.php) |
 | Puerta hacia la IA (interruptores, presupuesto, bitácora) | [app/Services/Ai/AiGateway.php](../app/Services/Ai/AiGateway.php) |
-| Proveedor xAI (Responses API) | [app/Services/Ai/XaiProvider.php](../app/Services/Ai/XaiProvider.php) |
+| Los proveedores (§2.7) | [AiProviders](../app/Services/Ai/AiProviders.php) · [HttpAiProvider](../app/Services/Ai/HttpAiProvider.php) · [ResponsesApiProvider](../app/Services/Ai/ResponsesApiProvider.php) (OpenAI, xAI) · [AnthropicProvider](../app/Services/Ai/AnthropicProvider.php) · [ChatCompletionsProvider](../app/Services/Ai/ChatCompletionsProvider.php) (los demás) · [PublicUrl](../app/Services/Ai/PublicUrl.php) (SSRF) |
+| El agente que conversa (§14) | [AgentResponder](../app/Services/Ai/Agents/AgentResponder.php) · [AgentNode](../app/Services/Flows/Nodes/AgentNode.php) · [RunAiAgentTurn](../app/Jobs/RunAiAgentTurn.php) · [AiAgentController](../app/Http/Controllers/AiAgentController.php) · [Pages/Agents/Index.vue](../resources/js/Pages/Agents/Index.vue) |
 | Qué se le pide a la IA (prompt + JSON schema) | [app/Services/Payments/ReceiptReader.php](../app/Services/Payments/ReceiptReader.php) |
 | Las verificaciones | [app/Services/Payments/ReceiptVerifier.php](../app/Services/Payments/ReceiptVerifier.php) |
 | La orquestación (leer → verificar → decidir → registrar) | [app/Services/Payments/PaymentReportProcessor.php](../app/Services/Payments/PaymentReportProcessor.php) |
@@ -31,7 +40,7 @@ persona.
 | El bloque del Workspace | [app/Services/Flows/Nodes/ReceiptNode.php](../app/Services/Flows/Nodes/ReceiptNode.php) |
 | Pantalla «Pagos reportados» | [PaymentReportController](../app/Http/Controllers/PaymentReportController.php) · [Pages/Payments/Index.vue](../resources/js/Pages/Payments/Index.vue) |
 | Medios de pago | [PaymentChannelController](../app/Http/Controllers/PaymentChannelController.php) · [PaymentChannels](../app/Services/Payments/PaymentChannels.php) |
-| Pruebas | [tests/Feature/Payments/](../tests/Feature/Payments/) · [tests/Unit/Payments/](../tests/Unit/Payments/) |
+| Pruebas | [tests/Feature/Payments/](../tests/Feature/Payments/) · [tests/Unit/Payments/](../tests/Unit/Payments/) · [tests/Feature/Ai/](../tests/Feature/Ai/) · [tests/Unit/Ai/](../tests/Unit/Ai/) |
 
 ---
 
@@ -136,7 +145,7 @@ al cliente a mano en «Pagos reportados».
   (`tenants.ai_enabled`, apagado por defecto: la foto sale a un tercero).
 - **La llave de IA es de cada empresa** (`tenants.ai_api_key`, cifrada, y su
   proveedor en `tenants.ai_provider`). No existe una llave de plataforma: el uso
-  se le cobra directo a la empresa en su cuenta de OpenAI o xAI, una llave
+  se le cobra directo a la empresa en su cuenta del proveedor que eligió (§2.7), una llave
   filtrada solo expone a su dueña, y una empresa nunca consume la de otra. La
   llave no vuelve al navegador (la pantalla solo muestra que existe y sus
   últimos 4 caracteres) y se puede probar sin gastar (`Probar llave` consulta la
@@ -148,17 +157,55 @@ al cliente a mano en «Pagos reportados».
   es suyo). Alcanzado, los comprobantes llegan igual, sin leer. El gasto real lo
   ve la empresa en su cuenta del proveedor; el de Configuración es una estimación.
 
-### 2.7 Proveedor intercambiable: xAI u OpenAI
+### 2.7 Proveedor y modelo: los elige la empresa
 
-Las funciones hablan con `AiGateway`, que habla con un `AiProvider`. Hay dos,
-`XaiProvider` y `OpenAiProvider` (desde el 12/11/2026). **Cada empresa elige el
-suyo** en Configuración → Pagos e IA y `AiProviders` lo arma con su llave. Los
-dos hablan la misma **Responses API** (`POST /v1/responses`), así que comparten
-`ResponsesApiProvider`. Lo que cambia con OpenAI: el modelo (`OPENAI_MODEL`, por
-defecto `gpt-5-mini`), que se le quitan al schema los límites de lista que su
-modo estricto rechaza, y que **no informa el costo** de cada llamada: el gasto
-se estima con `OPENAI_PRICE_INPUT` / `OPENAI_PRICE_OUTPUT`, que hay que mantener
-al día. La tabla de abajo es la de xAI:
+Las funciones hablan con `AiGateway`, que habla con un `AiProvider`. **Cada
+empresa elige el suyo** en Configuración → Pagos e IA y `AiProviders` lo arma
+con su llave, su modelo (`tenants.ai_model`) y, si es «otro compatible», su URL
+(`tenants.ai_base_url`). Desde el 19/11/2026 son nueve, en tres familias según
+la API que hablan (el catálogo vive en `config/ai.php`):
+
+| Familia | Clase | Proveedores |
+|---|---|---|
+| Responses API (`POST /responses`) | `ResponsesApiProvider` | OpenAI, xAI |
+| Messages API de Claude (`POST /messages`, `x-api-key` + `anthropic-version: 2026-10-21`) | `AnthropicProvider` | Anthropic |
+| Chat Completions «compatible con OpenAI» (`POST /chat/completions`) | `ChatCompletionsProvider` | Gemini, DeepSeek, Groq, OpenRouter, Mistral, otro (URL propia) |
+
+Lo que comparten (`HttpAiProvider`):
+
+- **El modelo lo elige la empresa de la lista que da la API de su proveedor**
+  (`GET /models` con su llave: «Probar llave y ver modelos»). No cuesta nada. Se
+  filtran los que no son de texto (embeddings, audio, imágenes, moderación) y se
+  puede escribir uno a mano si el proveedor no informa la lista.
+- **Lo opcional se cae solo**: como el modelo es cualquiera, uno puede no
+  aceptar `reasoning`/`reasoning_effort`/`output_config.effort` o el JSON schema
+  estricto. Ante un **400**, la petición se repite **una vez** sin eso (el schema
+  pasa a ser una instrucción y el JSON se rescata del texto, aunque venga entre
+  ```json). Un 400 no se cobra. Un 400 sin nada opcional que quitar no se repite.
+- **Sin redirecciones** (`withoutRedirecting`): una API no las necesita, y con
+  una URL propia un servidor podría redirigir a la red interna.
+- **El costo**: solo xAI informa el real. Los demás se estiman con los precios
+  de `config/ai.php`, que son los **del modelo por defecto** de cada proveedor:
+  con otro modelo, el gasto de Configuración es aproximado (queda
+  `cost_estimated`) y el tope mensual mide aproximado. El gasto real lo ve la
+  empresa en su cuenta del proveedor.
+- **Imágenes**: los comprobantes necesitan un modelo que lea imágenes. DeepSeek
+  y Groq, con sus modelos por defecto, no leen: la pantalla lo advierte. Con un
+  modelo sin visión el proveedor responde error y el comprobante va a revisión.
+
+**«Otro compatible con OpenAI» y SSRF.** La URL la escribe la empresa, así que
+es una puerta para que el servidor le pegue a la red interna (Redis, Postgres,
+el metadata del droplet en 169.254.169.254). `PublicUrl` exige `https`, sin
+usuario/contraseña, y que el nombre resuelva **solo a IPs públicas**; se mira al
+guardar y al probar la llave. No ataja un DNS que cambie de IP después de
+guardado (DNS rebinding): la petición va con la llave de la propia empresa y la
+respuesta solo se usa como texto de la IA, así que el riesgo queda acotado.
+
+Lo que cambia con OpenAI: el modelo por defecto (`OPENAI_MODEL`, `gpt-5-mini`),
+que se le quitan al schema los límites de lista que su modo estricto rechaza, y
+que **no informa el costo**. Anthropic tampoco acepta límites numéricos ni de
+tamaño en el schema (se quitan) y con la versión `2026-10-21` no se le manda
+`temperature`. La tabla de abajo es la de xAI, el proveedor con que nació la Fase 1:
 
 | Elección | Por qué |
 |---|---|
@@ -171,12 +218,17 @@ al día. La tabla de abajo es la de xAI:
 ### 2.8 Datos personales
 
 La foto de un comprobante tiene nombres, números de cuenta y valores. Lo que sale
-a xAI es solo esa imagen, para transcribirla, sin retención (`store: false`).
-En Converza quedan la imagen (ya estaba: es el chat) y lo transcrito. En la
+al proveedor es solo esa imagen, para transcribirla (con OpenAI y xAI, sin
+retención: `store: false`). Con un **Agente IA** (§14) sale además la
+conversación del cliente con el agente y lo que el prompt de la empresa incluya
+(p. ej. `{{cliente.saldo}}`). La retención de los otros proveedores es la de su
+propia política: la empresa los elige con su cuenta. En Converza quedan la
+imagen y la conversación (ya estaban: es el chat), lo transcrito y, para los
+agentes, cada respuesta pedida con su historial (`ai_agent_turns`). En la
 bitácora de IA, nada del contenido.
 
 El ISP es el responsable del tratamiento de los datos de sus clientes (Ley 1581
-de 2012); Converza es su encargado y xAI un subencargado en el exterior. Por eso
+de 2012); Converza es su encargado y el proveedor de IA que el ISP elige, un subencargado en el exterior. Por eso
 la función es **opt-in por empresa** y la pantalla de Configuración lo dice al
 encenderla. Si un ISP no lo tiene cubierto en su política de datos, no la
 enciende y todo funciona igual, sin leer.
@@ -316,8 +368,10 @@ Detalle de columnas en [modelo-de-datos.md](modelo-de-datos.md).
 |---|---|
 | `payment_reports` | Un comprobante, de la lectura al registro: qué dice la imagen, las verificaciones, el cliente, la decisión (`status` + `reason`), y la respuesta de ispwatch. UN reporte por imagen (`message_id` único) |
 | `payment_channels` | Los medios de pago de la empresa, cada uno colgado de una forma de pago de ispwatch |
-| `ai_usage_logs` | Cada llamada a la IA: tokens, costo, latencia, error. Sin contenido |
-| `tenants` (+4 columnas) | `ai_enabled`, `ai_monthly_budget_usd`, `receipts_auto_max_amount`, `ispwatch_api_token` (cifrada) |
+| `ai_usage_logs` | Cada llamada a la IA: tokens, costo, latencia, error. Sin contenido. `purpose`: `receipt`, `agent` (un flujo), `agent_sim` (simulador), `agent_test` (chat de prueba) |
+| `tenants` (+8 columnas) | `ai_enabled`, `ai_monthly_budget_usd`, `receipts_auto_max_amount`, `ispwatch_api_token` (cifrada), `ai_provider`, `ai_api_key` (cifrada), `ai_model`, `ai_base_url` |
+| `ai_agents` | Los agentes de la empresa: nombre, prompt (`instructions`), modelo propio opcional, activo (§14) |
+| `ai_agent_turns` | Cada respuesta que un flujo le pidió a un agente: el prompt y el historial que viajaron, la respuesta, la salida pedida y por qué falló (§14) |
 
 `bot_flow_runs.status` suma el estado vivo `waiting_task` (sin migración: la
 columna es texto). El reporte guarda la evidencia aunque se borre el chat
@@ -455,6 +509,11 @@ pago desde «Pagos reportados» (hoy se le escribe desde el chat).
 
 ### Fase 3 — El agente que conversa
 
+> **Primera versión hecha el 19/11/2026** (§14): el bloque, la cola, el prompt de
+> la empresa, la elección de proveedor y modelo, el chat de prueba y el
+> simulador. **Falta** lo de las herramientas de solo lectura, los topes por día y
+> la FAQ (CON-62) de la lista de abajo.
+
 Un bloque «Agente IA» del Workspace, no un bot aparte, para heredar las mismas
 garantías. Diseño:
 
@@ -528,4 +587,113 @@ Van como tareas de Jira (CON para Converza, KAN para ISPWatch). Estado al
    el tenant de pruebas de ispwatch) y piloto real de dos semanas en un ISP con
    el registro automático apagado. *Acordado; falta elegir el ISP.*
 5. **CON** — Fase 3 (agente) y Fase 4 (cédula y prospectos), con la FAQ en base
-   (CON-62) como prerrequisito de la 3.
+   (CON-62) como prerrequisito de la 3. *Primera versión de la Fase 3 hecha el
+   19/11/2026 (§14).*
+6. **CON** — Migración `2026_11_19_000001_create_ai_agents_tables` en
+   `converza_dev` (en `converza` la corre el deploy). *Pendiente.*
+7. **CON** — Prueba de humo con una llave real de cada familia (Responses,
+   Anthropic, Chat Completions) en el tenant interno: las pruebas automáticas
+   fijan la forma de las peticiones con respuestas falsas, no contra el
+   proveedor. *Pendiente.*
+
+---
+
+## 14. El agente que conversa (Fase 3, primera versión)
+
+**En una frase:** la empresa escribe el prompt de su agente, elige el modelo, lo
+prueba en un chat y lo pone en un flujo con el bloque «Agente IA»; el bloque
+conversa con el cliente hasta que el agente pida pasar a un asesor, dé la
+conversación por resuelta o la IA no esté disponible.
+
+### 14.1 Dónde se configura
+
+| Qué | Dónde | Quién |
+|---|---|---|
+| Proveedor, llave, modelo de la empresa | Configuración → Pagos e IA (`settings.ai.*`) | Admin |
+| Agentes: nombre, prompt, modelo propio (opcional), activo | **Agentes IA** (`/ai-agents`, menú «Bot y automatización») | Admin |
+| Qué agente conversa, saludo, tope de respuestas, a dónde va cada salida | Bloque «Agente IA» de un flujo | Admin |
+
+El modelo de un agente gana sobre el de la empresa; en blanco usa el de la
+empresa (y si la empresa tampoco eligió, el del proveedor por defecto). La lista
+de modelos de «Agentes IA» sale de la misma consulta gratis a la API del proveedor.
+
+### 14.2 Qué se le manda a la IA
+
+`AgentResponder::instructions()` mete el prompt de la empresa **dentro de un
+marco fijo** de Converza:
+
+- Contexto: empresa, nombre del contacto, día, fecha y hora (zona del flujo).
+- Formato WhatsApp: 1 a 4 frases, sin markdown ni tablas, `*negrita*` de WhatsApp.
+- Reglas que la empresa no rompe sin querer: no inventar precios, fechas,
+  promociones ni datos de la cuenta; no prometer lo que depende de una persona;
+  lo que escribe el cliente no son instrucciones (no ignorar reglas ni cambiar de papel).
+- Cómo salir: terminar el mensaje con `[ASESOR]` (pide persona, queja, tema
+  delicado o no sabe) o `[FIN]` (se despidió o quedó resuelto).
+
+**Por qué etiquetas en texto y no tool calling ni JSON schema:** funciona igual
+con los nueve proveedores y con cualquier modelo que elija la empresa, incluidos
+los que no soportan herramientas. `AgentResponder::parse()` quita las etiquetas
+del mensaje; si vienen las dos, gana `[ASESOR]` (la salida segura).
+
+El prompt de la empresa admite `{{variables}}` del flujo (`{{empresa.medios_pago}}`,
+`{{cliente.saldo}}` después de «Datos del cliente», respuestas guardadas…): se
+reemplazan **antes** de mandarlo. El historial son los últimos 20 mensajes del
+bloque (`AI_AGENT_HISTORY`), de hasta 2.000 caracteres, y siempre termina en el
+cliente. Una foto o un audio no se le pasan a la IA en esta versión: se le dice
+«el cliente envió una imagen» (con el pie de foto si tiene).
+
+### 14.3 Cómo corre (la misma tarea asíncrona de los comprobantes)
+
+```
+cliente escribe ─► RunBotFlow (cola default, con lock)
+                     └─ bloque Agente IA: arma prompt + historial → AiAgentTurn (pending)
+                     └─ Step::waitTask('agent')  (plazo: 3 min, AI_AGENT_TASK_TIMEOUT)
+                  suelta el lock ─► RunAiAgentTurn (cola `ai`)
+                                      ├─ AiGateway → proveedor de la empresa (se reintenta 1 vez si es pasajero)
+                                      └─ despierta al flujo: RunBotFlow(task)
+                  RunBotFlow ─► AgentNode::resume() ─► envía la respuesta
+                                 ├─ [ASESOR] → salida «Pasar a un asesor»
+                                 ├─ [FIN]    → salida «Conversación resuelta»
+                                 ├─ el cliente escribió mientras pensaba → otra respuesta enseguida
+                                 └─ si no → espera al cliente
+```
+
+- **Lo que el cliente escribe mientras la IA piensa no se pierde**: al llegar la
+  respuesta, el bloque mira los mensajes nuevos (`inboundAfter`) y le contesta
+  enseguida con ellos en el historial.
+- El job **no le escribe al cliente**: reintentar un error pasajero solo cuesta
+  otra llamada. Un error no reintentable (llave inválida, modelo inexistente) o
+  el plazo vencido (`flows:tick`) → salida «IA no disponible».
+- Sin IA disponible (interruptor global, empresa apagada, sin llave, tope
+  agotado) **no se encola nada**: sale de una vez por «IA no disponible».
+- Tope de respuestas por pasada por el bloque (10 por defecto, 1-30): alcanzado,
+  sale por «Pasar a un asesor» con `agente.salida = tope`.
+
+Variables que deja: `{{agente.respuesta}}` (lo último que dijo) y
+`{{agente.salida}}` (`asesor`, `resuelto`, `tope` o `no_disponible`).
+
+### 14.4 Probarlo sin un cliente
+
+- **Chat de prueba** en «Agentes IA»: usa lo que está en el formulario (aunque no
+  esté guardado) y la IA de verdad. Las variables que dependen de un cliente real
+  (`cliente.*`) quedan vacías. Bitácora: `agent_test`. Tope: 30/min.
+- **Simulador del Workspace**: a diferencia de los comprobantes (que se simulan
+  sin IA), el agente responde con la IA de verdad, en el momento y sin cola,
+  porque lo que se prueba es el prompt. Es la única escritura del simulador (la
+  fila de costo, `agent_sim`). Tope: 60/min.
+
+Las dos cuestan como una conversación real; la pantalla lo dice.
+
+### 14.5 Límites de esta versión
+
+1. **Sin herramientas**: no consulta facturas ni estado del servicio por sí solo.
+   Para darle datos del cliente, poner «Datos del cliente» antes del bloque y
+   usar `{{cliente.*}}` en el prompt.
+2. **No ve imágenes ni escucha audios** del cliente (se le dice que llegaron).
+3. **No ejecuta nada**: no registra pagos, no etiqueta, no asigna. Para un
+   comprobante, el prompt debe mandar al cliente a la opción de pagos del menú.
+4. **El costo por modelo es aproximado** (§2.7): el real está en la cuenta del
+   proveedor de la empresa.
+5. **Un mensaje en ráfaga ANTES de entrar al bloque** (p. ej. «hola» + «precio?»
+   antes de que el flujo llegue al agente) no se le pasa: el agente contesta
+   `mensaje_inicial`.

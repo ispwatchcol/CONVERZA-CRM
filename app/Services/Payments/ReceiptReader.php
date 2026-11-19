@@ -97,7 +97,10 @@ final class ReceiptReader
                 ],
             ]],
             schema: ['name' => 'comprobante_de_pago', 'schema' => self::SCHEMA],
-            maxOutputTokens: 600,
+            // Es un tope, no un gasto: la lectura usa ~300. Pero la empresa elige el
+            // modelo, y en los que razonan (Gemini, Claude, o-series) el pensamiento
+            // cuenta dentro del tope: con poco margen la respuesta se corta.
+            maxOutputTokens: 2000,
         ), $subject);
 
         return ReceiptReading::fromArray($response->json ?? []);

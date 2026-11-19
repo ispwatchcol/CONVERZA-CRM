@@ -102,6 +102,8 @@ final class AiGateway
             $cost      = $response?->costUsd;
             $estimated = false;
 
+            // Los precios de config son los del modelo por defecto de cada
+            // proveedor: con otro modelo es una aproximación (queda `estimated`).
             if ($response !== null && $cost === null) {
                 $cost = $response->inputTokens / 1_000_000 * (float) config("ai.{$response->provider}.price_input_per_million", 0)
                     + $response->outputTokens / 1_000_000 * (float) config("ai.{$response->provider}.price_output_per_million", 0);
@@ -112,7 +114,7 @@ final class AiGateway
                 'tenant_id'        => $tenant->id,
                 'purpose'          => mb_substr($request->purpose, 0, 20),
                 'provider'         => $response?->provider ?? (string) $tenant->ai_provider,
-                'model'            => mb_substr($response?->model ?? (string) config("ai.{$tenant->ai_provider}.model"), 0, 60),
+                'model'            => mb_substr($response?->model ?? (string) ($request->model ?: $tenant->aiModel()), 0, 60),
                 'status'           => $response !== null ? 'ok' : 'error',
                 'input_tokens'     => $response?->inputTokens ?? 0,
                 'output_tokens'    => $response?->outputTokens ?? 0,

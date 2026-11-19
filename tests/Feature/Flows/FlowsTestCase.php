@@ -228,6 +228,8 @@ abstract class FlowsTestCase extends TestCase
         (require base_path('database/migrations/2026_10_25_000001_create_payment_reports_tables.php'))->up();
         // La llave de IA es de cada empresa (tenants.ai_provider / ai_api_key).
         (require base_path('database/migrations/2026_11_12_000001_add_ai_credentials_to_tenants.php'))->up();
+        // El agente IA: modelo y URL de la empresa, agentes y sus respuestas.
+        (require base_path('database/migrations/2026_11_19_000001_create_ai_agents_tables.php'))->up();
     }
 
     // ── Ayudas ──────────────────────────────────────────────────────────────

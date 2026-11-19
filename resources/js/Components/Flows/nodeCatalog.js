@@ -65,6 +65,14 @@ export const NODE_TYPES = {
         handle: '!bg-fuchsia-500',
         palette: true,
     },
+    ai_agent: {
+        label: 'Agente IA',
+        hint: 'Conversa con tu agente IA',
+        header: 'bg-purple-50 text-purple-800 border-purple-100',
+        dot: 'bg-purple-500',
+        handle: '!bg-purple-500',
+        palette: true,
+    },
     tag: {
         label: 'Etiquetar',
         hint: 'Pone o quita una etiqueta',
@@ -144,6 +152,8 @@ export function defaultData(type) {
                 use_recent_image: true,
                 auto_register: false,
             };
+        case 'ai_agent':
+            return { agent_id: null, greeting: '', max_turns: 10 };
         default:
             return {};
     }
@@ -193,6 +203,13 @@ export function outputsOf(type, data = {}) {
                 ...(data?.auto_register ? [{ handle: 'registered', label: 'Pago registrado' }] : []),
                 { handle: 'review', label: 'Para revisión del equipo' },
                 { handle: 'invalid', label: 'No mandó un comprobante' },
+            ];
+        case 'ai_agent':
+            // Espejo de AgentNode::outputs().
+            return [
+                { handle: 'human', label: 'Pasar a un asesor' },
+                { handle: 'done', label: 'Conversación resuelta' },
+                { handle: 'unavailable', label: 'IA no disponible' },
             ];
         case 'question':
             return (data?.validation ?? 'any') === 'any'
@@ -284,6 +301,11 @@ export function summaryOf(type, data = {}, catalog = {}) {
             return 'Busca por el teléfono del contacto: saldo, facturas y estado del servicio';
         case 'receipt':
             return `${data.auto_register ? 'Registra solo si pasa todo' : 'Lo deja para revisión'} · ${truncate(data.text, 60) || 'Sin texto todavía'}`;
+        case 'ai_agent': {
+            const agent = (catalog.agents ?? []).find((a) => a.id === Number(data.agent_id));
+            if (!agent) return 'Elige un agente (se crean en Agentes IA)';
+            return `${agent.name}${agent.is_active ? '' : ' (apagado)'} · hasta ${Number(data.max_turns) || 10} respuestas${data.greeting ? ' · con saludo' : ''}`;
+        }
         case 'tag': {
             const name = (catalog.labels ?? []).find((l) => l.id === Number(data.label_id))?.name;
             if (!name) return 'Elige una etiqueta';
@@ -328,7 +350,7 @@ export const RUN_STATUS = {
     pending: { label: 'Arrancando', class: 'bg-sky-100 text-sky-700' },
     waiting_input: { label: 'Esperando al cliente', class: 'bg-sky-100 text-sky-700' },
     waiting_timer: { label: 'En una espera', class: 'bg-slate-100 text-slate-700' },
-    waiting_task: { label: 'Leyendo un comprobante', class: 'bg-fuchsia-100 text-fuchsia-700' },
+    waiting_task: { label: 'Esperando a la IA', class: 'bg-fuchsia-100 text-fuchsia-700' },
     completed: { label: 'Resuelta por el bot', class: 'bg-emerald-100 text-emerald-700' },
     handed_off: { label: 'Pasó al equipo', class: 'bg-orange-100 text-orange-700' },
     cancelled: { label: 'Cortada', class: 'bg-gray-100 text-gray-600' },
@@ -343,7 +365,10 @@ export function outcomeLabel(step) {
         next: 'Siguió',
         waiting_input: 'Esperando respuesta',
         waiting_timer: 'En espera',
-        waiting_task: 'Leyendo el comprobante',
+        waiting_task: step.node_type === 'ai_agent' ? 'Esperando la respuesta de la IA' : 'Leyendo el comprobante',
+        human: 'El agente pasó a un asesor',
+        done: 'El agente resolvió',
+        unavailable: 'IA no disponible',
         registered: 'Pago registrado',
         review: 'Para revisión del equipo',
         no_match: 'No entendió',

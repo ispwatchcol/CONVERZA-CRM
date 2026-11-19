@@ -415,6 +415,7 @@ del droplet de 1 GB es la memoria, no la CPU (la cuenta está en
 
 | Job | Disparado por | Qué hace |
 |---|---|---|
+| [`RunAiAgentTurn`](../app/Jobs/RunAiAgentTurn.php) | Bloque «Agente IA» (vía `FlowRunner`, al soltar el lock) | Cola `ai`. Le pide al agente IA de la empresa la siguiente respuesta (su prompt, su proveedor, su modelo), la guarda en `ai_agent_turns` y despierta al flujo para que la envíe. No le escribe al cliente: se reintenta una vez si el error es pasajero |
 | [`ProcessPaymentReport`](../app/Jobs/ProcessPaymentReport.php) | Bloque «Comprobante de pago» (vía `FlowRunner`, al soltar el lock) · botón «Leer comprobante» del chat · «Registrar en ispwatch» | Lee el comprobante con IA, lo verifica, decide y, si toca, le pide el registro a ispwatch. Al terminar despierta al flujo que esperaba |
 
 Cola propia (`config('ai.queue')`) y programa propio de Supervisor

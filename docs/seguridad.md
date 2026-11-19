@@ -135,7 +135,7 @@ Es **solo lectura** — las escrituras siguen bloqueadas en sus propios endpoint
 | `wa_access_token` | `tenants` | Cast `encrypted` (APP_KEY) + `$hidden` |
 | `wa_app_secret` | `tenants` | Ídem |
 | `ispwatch_api_token` | `tenants` | Ídem. Credencial de ispwatch para registrar pagos de **una** empresa; solo la carga el superadmin (Admin → Tenants) y el navegador solo sabe si existe |
-| `ai_api_key` | `tenants` | Llave de IA (OpenAI o xAI) **de cada empresa**: cast `encrypted` + `$hidden`, nunca vuelve al navegador (solo «existe» y los últimos 4 caracteres). No hay llave de plataforma |
+| `ai_api_key` | `tenants` | Llave de IA **de cada empresa** (del proveedor que eligió): cast `encrypted` + `$hidden`, nunca vuelve al navegador (solo «existe» y los últimos 4 caracteres). No hay llave de plataforma |
 | `APP_KEY` | `.env` | Nunca en git |
 | Credenciales de base | `.env` | Ídem |
 | Llave SSH de deploy | GitHub Secrets | Par dedicado, solo para el droplet |
@@ -227,16 +227,28 @@ conversaciones**, más los medios que los clientes envían.
 Si el proyecto necesita cumplir con una normativa de datos personales, esta tabla
 es el punto de partida del análisis de brechas.
 
-### La IA (comprobantes de pago)
+### La IA (comprobantes de pago y agentes)
 
-Con la IA encendida, la **imagen de un comprobante** sale a un proveedor externo
-(xAI) para transcribirla. Reglas:
+Con la IA encendida, la **imagen de un comprobante** sale al proveedor que
+eligió la empresa para transcribirla, y con un **Agente IA** sale la
+conversación del cliente con el agente. Reglas:
 
 - **Opt-in por empresa** (`tenants.ai_enabled`, apagado por defecto) y un
   interruptor general (`AI_ENABLED`). El ISP es el responsable del tratamiento de
-  los datos de sus clientes (Ley 1581 de 2012); Converza su encargado y xAI un
-  subencargado en el exterior: el ISP la enciende si su política lo cubre.
-- **Sin retención en el proveedor**: cada llamada va con `store: false`.
+  los datos de sus clientes (Ley 1581 de 2012); Converza su encargado y el
+  proveedor de IA que el ISP elige, un subencargado en el exterior: el ISP la
+  enciende si su política lo cubre.
+- **Sin retención en OpenAI/xAI**: cada llamada va con `store: false`. Los demás
+  proveedores retienen según su política: los elige la empresa con su cuenta.
+- **URL propia («otro compatible») = riesgo de SSRF**: se exige https y que el
+  host resuelva solo a IPs públicas (`App\Services\Ai\PublicUrl`), al guardar y
+  al probar; las llamadas a la IA no siguen redirecciones. No cubre DNS
+  rebinding (ver [agente-ia.md §2.7](agente-ia.md#27-proveedor-y-modelo-los-elige-la-empresa)).
+- **El agente no ejecuta nada**: solo responde o pide salir (`[ASESOR]`/`[FIN]`);
+  traspasos y pagos siguen por los bloques que ya tienen sus garantías. Una
+  inyección de instrucciones del cliente («ignora tus reglas») a lo sumo cambia
+  lo que el agente dice, no lo que hace; el marco fijo del prompt le pide no
+  obedecerla.
 - Solo sale la imagen del comprobante, y solo cuando el bloque del flujo o un
   asesor lo pide: las demás imágenes del chat nunca salen.
 - **Bitácora sin contenido**: `ai_usage_logs` guarda tokens, costo, latencia y

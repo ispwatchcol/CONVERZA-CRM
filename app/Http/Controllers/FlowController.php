@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\AiAgent;
 use App\Models\BotFlow;
 use App\Models\BotFlowRun;
 use App\Models\BotFlowStep;
@@ -17,6 +18,7 @@ use App\Services\Flows\FlowSimulator;
 use App\Services\Flows\FlowTemplates;
 use App\Services\Flows\FlowValidator;
 use App\Services\Flows\IO\SimulatedFlowIO;
+use App\Services\Flows\Nodes\AgentNode;
 use App\Services\Flows\Nodes\CustomerLookupNode;
 use App\Services\Flows\Nodes\ReceiptNode;
 use App\Services\Flows\Nodes\StartNode;
@@ -145,7 +147,10 @@ class FlowController extends Controller
                     collect(Execution::BUILTINS)->map(fn ($d, $k) => ['name' => $k, 'description' => $d, 'group' => 'Siempre disponibles'])->values()->all(),
                     collect(CustomerLookupNode::VARIABLES)->map(fn ($d, $k) => ['name' => $k, 'description' => $d, 'group' => 'Después de «Datos del cliente»'])->values()->all(),
                     collect(ReceiptNode::VARIABLES)->map(fn ($d, $k) => ['name' => $k, 'description' => $d, 'group' => 'Después de «Comprobante de pago»'])->values()->all(),
+                    collect(AgentNode::VARIABLES)->map(fn ($d, $k) => ['name' => $k, 'description' => $d, 'group' => 'Después de «Agente IA»'])->values()->all(),
                 ),
+                // Los agentes IA de la empresa, para el bloque «Agente IA».
+                'agents'         => AiAgent::where('tenant_id', $tenant->id)->orderBy('name')->get(['id', 'name', 'model', 'is_active']),
                 'limits'         => [
                     'max_wait_minutes' => (int) config('flows.max_wait_minutes'),
                     'max_nodes'        => (int) config('flows.max_nodes'),
@@ -323,7 +328,8 @@ class FlowController extends Controller
             'receipt'     => ['nullable', 'string', Rule::in(SimulatedFlowIO::RECEIPT_OUTCOMES)],
         ]);
 
-        if (strlen((string) json_encode($data['state'] ?? [])) > 64 * 1024) {
+        // 160 KB: con un «Agente IA», el estado lleva su historial (hasta 20 mensajes de 2.000 caracteres).
+        if (strlen((string) json_encode($data['state'] ?? [])) > 160 * 1024) {
             return response()->json(['message' => 'Estado de simulación inválido. Reinicia la simulación.'], 422);
         }
 
