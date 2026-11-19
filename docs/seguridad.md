@@ -227,6 +227,21 @@ conversaciones**, más los medios que los clientes envían.
 Si el proyecto necesita cumplir con una normativa de datos personales, esta tabla
 es el punto de partida del análisis de brechas.
 
+### El bloque «Código» de los flujos
+
+Cada ISP puede escribir JavaScript que corre en el servidor compartido. No corre
+en Node ni en V8: corre en un **intérprete propio en PHP** (`App\Services\Flows\Script`)
+que solo conoce una lista cerrada de funciones, así que no tiene cómo llegar a la
+red, los archivos, la base, los procesos ni las variables de otro tenant (solo ve
+las de su propia ejecución). Topes de pasos (20.000), tiempo (250 ms), tamaño de
+textos y listas, y sin funciones propias (no hay recursión). Solo crea variables
+sin punto (no puede pisar `contacto.*`, `cliente.*`, `pago.*`). Las pruebas que
+fijan esto están en `tests/Unit/Flows/ScriptInterpreterTest.php`
+(`test_no_hay_forma_de_salir_de_la_caja`, `test_no_puede_colgar_al_servidor`).
+**Agregarle una función al lenguaje es ampliar la superficie de ataque**: nada de
+I/O, y todo lo que construya textos o listas tiene que pasar por los topes
+(`checkString` / `checkItems`). Detalle en [workflows-bot.md](workflows-bot.md#el-bloque-código-19112026).
+
 ### La IA (comprobantes de pago y agentes)
 
 Con la IA encendida, la **imagen de un comprobante** sale al proveedor que

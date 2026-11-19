@@ -3,6 +3,7 @@
 namespace App\Services\Flows;
 
 use App\Services\Flows\Nodes\AgentNode;
+use App\Services\Flows\Nodes\CodeNode;
 use App\Services\Flows\Nodes\ConditionNode;
 use App\Services\Flows\Nodes\CustomerLookupNode;
 use App\Services\Flows\Nodes\EndNode;
@@ -17,9 +18,9 @@ use App\Services\Flows\Nodes\TagNode;
 use App\Services\Flows\Nodes\WaitNode;
 
 /**
- * Los bloques de la librería v1 (CON-49) más los de IA: «Comprobante de pago»
- * (fase 1) y «Agente IA» (fase 3). Un bloque que no está aquí no se puede
- * publicar ni ejecutar.
+ * Los bloques de la librería v1 (CON-49), los de IA («Comprobante de pago» y
+ * «Agente IA») y «Código» (JavaScript en caja cerrada). Un bloque que no está
+ * aquí no se puede publicar ni ejecutar.
  */
 final class NodeRegistry
 {
@@ -37,6 +38,7 @@ final class NodeRegistry
             new CustomerLookupNode(),
             new ReceiptNode(),
             new AgentNode(),
+            new CodeNode(),
             new TagNode(),
             new WaitNode(),
             new HandoffNode(),

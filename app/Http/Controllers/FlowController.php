@@ -19,7 +19,10 @@ use App\Services\Flows\FlowTemplates;
 use App\Services\Flows\FlowValidator;
 use App\Services\Flows\IO\SimulatedFlowIO;
 use App\Services\Flows\Nodes\AgentNode;
+use App\Services\Flows\Nodes\CodeNode;
 use App\Services\Flows\Nodes\CustomerLookupNode;
+use App\Services\Flows\Script\Interpreter;
+use App\Services\Flows\Script\ScriptError;
 use App\Services\Flows\Nodes\ReceiptNode;
 use App\Services\Flows\Nodes\StartNode;
 use App\Services\Flows\Validation\ValidationContext;
@@ -148,6 +151,7 @@ class FlowController extends Controller
                     collect(CustomerLookupNode::VARIABLES)->map(fn ($d, $k) => ['name' => $k, 'description' => $d, 'group' => 'Después de «Datos del cliente»'])->values()->all(),
                     collect(ReceiptNode::VARIABLES)->map(fn ($d, $k) => ['name' => $k, 'description' => $d, 'group' => 'Después de «Comprobante de pago»'])->values()->all(),
                     collect(AgentNode::VARIABLES)->map(fn ($d, $k) => ['name' => $k, 'description' => $d, 'group' => 'Después de «Agente IA»'])->values()->all(),
+                    collect(CodeNode::VARIABLES)->map(fn ($d, $k) => ['name' => $k, 'description' => $d, 'group' => 'Después de «Código»'])->values()->all(),
                 ),
                 // Los agentes IA de la empresa, para el bloque «Agente IA».
                 'agents'         => AiAgent::where('tenant_id', $tenant->id)->orderBy('name')->get(['id', 'name', 'model', 'is_active']),
@@ -344,6 +348,55 @@ class FlowController extends Controller
         return isset($result['error'])
             ? response()->json(['message' => $result['error']], 422)
             : response()->json($result);
+    }
+
+    /**
+     * «Probar código» del bloque Código: lo corre en la misma caja cerrada que
+     * el motor, con variables de ejemplo que pone el admin. No toca nada: el
+     * intérprete no tiene cómo (sin red, base ni archivos).
+     */
+    public function testCode(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'code'        => ['required', 'string', 'max:' . Interpreter::MAX_CODE],
+            'variables'   => ['nullable', 'array', 'max:50'],
+            'variables.*' => ['nullable', 'string', 'max:2000'],
+            'exits'       => ['nullable', 'array', 'max:' . CodeNode::MAX_EXITS],
+            'exits.*'     => ['nullable', 'string', 'max:40'],
+        ]);
+
+        $tenant    = app('tenant');
+        $variables = collect($data['variables'] ?? [])
+            ->filter(fn ($v, $k) => is_string($k) && preg_match('/^[a-z][a-z0-9_.]{0,59}$/', $k))
+            ->map(fn ($v) => (string) $v)
+            ->all();
+
+        $ex = new Execution(
+            FlowGraph::fromArray(null),
+            new SimulatedFlowIO($tenant, ['name' => 'Cliente de prueba', 'phone' => null], [], true, [], [], app(\App\Services\Ispwatch\IspwatchRepository::class)),
+            (string) config('flows.default_timezone', 'America/Bogota'),
+            $variables,
+        );
+
+        $interpreter = new Interpreter(fn (string $name) => $ex->get($name));
+
+        try {
+            $result = $interpreter->run($data['code']);
+        } catch (ScriptError $e) {
+            return response()->json(['ok' => false, 'error' => $e->getMessage(), 'exit' => 'Error']);
+        }
+
+        $returned = $result->returned === null ? '' : $interpreter->str($result->returned);
+        $exit     = collect($data['exits'] ?? [])->first(fn ($name) => $returned !== '' && mb_strtolower(trim((string) $name)) === mb_strtolower(trim($returned)));
+
+        return response()->json([
+            'ok'        => true,
+            'variables' => (object) $result->writes,
+            'returned'  => $returned,
+            'exit'      => $exit ?? 'Siguiente',
+            'logs'      => $result->logs,
+            'steps'     => $result->steps,
+        ]);
     }
 
     /** Actividad: las últimas ejecuciones con su traza, para diagnosticar sin adivinar. */

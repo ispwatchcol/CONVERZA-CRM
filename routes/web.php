@@ -171,6 +171,8 @@ Route::middleware('auth')->group(function () {
     Route::middleware('role:admin')->prefix('flows')->name('flows.')->group(function () {
         Route::get('/', [FlowController::class, 'index'])->name('index');
         Route::post('/', [FlowController::class, 'store'])->name('store');
+        // «Probar código» del bloque Código: corre en la caja cerrada, no toca nada.
+        Route::post('/code/test', [FlowController::class, 'testCode'])->middleware('throttle:60,1')->name('code.test');
         Route::get('/{flow}/edit', [FlowController::class, 'edit'])->whereNumber('flow')->name('edit');
         Route::put('/{flow}', [FlowController::class, 'update'])->whereNumber('flow')->name('update');
         Route::post('/{flow}/validate', [FlowController::class, 'validateDraft'])->whereNumber('flow')->name('validate');

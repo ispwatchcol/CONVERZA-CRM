@@ -121,6 +121,7 @@ con sus textos y switches — el flujo semilla de CON-51) y "Empezar casi de cer
 | **Condición** | Reglas sobre variables, etiquetas del contacto u horario; todas o al menos una | Sí · No |
 | **Datos del cliente** | Busca al contacto en ispwatch por teléfono (solo lectura) y llena `{{cliente.*}}` | Encontrado · No encontrado |
 | **Comprobante de pago** | Pide la foto del comprobante (o usa la que el cliente ya mandó), la hace leer con IA en la cola `ai` y llena `{{pago.*}}`. Con «registrar sin revisión», si pasa todas las verificaciones ispwatch lo registra. Ver [agente-ia.md](agente-ia.md) | Pago registrado (solo con registro automático) · Para revisión del equipo · No mandó un comprobante |
+| **Código** (`code`) | JavaScript del ISP en una caja cerrada (`App\Services\Flows\Script`): lee `vars`, deja variables (`vars.total = …`) y elige la salida con `return "nombre"`. Deja `{{codigo.resultado}}` y `{{codigo.error}}`. Ver «El bloque Código» abajo | Siguiente · hasta 5 salidas propias · Error |
 | **Agente IA** (`ai_agent`) | Conversa con el cliente con uno de los agentes de la empresa (Agentes IA: su prompt, su modelo), pidiendo cada respuesta a la cola `ai`. Saludo opcional, tope de respuestas (1-30). Deja `{{agente.respuesta}}` y `{{agente.salida}}`. Ver [agente-ia.md §14](agente-ia.md#14-el-agente-que-conversa-fase-3-primera-versión) | Pasar a un asesor · Conversación resuelta · IA no disponible |
 | **Etiquetar** | Pone o quita una etiqueta | Siguiente |
 | **Espera** | Pausa N minutos (máx. 23 h) | Siguiente |
@@ -146,6 +147,42 @@ decide) y, desde el 19/11/2026, *Agente IA*, que conversa
 ([agente-ia.md §14](agente-ia.md#14-el-agente-que-conversa-fase-3-primera-versión)).
 En el simulador, el agente responde con la IA de verdad de la empresa (es lo que
 se prueba: el prompt); los comprobantes siguen simulándose sin IA.
+
+### El bloque Código (19/11/2026)
+
+Para lo que los otros bloques no alcanzan: calcular (mora, descuentos), armar
+textos, clasificar con varias reglas, limpiar lo que escribió el cliente. El ISP
+escribe **un subconjunto de JavaScript**:
+
+```js
+const deuda = numero(vars.cliente.saldo)        // las variables del flujo son texto
+vars.total = moneda(deuda * 1.05)               // queda como {{total}}
+return deuda > 100000 ? "Cobrar" : "Siguiente"  // el nombre de una salida propia
+```
+
+**Por qué un intérprete propio en PHP y no Node/V8.** El código lo escribe cada
+ISP y corre en el mismo droplet que todos. `vm` de Node no es una barrera de
+seguridad, y un V8 aislado de verdad (`isolated-vm`) exige compilar un módulo
+nativo y un proceso por ejecución en un servidor de 1 GB. El intérprete
+(`Lexer` → `Parser` → `Interpreter`, en `app/Services/Flows/Script/`) no tiene,
+por construcción, nada fuera de su caja:
+
+| Garantía | Cómo |
+|---|---|
+| Sin red, archivos, base ni procesos | No existen en el lenguaje: lo único llamable es una lista cerrada (Math, métodos de textos y listas, `numero`, `moneda`, `sinTildes`, `JSON`, `log`). No hay `fetch`, `require`, `import`, `eval`, `new`, prototipos ni constructores |
+| No cuelga al servidor | 20.000 pasos, 250 ms, textos de 20.000 caracteres, listas/objetos de 1.000, código de 10.000 caracteres, anidamiento de 80. Sin funciones propias ni flechas: no hay recursión |
+| No pisa lo del sistema | Solo puede crear variables `[a-z][a-z0-9_]{0,39}` (sin punto: no toca `contacto.*`, `cliente.*`, `pago.*`…), ni las reservadas (`respuesta`, `opcion`…); máximo 20, de 4.096 caracteres |
+| No ejecuta acciones | No envía mensajes, no etiqueta, no asigna: elige una salida y lo hacen los bloques conectados |
+
+Al publicar, el validador analiza la sintaxis (error con número de línea) y lee
+qué `vars.x = …` escribe el código para aceptar `{{x}}` en los bloques
+siguientes. «Probar código» del panel (`POST /flows/code/test`) lo corre con
+valores de ejemplo; en el simulador corre igual que en una conversación. Si
+falla en vivo, sale por **Error** con el motivo en `{{codigo.error}}` y en la traza.
+
+Diferencias con JavaScript (están en la ayuda del panel): `null` y `undefined`
+son lo mismo y como texto se ven vacíos; `numero()` entiende el formato
+colombiano («$50.000», «1.234,5»), a diferencia de `Number()`.
 
 ### El simulador
 
