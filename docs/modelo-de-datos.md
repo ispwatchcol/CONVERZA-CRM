@@ -1,6 +1,6 @@
 # Modelo de datos
 
-> **En una frase:** un solo esquema Postgres (`converza` / `converza_dev`) con
+> **En una frase:** un solo esquema Postgres (`converza`) con
 > aislamiento por columna `tenant_id`, más una conexión externa read-only al
 > esquema `public` de ispwatch.
 
@@ -13,16 +13,17 @@
 
 ## 1. Convenciones
 
-- Motor: **PostgreSQL** (Supabase). Schema `converza` en producción,
-  `converza_dev` en desarrollo.
+- Motor: **PostgreSQL** (Supabase). Schema `converza`. (Hubo un `converza_dev`
+  de desarrollo; se retiró el 19/11/2026 y no se migra más.)
 - Toda tabla de negocio lleva `tenant_id` con FK a `tenants` y borrado en
   cascada. Las excepciones son deliberadas (Core Brain, tablas de sistema).
 - IDs `bigint` autoincrementales.
 - Timestamps `created_at` / `updated_at` salvo en tablas de solo-inserción.
 - Los estados nuevos se declaran como `string` en vez de `enum`: alterar un
   `CHECK` de Postgres a posteriori es costoso.
-- **Las migraciones deben correrse en ambos schemas.** Ver
-  [manual-desarrollador.md](manual-desarrollador.md#4-migraciones--la-regla-que-más-se-olvida).
+- **Las migraciones van solo a `converza` y las corre el deploy** (desde el
+  19/11/2026; antes había que correrlas también en `converza_dev`). Ver
+  [manual-desarrollador.md §4](manual-desarrollador.md#4-migraciones).
 
 ---
 

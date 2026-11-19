@@ -5,7 +5,7 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration {
-    // CORRER EN AMBOS schemas: converza y converza_dev (override DB_SEARCH_PATH).
+    // La corre el deploy en `converza` (converza_dev se retiró el 19/11/2026).
     //
     // El agente IA configurable (docs/agente-ia.md §11, Fase 3): la empresa elige
     // proveedor y MODELO, escribe el prompt de su agente y lo pone a conversar

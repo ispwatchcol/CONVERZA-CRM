@@ -589,8 +589,9 @@ Van como tareas de Jira (CON para Converza, KAN para ISPWatch). Estado al
 5. **CON** — Fase 3 (agente) y Fase 4 (cédula y prospectos), con la FAQ en base
    (CON-62) como prerrequisito de la 3. *Primera versión de la Fase 3 hecha el
    19/11/2026 (§14).*
-6. **CON** — Migración `2026_11_19_000001_create_ai_agents_tables` en
-   `converza_dev` (en `converza` la corre el deploy). *Pendiente.*
+6. ~~**CON** — Migración `2026_11_19_000001_create_ai_agents_tables` en
+   `converza_dev`.~~ *No hace falta:* `converza_dev` se retiró el 19/11/2026; la
+   migración la corre el deploy en `converza`.
 7. **CON** — Prueba de humo con una llave real de cada familia (Responses,
    Anthropic, Chat Completions) en el tenant interno: las pruebas automáticas
    fijan la forma de las peticiones con respuestas falsas, no contra el

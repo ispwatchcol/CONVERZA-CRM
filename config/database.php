@@ -111,7 +111,8 @@ return [
             'charset' => env('DB_CHARSET', 'utf8'),
             'prefix' => '',
             'prefix_indexes' => true,
-            // Schema dedicado de Converza. Local: converza_dev. Prod: converza.
+            // Schema dedicado de Converza: `converza` (el `converza_dev` de
+            // desarrollo se retiró el 19/11/2026; ver docs/manual-desarrollador.md §4).
             // Las tablas de ispwatch viven en `public` y se acceden con la
             // conexión separada `ispwatch` (read-only).
             'search_path' => env('DB_SEARCH_PATH', 'converza'),

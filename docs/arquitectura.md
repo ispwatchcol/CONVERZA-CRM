@@ -22,7 +22,7 @@
 | Frontend | Vue 3 + Inertia.js 2 + Tailwind 4 | SPA sin API separada: el controlador devuelve props |
 | Build | Vite 7 | `npm run build` genera `public/build` |
 | Rutas en JS | Ziggy | `route('chat.index')` disponible en Vue |
-| Base de datos | **PostgreSQL** (Supabase) | Schema dedicado: `converza` (prod) / `converza_dev` (local) |
+| Base de datos | **PostgreSQL** (Supabase) | Schema dedicado: `converza` (`converza_dev` se retiró el 19/11/2026) |
 | Base externa | PostgreSQL de ispwatch, schema `public` | Conexión separada, **read-only** |
 | Colas | Redis en producción | 2 workers de la cola `default` + 1 de la cola `ai` vía Supervisor |
 | Cache / sesión | Redis en producción, `database` en local | La presencia depende del cache |
