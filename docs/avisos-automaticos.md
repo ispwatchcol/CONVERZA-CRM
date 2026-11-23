@@ -273,11 +273,35 @@ cliente con mora arrastrada no tenía cómo verla.
 saltos de línea en un parámetro) y lista **máximo 6 facturas**, resumiendo el
 resto como "y N más" para no exceder el largo aceptado.
 
+### Factura pagada (pago registrado)
+
+`numero_factura` en el aviso de **pago registrado** dice qué factura pagó el
+cliente. ispwatch no guarda la factura en el pago: la liga por
+`payment_allocations`, que `IspwatchRepository::newPaymentsSince()` lee como
+`invoice_numbers`.
+
+| Caso | Qué sale |
+|---|---|
+| El pago cubrió una factura | Su número: `00000608` |
+| Cubrió varias | Todas, separadas por coma y de la más vieja a la más nueva (el orden FIFO en que ispwatch las salda): `00000608, 00001467` |
+| No tocó ninguna (todo quedó como saldo a favor) | `saldo a favor` |
+
+El último caso no puede ir vacío: Meta rechaza la plantilla entera si un
+parámetro de texto llega sin valor. Conviene redactar la plantilla para que lea
+bien con los tres casos, por ejemplo *«aplicado a: {{numero_factura}}»*.
+
+ispwatch crea el pago y sus asignaciones en la **misma transacción**, así que
+cuando el poller ve el pago sus facturas ya están ahí.
+
 ### Agregar una variable nueva
 
 1. Declararla en `EventCatalog::events()` bajo el evento, con `label`,
    `description` y `sample`.
-2. Calcular su valor en `EventCatalog::resolveValues()`.
+2. Calcular su valor en `EventCatalog::resolveValues()`, **al final** del
+   arreglo del evento. Las plantillas posicionales legadas (`{{1}}`, `{{2}}`…)
+   toman los valores en ese orden: meterla en medio corre lo que dicen las
+   plantillas que ya están aprobadas. En `events()` sí puede ir donde se lea
+   mejor en la paleta.
 3. Si el dato no está en la fila que devuelve `IspwatchRepository`, agregarlo
    allí primero.
 

@@ -29,6 +29,13 @@ class EventCatalog
     private const DETAIL_MAX_INVOICES = 6;
 
     /**
+     * `numero_factura` del pago registrado cuando el pago no tocó ninguna factura
+     * (todo quedó como saldo a favor). No puede ir vacío: Meta rechaza la
+     * plantilla entera si un parámetro de texto llega sin valor.
+     */
+    public const PAID_INVOICE_FALLBACK = 'saldo a favor';
+
+    /**
      * Definición de los eventos disponibles y sus variables.
      *
      * `auto` = el evento se dispara solo, en una fecha (lo manejan los avisos
@@ -151,6 +158,7 @@ class EventCatalog
                     'nombre_cliente' => ['label' => 'Nombre del cliente', 'description' => 'Nombre completo del cliente.',        'sample' => 'Juan Pérez'],
                     'primer_nombre'  => ['label' => 'Primer nombre',      'description' => 'Solo el primer nombre del cliente.',  'sample' => 'Juan'],
                     'monto'          => ['label' => 'Monto del pago',     'description' => 'Valor del pago registrado.',          'sample' => '$45.000'],
+                    'numero_factura' => ['label' => 'Factura pagada',     'description' => 'Número de la factura que cubrió este pago. Si cubrió varias, salen separadas por coma (de la más vieja a la más nueva). Si no se aplicó a ninguna factura porque quedó todo como saldo a favor, dice «' . self::PAID_INVOICE_FALLBACK . '».', 'sample' => 'FAC-1234'],
                     'metodo'         => ['label' => 'Método de pago',     'description' => 'Medio con que se registró el pago.',  'sample' => 'Efectivo'],
                     'referencia'     => ['label' => 'Referencia',         'description' => 'Referencia o comprobante del pago.',  'sample' => 'REF-0099'],
                     'fecha_pago'     => ['label' => 'Fecha del pago',     'description' => 'Fecha en que se registró el pago (d/m/Y).', 'sample' => '03/07/2026'],
@@ -360,6 +368,10 @@ class EventCatalog
                 'saludo'         => $greeting(),
                 'fecha_actual'   => Carbon::now()->format('d/m/Y'),
             ],
+            // `numero_factura` va AL FINAL a propósito, aunque en la paleta se
+            // muestre junto al monto: las plantillas posicionales legadas ({{1}},
+            // {{2}}…) toman estos valores en este orden, y meterla en medio
+            // correría las variables de las plantillas que ya están aprobadas.
             'payment_registered' => [
                 'nombre_cliente' => (string) $row['customer_name'],
                 'primer_nombre'  => $first($row['customer_name'] ?? ''),
@@ -369,6 +381,7 @@ class EventCatalog
                 'fecha_pago'     => $date($row['payment_date'] ?? null),
                 'saldo_restante' => $money($row['pending_balance'] ?? 0),
                 'empresa'        => (string) $tenant->name,
+                'numero_factura' => trim((string) ($row['invoice_numbers'] ?? '')) ?: self::PAID_INVOICE_FALLBACK,
             ],
             'router_outage_start', 'router_outage_resolved' => [
                 'nombre_cliente' => (string) $row['customer_name'],
