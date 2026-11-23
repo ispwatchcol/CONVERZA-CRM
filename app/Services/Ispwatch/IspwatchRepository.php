@@ -950,6 +950,13 @@ class IspwatchRepository
      * cliente y su saldo pendiente TRAS el pago (suma de balance_due de facturas
      * abiertas). Sin caché: batch.
      *
+     * `invoice_numbers` = números de las facturas a las que ispwatch imputó el
+     * pago (`payment_allocations`), separados por coma y de la más vieja a la más
+     * nueva —el mismo orden FIFO en que ispwatch las salda—. Un pago puede cubrir
+     * varias facturas. Sale null si no tocó ninguna: el dinero quedó entero como
+     * saldo a favor. ispwatch crea el pago y sus asignaciones en la MISMA
+     * transacción, así que cuando el pago es visible sus facturas también.
+     *
      * @return array<int, array<string, mixed>>
      */
     public function newPaymentsSince(int $ispwatchTenantId, int $afterId, int $limit): array
@@ -973,7 +980,12 @@ class IspwatchRepository
                    from invoices i
                   where i.customer_id = p.customer_id
                     and i.tenant_id   = ?
-                    and i.balance_due > 0) as pending_balance
+                    and i.balance_due > 0) as pending_balance,
+                (select string_agg(ai.number, ', ' order by ai.due_date, ai.id)
+                   from payment_allocations pa
+                   join invoices ai on ai.id = pa.invoice_id
+                  where pa.payment_id = p.id
+                    and coalesce(ai.number, '') <> '') as invoice_numbers
             from payments p
             join users u on u.id = p.customer_id
             left join customer_profile cp on cp.user_id = u.id
@@ -997,6 +1009,7 @@ class IspwatchRepository
             'phone'            => $r->phone,
             'customer_name'    => trim(($r->cp_name ?: $r->user_name) . ' ' . ($r->cp_last_name ?? '')) ?: 'Cliente',
             'pending_balance'  => (string) $r->pending_balance,
+            'invoice_numbers'  => $r->invoice_numbers,
         ], $rows);
     }
 

@@ -804,6 +804,13 @@ vence el {{fecha_vencimiento}}.</pre>
                             <strong>debe pagar</strong>, ya descontado su saldo a favor — no el total bruto facturado.
                             Cobrarle el bruto es cobrarle algo ya saldado. Si necesitas el bruto, usa <em>monto total</em>.
                         </div>
+                        <div class="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-900">
+                            <strong>Qué factura pagó:</strong> el aviso de <em>pago registrado</em> tiene la variable
+                            <em>factura pagada</em> con el número de la factura que cubrió el pago. Si cubrió varias, salen
+                            todas separadas por coma; si no se aplicó a ninguna porque quedó como saldo a favor, dice
+                            «saldo a favor». Redacta la plantilla para que se lea bien en los tres casos, por ejemplo
+                            <em>«aplicado a: factura pagada»</em>.
+                        </div>
 
                         <h3 class="font-semibold text-gray-800 mt-5 mb-2">Salvaguardas</h3>
                         <p class="text-sm text-gray-600 mb-2">El sistema está diseñado para no inundar a nadie:</p>
